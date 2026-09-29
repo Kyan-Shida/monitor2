@@ -1,0 +1,26 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+# 离线静态版导出脚本的构建暂存目录（每次导出重建，产物见 静态版/）
+dist-static/
+
+# 浏览器临时配置目录（导出/预览过程产生的 Edge 用户数据，体积大且不可复现）
+edge-tmp/
+
+# 本地运行日志
+dev.log
+dev.err.log
+npm-debug.log*
+yarn-error.log*
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.local
+
+# 本地页面验证产物
+.playwright-cli/
+output/
