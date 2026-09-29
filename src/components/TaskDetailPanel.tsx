@@ -1,6 +1,7 @@
 /**
  * @file TaskDetailPanel.tsx
- * @description 任务详情内容：概要头（主操作随状态切换）+ 任务摘要 / 任务控制与版本约束 + 派单历史 + 检测项快照与结果
+ * @description 任务详情内容：概要头（主操作随状态切换）+ 任务摘要 / 任务控制与版本约束 + 派单历史 +
+ *              「点位 + 动作序列」快照与结果
  * @interaction ObjectDetails.tsx（「任务详情」内置页）、Planning.tsx（任务列表「详情」抽屉）——两处共用同一实现，避免口径漂移
  */
 import { useStore } from "../data/store";
@@ -9,12 +10,33 @@ import { Badge, Btn, Panel, Table, Note } from "./UI";
 import { ObjectLink } from "./Business";
 import {
   stageOf,
-  deviceCode,
   fmtTime,
   queueFor,
   terminal,
 } from "../data/selectors";
-import type { Task } from "../data/types";
+import { archiveIdOf } from "../data/deviceMaster";
+import type { PointActionPlan, Snapshot, Task } from "../data/types";
+
+/**
+ * 到位动作与视角摘要（任务详情「点位 + 动作序列」用）
+ * @param p 任务内点位快照
+ * @returns 一句话摘要；未编排视角时说明按默认视角执行
+ */
+function viewSummary(p: Snapshot): string {
+  const ap: PointActionPlan | undefined = p.actionPlan;
+  if (!ap)
+    return "未编排视角（按默认视角执行，可在「巡检点管理 › 编辑巡检点」补配）";
+  const bits = [
+    ap.viewDir || "观察方向未设",
+    `PTZ ${ap.ptz.pan}/${ap.ptz.tilt}/${ap.ptz.zoom}`,
+  ];
+  if (ap.dwellSec != null) bits.push(`停留 ${ap.dwellSec}s`);
+  if (ap.light != null) bits.push(`补光 ${ap.light}`);
+  if (ap.lift) bits.push(`升降 ${ap.lift}`);
+  if (ap.preset) bits.push(ap.preset);
+  if (ap.avoidPolicy) bits.push(ap.avoidPolicy);
+  return bits.join(" · ");
+}
 
 export function TaskDetailPanel({
   task,
@@ -139,7 +161,10 @@ export function TaskDetailPanel({
             <dt>任务类型</dt>
             <dd>{t.taskType || "综合巡检任务"}</dd>
             <dt>原子动作</dt>
-            <dd>{(t.atomicActions || []).join(" / ") || "按检测项执行"}</dd>
+            <dd>
+              {(t.atomicActions || []).join(" / ") || "按检测项执行"}
+              {/* 动作由"看什么"（采集方式）推导，「怎么看」由点位动作编排给出 */}
+            </dd>
             <dt>计划版本</dt>
             <dd>
               {t.planId || "临时任务"} / v{t.planVersion || "—"}
@@ -221,19 +246,30 @@ export function TaskDetailPanel({
           </>
         )}
       </Panel>
-      <Panel title="检测项快照与结果">
+      <Panel title="点位 + 动作序列（检测项快照与结果）">
         <Table
-          heads={["业务点位", "设备 / 对象", "检测项与要求", "版本", "结果"]}
+          heads={[
+            "业务点位",
+            "设备 / 对象",
+            "检测项与要求",
+            "到位动作与视角",
+            "版本",
+            "结果",
+          ]}
           rows={t.items.map((p) => [
             <ObjectLink type="point" id={p.id}>
               {p.name}
             </ObjectLink>,
-            <ObjectLink type="archive" id={deviceCode(p.device)}>
+            <ObjectLink type="archive" id={archiveIdOf(s, p.device)}>
               {p.device} / {p.object}
             </ObjectLink>,
             <>
               {p.item}
               <small>{p.requirement}</small>
+            </>,
+            <>
+              {p.actions?.join(" / ") || "按检测项执行"}
+              <small>{viewSummary(p)}</small>
             </>,
             `m${p.mapVersion} / 点位 v${p.version}`,
             s.results

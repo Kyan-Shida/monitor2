@@ -1,4 +1,5 @@
 import { SystemAlarmParameters } from "../components/SystemAlarmParameters";
+import { go } from "../data/navigation";
 import { useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
 import { rulesOf, evaluateRule, type AlarmRule } from "../data/alarmRules";
@@ -49,9 +50,15 @@ function RuleTrial({ rule }: { rule?: AlarmRule }) {
 export function AlarmConfiguration({
   pointId,
   embedded = false,
+  readOnly = false,
 }: {
   pointId?: string;
   embedded?: boolean;
+  /**
+   * 只读模式：点位侧（巡检点详情 / 规则查看）只能查看生效中的规则，
+   * 因为**平台唯一的告警配置入口是「业务巡检目标 › 配业务逻辑与算法 › 告警设置」**
+   */
+  readOnly?: boolean;
 }) {
   const Editor = embedded ? InlineEditor : Modal;
   const { s, act } = useStore();
@@ -59,10 +66,22 @@ export function AlarmConfiguration({
   const [edit, E] = useState<AlarmRule>(),
     [picked, P] = useState(rules[0]?.id);
   const rule = rules.find((r) => r.id === picked) || rules[0];
+  /** 规则来源：业务巡检目标的告警设置，或历史保存的规则版本 */
+  const sourceOf = (r: AlarmRule) =>
+    s.alarmRules?.some((x) => x.id === r.id) ? "规则版本" : "业务巡检目标";
   return (
     <>
       <Note>
-        检测标准与告警阈值共用此配置。每次有效结果按当时的规则版本判定；超出范围触发，正常复查结果恢复，人工填写依据后关闭。规则修改不重写历史证据。
+        {readOnly ? (
+          <>
+            <b>告警设置只有一处入口</b>：「业务巡检目标 › 配业务逻辑与算法 › 告警设置」
+            （告警开关 + 等级 + 通知），巡检点本身不配置告警。此处只查看该点位当前生效的判定与告警规则。
+          </>
+        ) : (
+          <>
+            检测标准与告警阈值共用此配置。每次有效结果按当时的规则版本判定；超出范围触发，正常复查结果恢复，人工填写依据后关闭。规则修改不重写历史证据。
+          </>
+        )}
       </Note>
       <div className="alarm-flow">
         <b>采集证据</b> → 识别为数值 / 状态 → 质量校验 → 按点位检测项规则判断 →
@@ -94,10 +113,15 @@ export function AlarmConfiguration({
             r.level,
             <>
               <Badge>{r.enabled ? "启用" : "停用"}</Badge> v{r.version}
+              <small>来源：{sourceOf(r)}</small>
             </>,
-            <Btn disabled={s.roleId !== "admin"} onClick={() => E({ ...r })}>
-              配置规则
-            </Btn>,
+            readOnly ? (
+              <Btn onClick={() => go("points")}>去配置告警</Btn>
+            ) : (
+              <Btn disabled={s.roleId !== "admin"} onClick={() => E({ ...r })}>
+                配置规则
+              </Btn>
+            ),
           ])}
         />
       </Panel>
@@ -116,7 +140,7 @@ export function AlarmConfiguration({
         </details>
       </Panel>
       {!pointId && <SystemAlarmParameters />}
-      {edit && (
+      {!readOnly && edit && (
         <Editor title="告警规则 · 保存为新版本" onClose={() => E(undefined)}>
           <div className="form-grid">
             <Field label="名称">

@@ -6,6 +6,7 @@ import type {
   Robot,
   Charger,
   RailSection,
+  MapFrames,
 } from "../data/types";
 import { robotColors } from "../data/selectors";
 
@@ -194,6 +195,10 @@ export function MapCanvas({
   highlightAll = false,
   pointStates = {},
   fit = "xMidYMid meet",
+  /** 坐标拾取（阶段②）：开启后鼠标移动实时显示地图 / 世界坐标（只读） */
+  pickCoords = false,
+  /** 坐标标定（阶段②）：坐标拾取换算世界坐标用；缺省按 0.05 米/像素估算 */
+  frames,
 }: {
   points?: Point[];
   targets?: Candidate[];
@@ -212,6 +217,10 @@ export function MapCanvas({
   pointStates?: Record<string, string>;
   /** SVG 视口适配方式：驾驶舱传 slice 填满容器，其余场景保持 meet 以完整显示地图 */
   fit?: string;
+  /** 坐标拾取开关（阶段②） */
+  pickCoords?: boolean;
+  /** 坐标标定（阶段②） */
+  frames?: MapFrames;
 }) {
   const [zoom, Z] = useState(1);
   /** clipPath / 渐变的唯一前缀：同页多实例不冲突 */
@@ -222,6 +231,36 @@ export function MapCanvas({
     () => [...pipeDots(PIPE_L, 41), ...pipeDots(PIPE_R, 43), ...pipeDots(PIPE_X, 47)],
     [],
   );
+  /** 坐标拾取读数：鼠标位置的地图百分比坐标 */
+  const [pick, SETPICK] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * 屏幕坐标 → 地图百分比坐标（与双击加点同一套换算）
+   * @param svg SVG 根节点
+   * @param clientX 视口 X
+   * @param clientY 视口 Y
+   * @returns 地图百分比坐标
+   */
+  const toMap = (svg: SVGSVGElement, clientX: number, clientY: number) => {
+    const matrix = svg.getScreenCTM();
+    if (!matrix) return null;
+    const cursor = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse());
+    return {
+      x: (cursor.x - (450 - 450 * zoom)) / zoom / 9,
+      y: (cursor.y - (260 - 260 * zoom)) / zoom / 5.2,
+    };
+  };
+  /**
+   * 地图百分比坐标 → 世界坐标（米，示意）
+   * @description 原型把 SVG 视口 900×520 视为像素底图，按标定分辨率与原点换算；
+   *              真实实现应由后端坐标转换 API 完成（含旋转与云台外参）。
+   * @param p 地图百分比坐标
+   * @returns 世界坐标（米）
+   */
+  const world = (p: { x: number; y: number }) => {
+    const res = frames?.resolution ?? 0.05;
+    const o = frames?.origin ?? { x: 0, y: 0, yaw: 0 };
+    return { x: o.x + (p.x / 100) * 900 * res, y: o.y + (p.y / 100) * 520 * res };
+  };
   return (
     <div
       className={
@@ -231,6 +270,13 @@ export function MapCanvas({
     >
       <div className="map-tools">
         <span>三维激光点云示意 · Mock</span>
+        {pickCoords && (
+          <span className="map-pick" aria-live="polite">
+            {pick
+              ? `地图 ${pick.x.toFixed(1)}% / ${pick.y.toFixed(1)}% · 世界 ${world(pick).x.toFixed(2)}, ${world(pick).y.toFixed(2)} m`
+              : "移动鼠标拾取坐标"}
+          </span>
+        )}
         <button onClick={() => Z(Math.min(1.6, zoom + 0.15))}>＋</button>
         <button onClick={() => Z(Math.max(0.7, zoom - 0.15))}>−</button>
         <button onClick={() => Z(1)}>复位</button>
@@ -240,15 +286,21 @@ export function MapCanvas({
         preserveAspectRatio={fit}
         role="img"
         aria-label="一期罐区三维点云地图与业务目标"
+        className={pickCoords ? "picking" : undefined}
         onDoubleClick={(e) => {
           if (!onAdd) return;
-          const matrix = e.currentTarget.getScreenCTM();
-          if (!matrix) return;
-          const cursor = new DOMPoint(e.clientX, e.clientY).matrixTransform(matrix.inverse());
-          const x = (cursor.x - (450 - 450 * zoom)) / zoom / 9;
-          const y = (cursor.y - (260 - 260 * zoom)) / zoom / 5.2;
-          if (x >= 0 && x <= 100 && y >= 0 && y <= 100) onAdd(x, y);
+          const p = toMap(e.currentTarget, e.clientX, e.clientY);
+          if (p && p.x >= 0 && p.x <= 100 && p.y >= 0 && p.y <= 100) onAdd(p.x, p.y);
         }}
+        onMouseMove={
+          pickCoords
+            ? (e) => {
+                const p = toMap(e.currentTarget, e.clientX, e.clientY);
+                if (p) SETPICK({ x: Math.max(0, Math.min(100, p.x)), y: Math.max(0, Math.min(100, p.y)) });
+              }
+            : undefined
+        }
+        onMouseLeave={pickCoords ? () => SETPICK(null) : undefined}
       >
         <defs>
           <pattern

@@ -1,4 +1,3 @@
-import { AlarmConfiguration } from "./AlarmConfiguration";
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
@@ -7,7 +6,8 @@ import { ReplayDetail } from "../components/ReplayDetail";
 import { ResultView } from "../components/ResultView";
 import { Panel, Table, Badge, Btn, Note } from "../components/UI";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
-import { stageOf, deviceCode, fmtTime, queueFor, terminal } from "../data/selectors";
+import { stageOf, fmtTime, queueFor, terminal } from "../data/selectors";
+import { archiveIdOf } from "../data/deviceMaster";
 export function ObjectDetails({ page, id }: { page: string; id?: string }) {
   const { s } = useStore();
   const [replayKw, setReplayKw] = useState("");
@@ -18,6 +18,7 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
   if (page === "point") {
     const p = s.points.find((p) => p.id === id);
     if (!p) return <Note>请选择具体巡检点。</Note>;
+    const results = s.results.filter((r) => r.pointId === p.id);
     return (
       <>
         <div className="object-summary object-bar">
@@ -30,58 +31,49 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
           <span className="os-meta">
             <span>
               <i>所属设备</i>
-              <ObjectLink type="archive" id={deviceCode(p.device)}>
+              <ObjectLink type="archive" id={archiveIdOf(s, p.device)}>
                 {p.device}
               </ObjectLink>
             </span>
             <span>
-              <i>检测项</i>
-              {p.object} / {p.item}
+              <i>巡检项</i>
+              {p.inspectItems?.length || 1} 项
             </span>
             <span>
               <i>点位版本</i>v{p.version}
             </span>
           </span>
           <div className="actions os-actions">
-            <Btn onClick={() => go("annotation", p.mapId)}>进入业务标注</Btn>
+            <Btn onClick={() => go("point-edit", p.id)}>编辑巡检点</Btn>
           </div>
         </div>
-        <AlarmConfiguration key={p.id} pointId={p.id} />
-        <div className="grid two">
-          <Panel title="业务目标要求">
-            <dl>
-              <dt>地图 / 目标</dt>
-              <dd>
-                <ObjectLink type="maps" id={p.mapId} tab="detail">
-                  {p.mapId}
-                </ObjectLink>{" "}
-                / {p.targetId}
-              </dd>
-              <dt>检测要求</dt>
-              <dd>{p.requirement}</dd>
-              <dt>自主验证</dt>
-              <dd>{p.validated || "待验证"}</dd>
-            </dl>
-          </Panel>
-          <Panel title="最近检测结果">
+        {/* 巡检点详情只展示最近检测结果：判定规则 / 告警设置在业务巡检目标里维护 */}
+        <Panel
+          title="最近检测结果"
+          extra={<span>{results.length} 条</span>}
+        >
+          {results.length ? (
             <Table
-              heads={["任务", "结果", "判定", "详情"]}
-              rows={s.results
-                .filter((r) => r.pointId === p.id)
-                .map((r) => [
-                  <ObjectLink
-                    type="replay"
-                    id={r.taskId}
-                    to="replay-detail"
-                    from={{ page: "point", id: p.id }}
-                  />,
-                  r.final + r.unit,
-                  <Badge>{r.status === "待复核" ? "待判定" : r.abnormal ? "异常" : "正常"}</Badge>,
-                  <ObjectLink type="review" id={r.id} />,
-                ])}
+              heads={["任务", "时间", "结果", "判定", "详情"]}
+              rows={results.slice(0, 10).map((r) => [
+                <ObjectLink
+                  type="replay"
+                  id={r.taskId}
+                  to="replay-detail"
+                  from={{ page: "point", id: p.id }}
+                />,
+                r.time,
+                r.final + r.unit,
+                <Badge>
+                  {r.status === "待复核" ? "待判定" : r.abnormal ? "异常" : "正常"}
+                </Badge>,
+                <ObjectLink type="review" id={r.id} />,
+              ])}
             />
-          </Panel>
-        </div>
+          ) : (
+            <Note>该巡检点还没有检测结果。</Note>
+          )}
+        </Panel>
       </>
     );
   }

@@ -40,7 +40,17 @@ interface Msg {
 
 /** 消息中心对外依赖的最小数据面：真实 store 状态结构兼容即可 */
 interface NoticeSource {
-  alarms: { id: string; name: string; level: string; state: string; time: string; pointId: string }[];
+  alarms: {
+    id: string;
+    name: string;
+    level: string;
+    state: string;
+    time: string;
+    pointId?: string;
+    robotId?: string;
+    /** 分类：业务 / 机器人（确保两类告警都进入推送） */
+    category: string;
+  }[];
   results: { id: string; status: string }[];
   tasks: { id: string; state: string }[];
   points: { id: string; device?: string; object?: string }[];
@@ -95,7 +105,9 @@ function fmtTime(value: string) {
  * @param s 演示数据状态（App 与弹窗共用，保证角标数字与弹窗列表同口径）
  */
 export function noticeMessages(s: NoticeSource): Msg[] {
-  const alarmList = s.alarms.filter((a) => a.state === "待确认");
+  /** 告警取"所有未关闭"（原只取"待确认"，遗漏已确认未关/处理中，这些同样需要人员处理） */
+  const openStates = ["待确认", "已确认", "处理中"];
+  const alarmList = s.alarms.filter((a) => openStates.includes(a.state));
   const reviewN = s.results.filter((r) => r.status === "待复核").length;
   const dispatchN = s.tasks.filter((t) => t.state === "待调度").length;
   return [
@@ -164,14 +176,26 @@ export function noticeMessages(s: NoticeSource): Msg[] {
       : []),
     ...alarmList.map((a) => {
       const pt = s.points.find((p) => p.id === a.pointId);
+      /** 业务告警展示"设备·对象"，机器人本体异常展示"机器人编号"，两类均进入同一推送通道 */
+      const target =
+        a.category === "机器人"
+          ? `机器人 ${a.robotId || ""}`.trim()
+          : pt?.device
+            ? `${pt.device} · ${pt.object}`
+            : a.pointId || "—";
       return {
         id: `alarm-${a.id}`,
         cat: "alarm" as MsgCat,
         tone: "red" as Tone,
         icon: BellRing,
         title: a.name,
-        badge: (a.level === "高" ? "紧急" : undefined) as "紧急" | undefined,
-        text: `${pt?.device || "点位"} · ${pt?.object || a.pointId} 触发告警，请查看原始结果与证据后确认处置。`,
+        badge:
+          (a.level === "紧急"
+            ? "紧急"
+            : a.level === "重要"
+              ? "重要"
+              : undefined) as "紧急" | "重要" | undefined,
+        text: `【${a.category}】${target} 触发告警，请查看证据后确认处置。`,
         time: fmtTime(a.time),
         source: "监控中心",
         to: () => go("alarms"),
@@ -190,12 +214,21 @@ export function unreadNoticeCount(msgs: Msg[]): number {
   return msgs.filter((m) => !read.includes(m.id)).length;
 }
 
-/** 分类 Tab 定义：key 与消息分类对应 */
+/** 顶栏铃铛角标拆分：红色告警未读数 + 蓝色其他未读数；已清空则均为 0 */
+export function splitUnreadCount(msgs: Msg[]): { alarm: number; other: number } {
+  if (loadCleared()) return { alarm: 0, other: 0 };
+  const read = new Set(loadRead());
+  const alarm = msgs.filter((m) => m.cat === "alarm" && !read.has(m.id)).length;
+  const other = msgs.filter((m) => m.cat !== "alarm" && !read.has(m.id)).length;
+  return { alarm, other };
+}
+
+/** 分类 Tab：告警预警置顶（需人员立即处理），其后按「系统通知 · 业务消息」，「全部」放在最后 */
 const CATS: { key: MsgCat | "all"; label: string }[] = [
-  { key: "all", label: "全部" },
+  { key: "alarm", label: "告警预警" },
   { key: "system", label: "系统通知" },
   { key: "biz", label: "业务消息" },
-  { key: "alarm", label: "告警预警" },
+  { key: "all", label: "全部" },
 ];
 
 export function NotificationCenter({ onClose }: { onClose: () => void }) {

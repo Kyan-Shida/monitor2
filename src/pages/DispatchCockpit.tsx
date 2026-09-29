@@ -130,21 +130,22 @@ export function DispatchCockpit({
         : openAlarms,
     [openAlarms, s.tasks, activeId],
   );
-  /** 告警去重合并：同点位 + 同级别的未关闭告警合并为一条，标注合并条数 */
+  /** 告警去重合并：同锚点（业务点位 / 机器人本体异常按「分类+机器人」）+ 同级别的未关闭告警合并为一条 */
   const alarmGroups = useMemo(() => {
+    const anchorOf = (a: Alarm) => a.pointId || `${a.category}:${a.robotId}`;
     const groups = new Map<string, Alarm[]>();
     scopedAlarms.forEach((a) => {
-      const key = `${a.pointId}|${a.level}`;
+      const key = `${anchorOf(a)}|${a.level}`;
       groups.set(key, [...(groups.get(key) || []), a]);
     });
     return [...groups.entries()].map(([key, items]) => ({
       key,
       items,
       head: items[0],
-      /** 分级抑制：同点位存在更高级别告警时，低级别仅记录不推送处置 */
+      /** 分级抑制：同锚点存在更高级别告警时，低级别仅记录不推送处置 */
       suppressed: scopedAlarms.some(
         (x) =>
-          x.pointId === items[0].pointId &&
+          anchorOf(x) === anchorOf(items[0]) &&
           levelRank(x.level) > levelRank(items[0].level),
       ),
     }));
@@ -767,9 +768,12 @@ export function DispatchCockpit({
                   <div>
                     <b>{g.head.name}</b>
                     <small>
-                      {g.head.pointId} · {g.head.state}
+                      {g.head.pointId
+                        ? g.head.pointId
+                        : `${g.head.category}${g.head.robotId ? " " + g.head.robotId : ""}`}{" "}
+                      · {g.head.state}
                       {g.items.length > 1 ? ` · 合并 ${g.items.length} 条` : ""}
-                      {g.suppressed ? " · 已抑制（同点位存在更高级别）" : ""}
+                      {g.suppressed ? " · 已抑制（同锚点存在更高级别）" : ""}
                     </small>
                   </div>
                   <Badge>{g.head.level}</Badge>

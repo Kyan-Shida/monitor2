@@ -1,13 +1,22 @@
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
-import { deviceCode, pointOf, terminal, fmtTime } from "../data/selectors";
+import { pointOf, terminal, fmtTime } from "../data/selectors";
 import { Panel, Table, Badge, Note } from "../components/UI";
 import { ObjectLink } from "../components/Business";
 import { ResultTrend } from "../components/ResultTrend";
+import { archiveIdOf, deviceOf } from "../data/deviceMaster";
 export function DeviceArchive({ id }: { id?: string; tab?: string }) {
   const { s } = useStore();
-  const devices = [...new Set(s.points.map((p) => p.device))];
-  const device = devices.find((x) => deviceCode(x) === id) || devices[0];
+  // 设备口径：以设备主数据为准（唯一来源）；旧缓存缺主数据时回落到"由点位反推"
+  const master = (s.devices || []).filter((d) =>
+    s.points.some((p) => p.device === d.name),
+  );
+  const devices = master.length
+    ? master.map((d) => d.name)
+    : [...new Set(s.points.map((p) => p.device))];
+  const picked = deviceOf(s, id || "");
+  const device = picked && devices.includes(picked.name) ? picked.name : devices[0];
+  const dev = deviceOf(s, device);
   const points = s.points.filter((p) => p.device === device),
     results = s.results.filter((r) => pointOf(s, r)?.device === device),
     alarms = s.alarms.filter((a) => points.some((p) => p.id === a.pointId)),
@@ -45,11 +54,11 @@ export function DeviceArchive({ id }: { id?: string; tab?: string }) {
         <b>设备档案</b>
         <select
           aria-label="档案设备"
-          value={deviceCode(device)}
+          value={archiveIdOf(s, device)}
           onChange={(e) => go("archive", e.target.value)}
         >
           {devices.map((x) => (
-            <option key={x} value={deviceCode(x)}>
+            <option key={x} value={archiveIdOf(s, x)}>
               {x}
             </option>
           ))}
@@ -63,7 +72,10 @@ export function DeviceArchive({ id }: { id?: string; tab?: string }) {
         <h2>{device}</h2>
         <p>
           所属区域：{s.maps.find((m) => m.id === points[0]?.mapId)?.region}
-          　设备编码：{deviceCode(device)}
+          　设备编码：{dev?.id || archiveIdOf(s, device)}
+          {dev && <>　设备类型：{dev.type}</>}
+          {dev?.locationDesc && <>　安装位置：{dev.locationDesc}</>}
+          {dev?.state === "停用" && <>　<Badge>已停用</Badge></>}
         </p>
         <small>按设备聚合对象、检测项、历史证据、告警与巡检任务。</small>
       </div>

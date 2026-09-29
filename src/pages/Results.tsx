@@ -2,20 +2,33 @@ import { ResultRuleEvidence } from "../components/ResultRuleEvidence";
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
-import { pointOf, deviceCode, fmtTime } from "../data/selectors";
+import { pointOf, fmtTime, parseTime } from "../data/selectors";
+import { archiveIdOf } from "../data/deviceMaster";
 import { Btn, Badge, Panel, Table, Field, Note, Steps, Modal } from "../components/UI";
 import { ObjectLink, Pager } from "../components/Business";
 import { Video } from "../components/Video";
 import { ResultTrend } from "../components/ResultTrend";
 import type { Result } from "../data/types";
+import { ALARM_CATEGORIES } from "../data/types";
 export function Results({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const [q, Q] = useViewState("results.q", ""),
     [taskF, TF] = useViewState("results.task", "全部"),
     [robotF, RF] = useViewState("results.robot", "全部"),
+    /** 业务状态：全部 / 异常 / 待复核 / 正常（与顶部范围芯片同源） */
     [status, S] = useViewState("results.status", "全部"),
-    [judgment, J] = useViewState("results.judgment", "全部"),
-    [date, D] = useViewState("results.date", ""),
+    /** 时间范围：全部 / 今日 / 近7天 / 近30天 / 自定义 */
+    [range, RG] = useViewState("results.range", "全部"),
+    [from, FR] = useViewState("results.from", ""),
+    [to, TO] = useViewState("results.to", ""),
+    /** 业务对象：区域 / 设备（设备来自结果里的点位所属设备） */
+    [areaF, AF] = useViewState("results.area", "全部"),
+    [devF, DF] = useViewState("results.device", "全部"),
+    /** 视图：按任务（执行视角）/ 按巡检点（设备视角） */
+    [group, GR] = useViewState("results.group", "按任务"),
+    /** 更多筛选（任务 / 机器人 / 结果原始状态）折叠 */
+    [more, MO] = useViewState("results.more", false),
+    [raw, RA] = useViewState("results.raw", "全部"),
     [pn, PN] = useViewState("results.page", 1);
   const [value, V] = useState(""),
     [reason, R] = useState(""),
@@ -40,24 +53,87 @@ export function Results({ page, id }: { page: string; id?: string }) {
   }
 
   if (page === "results") {
-    const filtered = s.results.filter((r) => {
-      const p = pointOf(s, r),
-        t = s.tasks.find((t) => t.id === r.taskId);
+    /** 时间范围判定：按采集时间 */
+    const inRange = (x: string) => {
+      const v = parseTime(x);
+      if (Number.isNaN(v)) return true;
+      if (range === "今日")
+        return new Date(v).toDateString() === new Date().toDateString();
+      if (range === "近7天") return Date.now() - v <= 7 * 864e5;
+      if (range === "近30天") return Date.now() - v <= 30 * 864e5;
+      if (range === "自定义")
+        return (
+          (!from || v >= parseTime(from + " 00:00")) &&
+          (!to || v <= parseTime(to + " 23:59"))
+        );
+      return true;
+    };
+    /** 点位所属区域（取该点位所在地图的区域） */
+    const areaOfPoint = (p?: { mapId: string }) =>
+      s.maps.find((m) => m.id === p?.mapId)?.region || "—";
+    /**
+     * 业务范围：时间 + 区域 + 设备 + 关键词
+     * @description 顶部范围芯片的计数与列表**同源**（都基于 scoped），避免"芯片数字与列表不一致"
+     */
+    const scoped = s.results.filter((r) => {
+      const p = pointOf(s, r);
       return (
         (!id || r.taskId === id) &&
-        (taskF === "全部" || r.taskId === taskF) &&
-        (robotF === "全部" || t?.robotId === robotF) &&
-        [r.id, r.taskId, r.pointId, r.item, p?.device, p?.object, t?.robotId]
-          .join(" ")
-          .includes(q) &&
-        (status === "全部" || r.status === status) &&
-        (judgment === "全部" || (r.abnormal ? "异常" : "正常") === judgment) &&
-        (!date ||
-          r.time.includes(date) ||
-          r.time.includes(date.replaceAll("-", "/")))
+        inRange(r.time) &&
+        (areaF === "全部" || areaOfPoint(p) === areaF) &&
+        (devF === "全部" || p?.device === devF) &&
+        (!q.trim() ||
+          [r.id, r.taskId, r.pointId, r.item, p?.device, p?.object]
+            .join(" ")
+            .includes(q.trim()))
       );
     });
-    // 筛选下拉的候选：仅列出「有巡检结果的任务 / 机器」，避免出现选了却查不到数据的空选项
+    /** 结果状态（业务判断三选一）+ 更多筛选（任务 / 机器人 / 原始状态） */
+    const filtered = scoped.filter((r) => {
+      const t = s.tasks.find((x) => x.id === r.taskId);
+      return (
+        (status === "全部" ||
+          (status === "异常"
+            ? r.abnormal
+            : status === "待复核"
+              ? r.status === "待复核"
+              : !r.abnormal && r.status !== "待复核")) &&
+        (taskF === "全部" || r.taskId === taskF) &&
+        (robotF === "全部" || t?.robotId === robotF) &&
+        (raw === "全部" || r.status === raw)
+      );
+    });
+    /** 顶部范围芯片：点一下即作为「结果状态」筛选 */
+    const chips = [
+      { key: "全部", label: "检测结果", n: scoped.length },
+      {
+        key: "异常",
+        label: "判定异常",
+        n: scoped.filter((r) => r.abnormal).length,
+      },
+      {
+        key: "待复核",
+        label: "待复核",
+        n: scoped.filter((r) => r.status === "待复核").length,
+      },
+      {
+        key: "正常",
+        label: "判定正常",
+        n: scoped.filter((r) => !r.abnormal && r.status !== "待复核").length,
+      },
+    ];
+    // 业务对象候选：只列结果里真实出现过的设备 / 区域，避免"选了却查不到数据"
+    const devicesInResults = [
+      ...new Set(s.results.map((r) => pointOf(s, r)?.device).filter(Boolean)),
+    ] as string[];
+    const areasInResults = [
+      ...new Set(
+        devicesInResults.map((dv) =>
+          areaOfPoint(s.points.find((p) => p.device === dv)),
+        ),
+      ),
+    ];
+    // 更多筛选的候选：仅列出有巡检结果的任务 / 机器
     const taskOptions = s.tasks.filter((t) =>
       s.results.some((r) => r.taskId === t.id),
     );
@@ -65,26 +141,132 @@ export function Results({ page, id }: { page: string; id?: string }) {
       ...new Set(taskOptions.map((t) => t.robotId).filter(Boolean)),
     ];
     const robotOptions = s.robots.filter((rb) => robotIds.includes(rb.id));
-    // 按任务维度聚合：每个任务归为一组，组头展示任务与汇总，组内为该任务的检测项结果
+    // 两种业务视角：按任务（执行视角）/ 按巡检点（设备视角）
     const byTask = new Map<string, Result[]>();
+    const byPoint = new Map<string, Result[]>();
     for (const r of filtered) {
-      const g = byTask.get(r.taskId);
-      if (g) g.push(r);
+      const a = byTask.get(r.taskId);
+      if (a) a.push(r);
       else byTask.set(r.taskId, [r]);
+      const b = byPoint.get(r.pointId);
+      if (b) b.push(r);
+      else byPoint.set(r.pointId, [r]);
     }
-    const groups = [...byTask.entries()].sort((a, b) => {
-      const ka = s.tasks.find((t) => t.id === a[0])?.finishedAt || "";
-      const kb = s.tasks.find((t) => t.id === b[0])?.finishedAt || "";
-      return kb.localeCompare(ka);
-    });
-    // 任务作为外层：每页展示若干「任务行」，明细统一在「详情」弹窗的「表计识别」中查看
+    const taskGroups = [...byTask.entries()].sort((a, b) =>
+      (s.tasks.find((t) => t.id === b[0])?.finishedAt || "").localeCompare(
+        s.tasks.find((t) => t.id === a[0])?.finishedAt || "",
+      ),
+    );
+    const pointGroups = [...byPoint.entries()].sort(
+      (a, b) => parseTime(b[1][0].time) - parseTime(a[1][0].time),
+    );
+    // 每页展示若干「任务 / 巡检点」行，明细统一在「详情」里查看
     const pageSize = 10;
-    const pageGroups = groups.slice((pn - 1) * pageSize, pn * pageSize);
+    const pageTaskGroups = taskGroups.slice((pn - 1) * pageSize, pn * pageSize);
+    const pagePointGroups = pointGroups.slice((pn - 1) * pageSize, pn * pageSize);
+    const total = group === "按任务" ? taskGroups.length : pointGroups.length;
     return (
       <>
-      <Panel title="巡检结果 · 业务检测记录">
+      <Panel
+        title="巡检结果 · 业务检测记录"
+        extra={
+          <div className="segmented">
+            {["按任务", "按巡检点"].map((x) => (
+              <button
+                key={x}
+                className={group === x ? "active" : ""}
+                onClick={() => {
+                  GR(x);
+                  PN(1);
+                }}
+              >
+                {x}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        {/* 业务范围芯片：点一下即按该状态筛（计数与下方列表同源，不用二次理解口径） */}
+        <div className="result-scope">
+          {chips.map((c) => (
+            <button
+              key={c.key}
+              className={status === c.key ? "on" : ""}
+              onClick={() => {
+                S(c.key);
+                PN(1);
+              }}
+            >
+              <span>{c.label}</span>
+              <b>{c.n}</b>
+            </button>
+          ))}
+        </div>
         <div className="filter-bar result-query-filters">
-          <Field label="关键词（设备 / 对象 / 检测项）">
+          <Field label="时间范围">
+            <select
+              value={range}
+              onChange={(e) => {
+                RG(e.target.value);
+                PN(1);
+              }}
+            >
+              {["全部", "今日", "近7天", "近30天", "自定义"].map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
+          </Field>
+          {range === "自定义" && (
+            <>
+              <Field label="起始日期">
+                <input
+                  type="date"
+                  value={from}
+                  onChange={(e) => {
+                    FR(e.target.value);
+                    PN(1);
+                  }}
+                />
+              </Field>
+              <Field label="截止日期">
+                <input
+                  type="date"
+                  value={to}
+                  onChange={(e) => {
+                    TO(e.target.value);
+                    PN(1);
+                  }}
+                />
+              </Field>
+            </>
+          )}
+          <Field label="区域">
+            <select
+              value={areaF}
+              onChange={(e) => {
+                AF(e.target.value);
+                PN(1);
+              }}
+            >
+              {["全部", ...areasInResults].map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="设备">
+            <select
+              value={devF}
+              onChange={(e) => {
+                DF(e.target.value);
+                PN(1);
+              }}
+            >
+              {["全部", ...devicesInResults].map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="关键词（设备 / 点位 / 检测项）">
             <input
               value={q}
               onChange={(e) => {
@@ -94,101 +276,95 @@ export function Results({ page, id }: { page: string; id?: string }) {
               placeholder="输入编号或业务名称"
             />
           </Field>
-          <Field label="任务筛选">
-            <select
-              value={taskF}
-              onChange={(e) => {
-                TF(e.target.value);
-                PN(1);
-              }}
-            >
-              <option value="全部">全部任务</option>
-              {taskOptions.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}（{t.id}）
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="机器筛选">
-            <select
-              value={robotF}
-              onChange={(e) => {
-                RF(e.target.value);
-                PN(1);
-              }}
-            >
-              <option value="全部">全部机器</option>
-              {robotOptions.map((rb) => (
-                <option key={rb.id} value={rb.id}>
-                  {rb.name}（{rb.id}）
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="结果状态">
-            <select
-              value={status}
-              onChange={(e) => {
-                S(e.target.value);
-                PN(1);
-              }}
-            >
-              {["全部", "待复核", "已确认", "已识别", "无效"].map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="业务判断">
-            <select
-              value={judgment}
-              onChange={(e) => {
-                J(e.target.value);
-                PN(1);
-              }}
-            >
-              {["全部", "正常", "异常"].map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="采集日期">
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => {
-                D(e.target.value);
-                PN(1);
-              }}
-            />
-          </Field>
+          <Btn onClick={() => MO(!more)}>{more ? "收起筛选" : "更多筛选"}</Btn>
           <Btn
             onClick={() => {
               Q("");
               TF("全部");
               RF("全部");
               S("全部");
-              J("全部");
-              D("");
+              RG("全部");
+              FR("");
+              TO("");
+              AF("全部");
+              DF("全部");
+              RA("全部");
               PN(1);
             }}
           >
             重置筛选
           </Btn>
         </div>
-        {!groups.length ? (
-          <Note>没有符合筛选条件的巡检结果。</Note>
+        {/* 更多筛选：任务 / 机器人 / 结果原始状态（日常复核不常用，默认收起） */}
+        {more && (
+          <div className="filter-bar result-query-filters">
+            <Field label="任务">
+              <select
+                value={taskF}
+                onChange={(e) => {
+                  TF(e.target.value);
+                  PN(1);
+                }}
+              >
+                <option value="全部">全部任务</option>
+                {taskOptions.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}（{t.id}）
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="机器人">
+              <select
+                value={robotF}
+                onChange={(e) => {
+                  RF(e.target.value);
+                  PN(1);
+                }}
+              >
+                <option value="全部">全部机器</option>
+                {robotOptions.map((rb) => (
+                  <option key={rb.id} value={rb.id}>
+                    {rb.name}（{rb.id}）
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="结果原始状态">
+              <select
+                value={raw}
+                onChange={(e) => {
+                  RA(e.target.value);
+                  PN(1);
+                }}
+              >
+                {["全部", "待复核", "已确认", "已识别", "无效"].map((x) => (
+                  <option key={x}>{x}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
+        {!total ? (
+          <Note>
+            没有符合筛选条件的巡检结果，可放宽时间范围或点「重置筛选」。
+          </Note>
         ) : (
           <div className="task-toolbar">
             <span className="muted">
-              共 {groups.length} 个任务 · {filtered.length} 条检测结果
+              {group === "按任务"
+                ? `共 ${taskGroups.length} 个任务 · ${filtered.length} 条检测结果`
+                : `共 ${pointGroups.length} 个巡检点 · ${filtered.length} 条检测结果`}
             </span>
             <span className="muted">
-              点任务行「详情」查看该任务的巡检结果详情与 AI 识别结果
+              {group === "按任务"
+                ? "「详情」看该任务的 AI 识别结果与复核"
+                : "「点位详情」看历史结果与判定规则"}
             </span>
           </div>
         )}
-        {pageGroups.map(([taskId, list]) => {
+        {group === "按任务"
+          ? pageTaskGroups.map(([taskId, list]) => {
           const t = s.tasks.find((x) => x.id === taskId);
           const abn = list.filter((r) => r.abnormal).length;
           const pend = list.filter((r) => r.status === "待复核").length;
@@ -242,12 +418,74 @@ export function Results({ page, id }: { page: string; id?: string }) {
               </div>
             </div>
           );
-        })}
+        })
+          : pagePointGroups.map(([pid, list]) => {
+              const p = s.points.find((x) => x.id === pid);
+              const abn = list.filter((r) => r.abnormal).length;
+              const pend = list.filter((r) => r.status === "待复核").length;
+              const ok = abn === 0;
+              return (
+                <div className="task-group" key={pid}>
+                  <div className={"task-group-head" + (ok ? " ok" : " abn")}>
+                    <span className={"tg-flag" + (ok ? " ok" : " abn")} />
+                    <span className="tg-main">
+                      <span className="tg-title">
+                        <b>{p?.name || pid}</b>
+                        <span className={"tg-judge" + (ok ? " ok" : " abn")}>
+                          {ok ? "正常" : `异常 ${abn}`}
+                        </span>
+                        {p && <Badge>{p.state}</Badge>}
+                      </span>
+                      <span className="tg-meta">
+                        <span>{pid}</span>
+                        <i>·</i>
+                        <span>{p?.device}</span>
+                        <i>·</i>
+                        <span>最近 {list[0]?.time}</span>
+                      </span>
+                    </span>
+                    <span className="tg-stats">
+                      <span className="tg-stat">
+                        检测 <b>{list.length}</b>
+                      </span>
+                      <span className={"tg-stat" + (pend ? " warn" : "")}>
+                        待复核 <b>{pend}</b>
+                      </span>
+                    </span>
+                    <span
+                      className="tg-detail"
+                      role="button"
+                      title="进入该巡检点详情（最近检测结果）"
+                      onClick={() => go("point", pid)}
+                    >
+                      点位详情
+                    </span>
+                  </div>
+                  {/* 最近 3 条读数：按巡检点看变化，不必逐个点开任务 */}
+                  <div className="point-result-strip">
+                    {list.slice(0, 3).map((r) => (
+                      <span key={r.id}>
+                        {r.time} · {r.final}
+                        {r.unit}{" "}
+                        <Badge>
+                          {r.status === "待复核"
+                            ? "待判定"
+                            : r.abnormal
+                              ? "异常"
+                              : "正常"}
+                        </Badge>
+                      </span>
+                    ))}
+                    <span className="muted">共 {list.length} 条</span>
+                  </div>
+                </div>
+              );
+            })}
         <Pager
           page={pn}
-          count={groups.length}
+          count={total}
           size={pageSize}
-          unit="个任务"
+          unit={group === "按任务" ? "个任务" : "个巡检点"}
           onChange={PN}
         />
       </Panel>
@@ -268,7 +506,7 @@ export function Results({ page, id }: { page: string; id?: string }) {
           <span className="bc-id">{rd.id}</span>
           <Badge>{rd.status === "待复核" ? "待判定" : rd.abnormal ? "异常" : "正常"}</Badge>
           <Badge>{rd.status}</Badge>
-          <ObjectLink type="archive" id={p && deviceCode(p.device)}>
+          <ObjectLink type="archive" id={p && archiveIdOf(s, p.device)}>
             {p?.device}
           </ObjectLink>
           <ObjectLink type="point" id={rd.pointId}>
@@ -390,7 +628,7 @@ export function Results({ page, id }: { page: string; id?: string }) {
   return (
     <>
       <div className="context-bar">
-        <ObjectLink type="archive" id={p && deviceCode(p.device)}>
+        <ObjectLink type="archive" id={p && archiveIdOf(s, p.device)}>
           {p?.device}
         </ObjectLink>
         <ObjectLink type="point" id={r.pointId}>
@@ -542,8 +780,26 @@ export function Results({ page, id }: { page: string; id?: string }) {
 export function Alarms({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const [note, N] = useState(""),
-    [filter, F] = useViewState("alarms.filter", "全部");
+    [filter, F] = useViewState("alarms.filter", "全部"),
+    [catF, CF] = useViewState("alarms.cat", "全部");
   const [modal, setModal] = useState<null | "result" | "task">(null);
+  // 告警分级口径统一：紧急→red（需立即处置）· 重要→amber（需关注）· 一般→blue（提示）
+  const levelTone = (lv: string): "red" | "amber" | "blue" | undefined =>
+    lv === "紧急" ? "red" : lv === "重要" ? "amber" : lv === "一般" ? "blue" : undefined;
+  const levelClass = (lv: string): string =>
+    lv === "紧急" ? "lv-urgent" : lv === "重要" ? "lv-important" : lv === "一般" ? "lv-minor" : "";
+  /** 闭环阶段：顺序即流程（异常触发 → 确认处置 → 复查 → 恢复 → 关闭） */
+  const ALARM_PHASES = ["待确认", "处理中", "待复查", "已恢复", "已关闭"];
+  /** 未闭环 = 仍需动作（已关闭才是闭环终点） */
+  const openStates = ["待确认", "处理中", "待复查", "已恢复"];
+  const alarmsOpen = s.alarms.filter((a) => openStates.includes(a.state));
+  /** 分类范围（阶段条计数与列表同一份口径，点阶段即筛选） */
+  const alarmsInCat = s.alarms.filter(
+    (a) => catF === "全部" || a.category === catF,
+  );
+  const alarmsAll = alarmsInCat.filter(
+    (a) => filter === "全部" || a.state === filter,
+  );
   // 告警事件列表：支持从驾驶舱「今日告警」下钻（URL 带告警 id），高亮目标行并给出上下文
   if (page === "alarms") {
     const focus = id ? s.alarms.find((x) => x.id === id) : undefined;
@@ -551,20 +807,47 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
       <Panel
         title="告警事件"
         extra={
-          <select value={filter} onChange={(e) => F(e.target.value)}>
-            {["全部", "待确认", "处理中", "待复查", "已恢复", "已关闭"].map(
-              (x) => (
+          <>
+            <select value={catF} onChange={(e) => CF(e.target.value)} title="按分类筛选">
+              {["全部", ...ALARM_CATEGORIES].map((x) => (
                 <option key={x}>{x}</option>
-              ),
-            )}
-          </select>
+              ))}
+            </select>
+            <select value={filter} onChange={(e) => F(e.target.value)} title="按状态筛选">
+              {["全部", "待确认", "处理中", "待复查", "已恢复", "已关闭"].map(
+                (x) => (
+                  <option key={x}>{x}</option>
+                ),
+              )}
+            </select>
+          </>
         }
       >
+        {/* 闭环阶段条：点任一阶段即筛选（计数与本页同一份口径，不用二次理解） */}
+        <div className="alarm-scope">
+          {["全部", "待确认", "处理中", "待复查", "已恢复", "已关闭"].map((x) => (
+            <button
+              key={x}
+              className={filter === x ? "on" : ""}
+              onClick={() => F(x)}
+            >
+              {x === "已关闭" ? "已闭环" : x}
+              <b>{alarmsInCat.filter((a) => x === "全部" || a.state === x).length}</b>
+            </button>
+          ))}
+        </div>
+        <p className="alarm-note">
+          闭环：异常触发 → <b>确认处置</b>（可一键派单）→ <b>创建复查任务</b> →{" "}
+          <b>复查恢复</b> → <b>人工关闭</b>；分级决定处置机制 ——
+          <i className="alarm-lv lv-urgent">紧急</i> 立即派单 ·
+          <i className="alarm-lv lv-important">重要</i> 限时确认 ·
+          <i className="alarm-lv lv-minor">一般</i> 批量复核。
+        </p>
         {focus && (
           <div className="context-bar">
             <b>驾驶舱下钻</b>
             <span className="bc-id">{focus.id}</span>
-            <Badge>{focus.level}</Badge>
+            <Badge tone={levelTone(focus.level)}>{focus.level}</Badge>
             <Badge>{focus.state}</Badge>
             <span>{focus.name}</span>
             <span className="muted">
@@ -579,25 +862,91 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
         )}
         <Table
           heads={[
-            "告警名称",
+            "告警 / 来源",
             "等级",
-            "业务点位",
-            "任务",
-            "开始时间",
-            "状态",
+            "关联对象",
+            "闭环进度",
+            "处置与工单",
             "操作",
           ]}
-          rows={s.alarms
-            .filter((a) => filter === "全部" || a.state === filter)
-            .map((a) => [
-              a.id === id ? <b className="hl-row">{a.name}</b> : a.name,
-              <Badge>{a.level}</Badge>,
-              <ObjectLink type="point" id={a.pointId} />,
-              <ObjectLink type="task-detail" id={a.taskId} />,
-              a.time,
-              <Badge>{a.state}</Badge>,
-              <Btn onClick={() => go("alarm", a.id)}>处置 / 复查</Btn>,
-            ])}
+          rows={alarmsAll.map((a) => {
+            const wo = s.workOrders.find((w) => w.alarmId === a.id);
+            const idx = ALARM_PHASES.indexOf(a.state);
+            return [
+              <>
+                {a.id === id ? (
+                  <b className="hl-row">{a.name}</b>
+                ) : (
+                  a.name
+                )}
+                <small>
+                  {a.id} · {a.time} ·{" "}
+                  <span
+                    className={
+                      "alarm-cat " +
+                      (a.category === "机器人" ? "cat-robot" : "cat-biz")
+                    }
+                  >
+                    {a.category}
+                  </span>
+                  {a.taskId && (
+                    <>
+                      {" "}
+                      · 任务 <ObjectLink type="task-detail" id={a.taskId} />
+                    </>
+                  )}
+                </small>
+              </>,
+              <span className={"alarm-lv lv-" + levelClass(a.level)}>
+                <i />
+                {a.level}
+              </span>,
+              a.category === "机器人" ? (
+                a.robotId ? (
+                  <ObjectLink type="robot" id={a.robotId} />
+                ) : (
+                  "—"
+                )
+              ) : a.pointId ? (
+                <ObjectLink type="point" id={a.pointId} />
+              ) : (
+                "—"
+              ),
+              // 闭环进度：5 段点阵 + 当前阶段（一眼看出卡在哪一环）
+              <span className="alarm-phase" title={a.state}>
+                {ALARM_PHASES.map((x, i) => (
+                  <i key={x} className={i <= idx ? "on" : ""} />
+                ))}
+                <em>
+                  {a.state} · {idx + 1}/{ALARM_PHASES.length}
+                </em>
+              </span>,
+              <>
+                {wo ? (
+                  <>
+                    {wo.id} · {wo.state}
+                    <small>
+                      SLA 剩余 {wo.slaLeft} 分钟
+                      {wo.assignee ? ` · ${wo.assignee}` : " · 待派单"}
+                    </small>
+                  </>
+                ) : a.reviewTask ? (
+                  <>
+                    复查任务 {a.reviewTask}
+                    <small>{s.tasks.find((t) => t.id === a.reviewTask)?.state}</small>
+                  </>
+                ) : (
+                  <>
+                    尚未派单
+                    <small>{a.handle || "确认后可直接一键派单"}</small>
+                  </>
+                )}
+              </>,
+              <Btn onClick={() => go("alarm", a.id)}>
+                {a.state === "已关闭" ? "查看" : "处置 / 复查"}
+              </Btn>,
+            ];
+          })}
         />
       </Panel>
     );
@@ -616,8 +965,15 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
           <b>告警详情</b>
           <span className="bc-id">{ad.id}</span>
           <Badge>{ad.level}</Badge>
+          <span
+            className={
+              "alarm-cat " + (ad.category === "机器人" ? "cat-robot" : "cat-biz")
+            }
+          >
+            {ad.category}
+          </span>
           <Badge>{ad.state}</Badge>
-          <ObjectLink type="archive" id={p && deviceCode(p.device)}>
+          <ObjectLink type="archive" id={p && archiveIdOf(s, p.device)}>
             {p?.device}
           </ObjectLink>
           <ObjectLink type="point" id={ad.pointId}>
@@ -642,7 +998,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             <Video live={false} label={p?.name} />
             <p>
               设备{" "}
-              <ObjectLink type="archive" id={p && deviceCode(p.device)}>
+              <ObjectLink type="archive" id={p && archiveIdOf(s, p.device)}>
                 {p?.device}
               </ObjectLink>{" "}
               · 点位 <ObjectLink type="point" id={ad.pointId} />
@@ -683,6 +1039,13 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
       <div className="context-bar">
         <b>{a.name}</b>
         <Badge>{a.level}</Badge>
+        <span
+          className={
+            "alarm-cat " + (a.category === "机器人" ? "cat-robot" : "cat-biz")
+          }
+        >
+          {a.category}
+        </span>
         <Badge>{a.state}</Badge>
         <span>
           {a.id} · {a.time}
@@ -705,7 +1068,8 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             <ObjectLink
               type="archive"
               id={
-                s.points.find((p) => p.id === a.pointId)?.device.split(" ")[0]
+                s.points.find((p) => p.id === a.pointId) &&
+                archiveIdOf(s, s.points.find((p) => p.id === a.pointId)!.device)
               }
             >
               {s.points.find((p) => p.id === a.pointId)?.device}

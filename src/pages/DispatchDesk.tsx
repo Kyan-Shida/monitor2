@@ -298,7 +298,7 @@ export function DispatchDesk({ id }: { id?: string }) {
                           </Btn>
                         )}
                       {reasons.includes("地图/点位版本待同步") && (
-                        <Btn onClick={() => go("maps", t.mapId, "sync")}>
+                        <Btn onClick={() => go("map-detail", t.mapId, "sync")}>
                           同步地图
                         </Btn>
                       )}

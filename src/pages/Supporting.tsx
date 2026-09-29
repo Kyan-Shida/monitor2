@@ -25,12 +25,6 @@ export function Supporting({ page }: { page: string }) {
     [name, N] = useState(""),
     [detail, D] = useState(""),
     [bid, B] = useState("BIZ-20260922-001"),
-    /** 设备资源页「对象与检测项」弹窗开关：就地查看，不跳转离开当前页 */
-    [objectsOpen, OO] = useState(false),
-    /** 「对象与检测项」弹窗对应的设备（统一取自点位所属设备） */
-    [objDevice, OD] = useState(""),
-    /** 设备资源树选中的设备；空串表示全部设备 */
-    [eqSel, ES] = useState(""),
     [pDev, PD] = useViewState("supporting.points.device", "全部"),
     [pMap, PM] = useViewState("supporting.points.map", "全部"),
     [pState, PS] = useViewState("supporting.points.state", "全部"),
@@ -92,9 +86,9 @@ export function Supporting({ page }: { page: string }) {
             page === "points" ? setRulePoint(p.id) : go("point", p.id)
           }
         >
-          结果与告警规则
+          查看告警规则
         </Btn>
-        <Btn onClick={() => go("annotation", p.mapId)}>编辑标注</Btn>
+        <Btn onClick={() => go("point-edit", p.id)}>编辑巡检点</Btn>
       </div>,
     ]);
   // 角色权限矩阵：管理员 / 非管理员 × 权限五要素，替代原通用配置表
@@ -228,7 +222,7 @@ export function Supporting({ page }: { page: string }) {
               }}
             />
             <Btn primary onClick={() => go("annotation")}>
-              业务标注工作台
+              巡检点管理
             </Btn>
           </div>
         }
@@ -240,137 +234,25 @@ export function Supporting({ page }: { page: string }) {
         <Pager page={cur} count={list.length} size={size} onChange={PP} />
         {rulePoint && (
           <Modal
-            title={`采集结果与告警规则 · ${s.points.find((p) => p.id === rulePoint)?.name}`}
+            title={`当前生效的判定与告警规则 · ${s.points.find((p) => p.id === rulePoint)?.name}`}
             drawer
             drawerWidth={700}
             onClose={() => setRulePoint("")}
           >
+              {/* 只读：告警设置统一在「业务巡检目标 › 告警设置」维护 */}
               <AlarmConfiguration
                 key={rulePoint}
                 pointId={rulePoint}
                 embedded
+                readOnly
               />
           </Modal>
         )}
       </Panel>
     );
   }
-  // 设备资源：树与台账统一以「点位所属设备」为唯一数据源，只读浏览 + 对象下钻，不再提供通用配置 CRUD
-  if (page === "equipment") {
-    const devices = [...new Set(s.points.map((p) => p.device))].map(
-      (devName) => {
-        const pts = s.points.filter((p) => p.device === devName);
-        return {
-          code: devName.split(" ")[0],
-          name: devName,
-          region: s.maps.find((m) => m.id === pts[0]?.mapId)?.region || "—",
-          objects: [...new Set(pts.map((p) => p.object))],
-          pointCount: pts.length,
-          enabled: pts.filter((p) => p.state === "已启用").length,
-        };
-      },
-    );
-    const regions = [...new Set(devices.map((d) => d.region))];
-    const kw = q.trim();
-    const rows = devices
-      .filter((d) => !eqSel || d.name === eqSel)
-      .filter((d) => !kw || (d.name + d.code).includes(kw));
-    return (
-      <>
-        <div className="grid template-layout">
-          <Panel
-            title="设备资源树"
-            extra={<Btn onClick={() => ES("")}>全部设备</Btn>}
-          >
-            {/* 层级由数据派生（区域 → 设备），不再写死企业 / 装置 / 罐区三级 */}
-            <div className="resource-tree">
-              {regions.map((rg) => (
-                <div key={rg}>
-                  <div className="rt-node rt-l1">{rg}</div>
-                  {devices
-                    .filter((d) => d.region === rg)
-                    .map((d) => (
-                      <button
-                        key={d.code}
-                        className={
-                          "rt-node rt-l3" + (eqSel === d.name ? " active" : "")
-                        }
-                        onClick={() => ES(d.name)}
-                      >
-                        {d.name}
-                      </button>
-                    ))}
-                </div>
-              ))}
-            </div>
-          </Panel>
-          <Panel
-            title="设备台账"
-            extra={
-              <input
-                placeholder="搜索设备名称 / 编码"
-                value={q}
-                onChange={(e) => Q(e.target.value)}
-              />
-            }
-          >
-            <Table
-              heads={[
-                "设备编码",
-                "设备名称",
-                "所属区域",
-                "关联对象",
-                "关联点位",
-                "点位启用",
-                "操作",
-              ]}
-              rows={rows.map((d) => [
-                d.code,
-                <ObjectLink type="archive" id={d.code} to="archive">
-                  {d.name}
-                </ObjectLink>,
-                d.region,
-                d.objects.join(" / "),
-                `${d.pointCount} 项`,
-                `${d.enabled} / ${d.pointCount}`,
-                <Btn
-                  onClick={() => {
-                    OD(d.name);
-                    OO(true);
-                  }}
-                >
-                  对象与检测项
-                </Btn>,
-              ])}
-            />
-          </Panel>
-        </div>
-        {objectsOpen && (
-          <Modal
-            title={`${objDevice || "全部设备"} · 对象与检测项`}
-            drawer
-            drawerWidth={860}
-            footer={
-              <>
-                <Btn onClick={() => OO(false)}>关闭</Btn>
-                <Btn primary onClick={() => go("annotation")}>
-                  业务标注工作台
-                </Btn>
-              </>
-            }
-            onClose={() => OO(false)}
-          >
-            <Table
-              heads={POINT_HEADS}
-              rows={pointRows(
-                s.points.filter((p) => !objDevice || p.device === objDevice),
-              )}
-            />
-          </Modal>
-        )}
-      </>
-    );
-  }
+  // 设备主数据（阶段③）已独立成页：见 pages/DeviceMaster.tsx（沿用 equipment 路由），
+  // 本文件中不再保留"由点位反推设备"的第二套口径
   if (page === "integration")
     return (
       <>

@@ -21,11 +21,12 @@ function dispatch(s: State, id: string) {
   s = run(s, { type: "RECEIPT", id });
   return run(s, { type: "START", id });
 }
-test("42 unique phase-one pages", () => {
-  assert.equal(pages.length, 42);
-  assert.equal(new Set(pages.map((p) => p.id)).size, 42);
+// 2026-09-30：下线「路线管理」目录（路线随地图带入）→ 39 → 38
+test("38 unique phase-one pages", () => {
+  assert.equal(pages.length, 38);
+  assert.equal(new Set(pages.map((p) => p.id)).size, 38);
 });
-test("map import → annotation → trial sync → validation → publication", () => {
+test("map import → annotation → sync → validation → publication", () => {
   let s = seed();
   s = run(s, {
     type: "IMPORT",
@@ -34,6 +35,12 @@ test("map import → annotation → trial sync → validation → publication", 
     cloud: "cloud.pcd",
     video: "video.mp4",
     source: "手持仪器",
+    // 定位ID与轨迹随文件带入（简化后的导入就是"上传地图 + 自带定位ID/轨迹"）
+    targets: [
+      { id: "O901", x: 37, y: 34, kind: "可见光" },
+      { id: "O902", x: 65, y: 60, kind: "红外" },
+    ],
+    track: [{ x: 16, y: 82, kind: "停靠点", seq: 1 }],
   });
   const m = s.maps[0];
   s = run(s, {
@@ -41,21 +48,22 @@ test("map import → annotation → trial sync → validation → publication", 
     mapId: m.id,
     targetId: m.targets[0].id,
     name: "测试压力点",
+    // v3：设备与检测对象必须来自设备主数据（DEV-V001 / 出口压力表）
     device: "V001",
+    objects: ["出口压力表"],
     item: "压力读数",
     requirement: "表盘清晰",
   });
-  assert.throws(() => run(s, { type: "PUBLISH", id: m.id }));
-  s = run(s, { type: "PUBLISH", id: m.id, trial: true });
+  // 单级定版：原始资料与点位齐备即可发布（平台不区分试验版 / 正式版）
+  s = run(s, { type: "PUBLISH", id: m.id });
+  assert.equal(s.maps[0].state, "已发布");
   s = sync(s, m.id, "R02");
   const p = s.points.at(-1)!;
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02", fail: true });
   assert.match(s.points.find(x => x.id === p.id)!.validationFailure!, /目标身份未确认/);
-  assert.throws(() => run(s, { type: "PUBLISH", id: m.id }));
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02" });
   assert.equal(s.points.find(x => x.id === p.id)!.validationFailure, undefined);
-  s = run(s, { type: "PUBLISH", id: m.id });
-  assert.equal(s.maps[0].state, "已发布");
+  assert.equal(s.points.find(x => x.id === p.id)!.state, "已启用");
   assert.equal(s.robots[1].pointSet, s.maps[0].pointSet);
 });
 test("missing archive blocks publishing", () => {
@@ -67,7 +75,7 @@ test("missing archive blocks publishing", () => {
     source: "机器人",
   });
   assert.throws(
-    () => run(s, { type: "PUBLISH", id: s.maps[0].id, trial: true }),
+    () => run(s, { type: "PUBLISH", id: s.maps[0].id }),
     /原始点云/,
   );
 });

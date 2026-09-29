@@ -10,8 +10,8 @@ test("state survives persistence and old schema migration", () => {
   const s = seed(); s.roleId = "user";
   persist(s);
   assert.equal(migrate(JSON.parse(saved))!.roleId, "user");
-  for (const schema of [1, 2, 3, 4]) {
-    assert.equal(migrate({ ...s, schema })!.schema, 5);
+  for (const schema of [1, 2, 3, 4, 5]) {
+    assert.equal(migrate({ ...s, schema })!.schema, 6);
     assert.equal(migrate({ ...s, schema })!.roleId, "user");
   }
 });

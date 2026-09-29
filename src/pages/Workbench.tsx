@@ -19,10 +19,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useStore } from "../data/store";
-import { go } from "../data/navigation";
+import { go, useViewState } from "../data/navigation";
 import { Badge, Btn, Modal, Note } from "../components/UI";
 import { ObjectLink, Kpis } from "../components/Business";
-import { minutesLeft, pointOf, stageOf, terminal } from "../data/selectors";
+import {
+  minutesLeft,
+  parseTime,
+  pointOf,
+  stageOf,
+  terminal,
+} from "../data/selectors";
 import { DUE_SOON_MS, metricValue } from "../data/metrics";
 import { canSee, roleOf } from "../data/roles";
 import type { KpiTone } from "../components/Business";
@@ -62,10 +68,33 @@ function TodoEmpty({ text }: { text: string }) {
   return <li className="todo-empty">{text}</li>;
 }
 
+/** 告警分级三档（与「告警事件」页同口径：级别决定处置机制，不搞第四档"其他"） */
+const ALARM_LEVELS = ["紧急", "重要", "一般"];
+/** 分级 → 样式类 */
+const LEVEL_CLASS: Record<string, string> = {
+  紧急: "urgent",
+  重要: "important",
+  一般: "minor",
+};
+/** 告警状态 → 徽标色调（闭环越靠后越"绿"） */
+const ALARM_STATE_TONE: Record<
+  string,
+  "red" | "amber" | "blue" | "green" | undefined
+> = {
+  待确认: "amber",
+  处理中: "blue",
+  待复查: "blue",
+  已恢复: "green",
+  已关闭: undefined,
+};
 export function Workbench() {
   const { s } = useStore();
   /** 当前展开明细的待办分类 key；空串表示弹窗未打开 */
   const [openKey, OPEN] = useState("");
+  /** 工作台分级告警面板的分类筛选（全部 / 业务 / 机器人），与「告警事件」页同口径 */
+  const [alarmCat, SETALARMCAT] = useViewState("workbench.alarmCat", "全部");
+  /** 分级筛选：空串=全部分级；点芯片切换（与列表同源） */
+  const [alarmLevel, SETALARMLEVEL] = useViewState("workbench.alarmLevel", "");
   /** 当前时间：每 30 秒刷新一次，驱动顶部问候语与日期展示 */
   const [now, SETN] = useState(() => new Date());
   useEffect(() => {
@@ -77,6 +106,37 @@ export function Workbench() {
   const pendingAlarms = s.alarms.filter((a) => a.state === "待确认");
   const pendingTasks = s.tasks.filter((t) => t.state === "待调度");
   const running = s.tasks.filter((t) => t.state === "执行中");
+
+  /** 工作台分级告警面板的分类匹配：全部 / 业务 / 机器人（与「告警事件」页同口径） */
+  const catMatch = (a: (typeof s.alarms)[number]) =>
+    alarmCat === "全部" || a.category === alarmCat;
+
+  /**
+   * 告警与闭环口径（与「告警事件」页同一份逻辑）
+   * @description 未闭环 = 待确认 / 处理中 / 待复查 / 已恢复（**已关闭才是闭环终点**）；
+   *              分级只有三档且决定处置机制；芯片计数与列表同源，点芯片即筛选
+   */
+  const ALARM_OPEN_STATES = ["待确认", "处理中", "待复查", "已恢复"];
+  const alarmsInCat = s.alarms.filter(catMatch);
+  const alarmOpen = alarmsInCat.filter((a) =>
+    ALARM_OPEN_STATES.includes(a.state),
+  );
+  const openByLevel = Object.fromEntries(
+    ALARM_LEVELS.map((lv) => [
+      lv,
+      alarmOpen.filter((a) => a.level === lv).length,
+    ]),
+  ) as Record<string, number>;
+  /** 近 7 天已闭环（已关闭）：体现闭环在推进，而不是只堆积未处理 */
+  const closed7 = alarmsInCat.filter(
+    (a) =>
+      a.state === "已关闭" && Date.now() - parseTime(a.time) <= 7 * 864e5,
+  ).length;
+  /** 最近 5 条未闭环：按**真实时间倒序**（原实现取数组尾部，取的其实是最旧的几条） */
+  const alarmFeed = alarmOpen
+    .filter((a) => !alarmLevel || a.level === alarmLevel)
+    .sort((a, b) => parseTime(b.time) - parseTime(a.time))
+    .slice(0, 5);
 
   // 机器人关注项：离线、低电量、地图/点位版本落后三类合并，同一机器人只出现一次
   const robotAttention = s.robots
@@ -440,39 +500,80 @@ export function Workbench() {
             </ul>
           </div>
         </section>
-        <section className="wb-panel">
+        {/* 告警与闭环：分级只保留"该多急"的三档（与「告警事件」页同口径），
+            芯片可点筛选、计数与列表同源；列表按真实时间倒序取最近 5 条 */}
+        <section className="wb-panel wb-alarm-panel">
           <header className="wb-panel-head">
-            <span>机器人运行概览</span>
-            <button className="wb-panel-link" onClick={() => go("robots")}>
-              机器人监测
+            <span>告警与闭环</span>
+            <button className="wb-panel-link" onClick={() => go("alarms")}>
+              全部告警 →
             </button>
           </header>
           <div className="wb-panel-body">
-            <ul className="wb-feed">
-              {s.robots.map((r) => (
-                <li
-                  key={r.id}
-                  className="wb-feed-item"
-                  onClick={() => go("robots", r.id)}
-                >
-                  <div className="wb-feed-top">
-                    <b>{r.name}</b>
-                    <span
-                      className={
-                        "wb-dot " +
-                        (r.state === "离线"
-                          ? "off"
-                          : r.state === "执行中"
-                            ? "run"
-                            : "idle")
-                      }
-                    />
-                  </div>
-                  <small>
-                    {r.region} · 电量 {r.battery}% · {r.state}
-                  </small>
-                </li>
-              ))}
+            <div className="wb-alarm-summary">
+              <select
+                value={alarmCat}
+                onChange={(e) => SETALARMCAT(e.target.value)}
+                title="按分类筛选（业务 / 机器人本体异常）"
+              >
+                {["全部", "业务", "机器人"].map((x) => (
+                  <option key={x}>{x}</option>
+                ))}
+              </select>
+              <div className="wb-level-chips">
+                {ALARM_LEVELS.map((lv) => (
+                  <button
+                    key={lv}
+                    className={
+                      "wb-level-chip lv-" +
+                      LEVEL_CLASS[lv] +
+                      (alarmLevel === lv ? " on" : "")
+                    }
+                    title={`只看「${lv}」未闭环告警`}
+                    onClick={() => SETALARMLEVEL(alarmLevel === lv ? "" : lv)}
+                  >
+                    <i />
+                    {lv}
+                    <b>{openByLevel[lv]}</b>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="wb-alarm-note">
+              未闭环 <b>{alarmOpen.length}</b> 条 · 近 7 天已闭环{" "}
+              <b>{closed7}</b> 条 · 闭环：确认 → 处置 → 复查 → 恢复 → 关闭
+            </p>
+            <ul className="wb-alarm-feed">
+              {alarmFeed.map((a) => {
+                const p = s.points.find((x) => x.id === a.pointId);
+                return (
+                  <li
+                    key={a.id}
+                    className={"wb-alarm-item lv-" + LEVEL_CLASS[a.level]}
+                    title="点击进入处置 / 复查"
+                    onClick={() => go("alarm", a.id)}
+                  >
+                    <i className={"wb-alarm-dot lv-" + LEVEL_CLASS[a.level]} />
+                    <b>{a.name}</b>
+                    <Badge tone={ALARM_STATE_TONE[a.state]}>{a.state}</Badge>
+                    <small>
+                      {a.category === "机器人"
+                        ? `机器人 ${a.robotId || "本体"}`
+                        : p?.name || a.pointId}{" "}
+                      · {a.time}
+                    </small>
+                  </li>
+                );
+              })}
+              {!alarmFeed.length && (
+                <TodoEmpty
+                  text={
+                    alarmLevel
+                      ? `暂无「${alarmLevel}」级别的未闭环告警`
+                      : "暂无未闭环告警"
+                  }
+                />
+              )}
             </ul>
           </div>
         </section>

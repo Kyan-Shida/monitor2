@@ -107,7 +107,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
               <dt>能力</dt>
               <dd>{r.capabilities.join(" / ")}</dd>
             </dl>
-            <Btn onClick={() => go("maps", r.mapId, "sync")}>查看同步记录</Btn>
+            <Btn onClick={() => go("map-detail", r.mapId, "sync")}>查看同步记录</Btn>
           </Panel>
         </div>
         <Panel title="关键组件">
@@ -234,7 +234,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
             .map((r) => (
               <Note key={r.id}>
                 {r.id} 地图版本待同步。
-                <Btn onClick={() => go("maps", s.maps[0].id, "sync")}>
+                <Btn onClick={() => go("map-detail", s.maps[0].id, "sync")}>
                   安排维护
                 </Btn>
               </Note>

@@ -458,6 +458,11 @@ h4 {
   border-color: #f0d7d1;
   color: #b75c50;
 }
+.badge.blue {
+  background: #eef4fd;
+  border-color: #d3e2f6;
+  color: #2c66b3;
+}
 /* 表格内的次要信息：编号、版本号等 */
 .cell-muted {
   display: block;
@@ -693,9 +698,144 @@ h4 {
 }
 .annotation-grid {
   display: grid;
-  grid-template-columns: 220px minmax(350px, 1.6fr) minmax(280px, 1fr);
+  grid-template-columns: 220px minmax(350px, 1.6fr) minmax(280px, 1.1fr);
   gap: 16px;
   align-items: start;
+}
+/* ── 标注页「点位详情」四段（身份 / 看什么 / 怎么看 / 判定）───────────────
+   右栏把"一个点位"一次定义完，内容较长：让各列在固定高度内自撑，
+   面板体自身滚动，避免整页被撑高（页面高度由 JS 按视口算出） */
+.annotation-grid {
+  align-items: stretch;
+}
+.annotation-grid > .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.annotation-grid > .panel > .panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+/* 「看什么」：检测目标多选列表，选中态高亮 */
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
+  background: #fbfcfe;
+  cursor: pointer;
+}
+.pick.on {
+  border-color: #7fb0e0;
+  background: #f1f7fd;
+}
+.pick b {
+  font-size: 13px;
+  font-weight: 600;
+  color: #22364d;
+}
+.pick small {
+  margin-left: auto;
+  color: #7b8b9c;
+  font-size: 11px;
+}
+/* ── 地图管理：轨迹折线覆盖层 + 平台新增点位标记 ─────────────────────── */
+/* 轨迹折线：坐标系与底图绘制区一致（viewBox 0–100），随底图等比缩放 */
+.map-track {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.map-track polyline {
+  fill: none;
+  stroke: #2f7fd0;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+.map-track circle {
+  fill: #2f7fd0;
+  opacity: 0.85;
+}
+/* 平台新增的点位：琥珀色描边，与"地图自带定位ID"区分 */
+.map-marker.added {
+  border-color: #c58e32;
+  background: #fdf6e8;
+}
+/* 「怎么看」：滑杆 / 数值行三列等宽铺开 */
+.ptz-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.ptz-row .inline-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.ptz-row .inline-filter span {
+  white-space: nowrap;
+}
+.ptz-row input[type="range"] {
+  flex: 1;
+  min-width: 40px;
+}
+.ptz-row input[type="number"] {
+  width: 100%;
+  min-width: 0;
+}
+/* 「告警设置」：平台唯一的告警配置入口（业务巡检目标的「配业务逻辑与算法」内） */
+.alarm-setting {
+  padding: 12px 14px;
+  margin: 10px 0 14px;
+  border: 1px solid #e2d3c0;
+  border-left: 3px solid #d8933f;
+  border-radius: 6px;
+  background: #fdf9f3;
+}
+.alarm-setting h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #7a5217;
+}
+.alarm-setting .split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+/* 「判定」：规则摘要 */
+.judge {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--blue);
+  border-radius: 4px;
+  background: #f6fafd;
+  font-size: 12px;
+  color: #4d627a;
+}
+.judge b {
+  font-size: 13px;
+  color: #22364d;
 }
 .metric-strip {
   display: flex;
@@ -902,6 +1042,102 @@ textarea {
 }
 .map-tools span {
   flex: 1;
+}
+/* 坐标拾取读数（阶段②）：实时显示地图 / 世界坐标，等宽数字避免抖动 */
+.map-tools span.map-pick {
+  flex: none;
+  color: #165fa9;
+  font-variant-numeric: tabular-nums;
+}
+.map-canvas svg.picking {
+  cursor: crosshair;
+}
+/* ── 简易地图画布（阶段①：上传底图 + 图上标注点位）── */
+.map-image {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid #cfdeec;
+  border-radius: 6px;
+  background: #f3f6f9;
+}
+/* 底图绘制区：按容器与图片真实尺寸等比算出的像素框，标记以其为定位参照（缩放/留边下仍对齐） */
+.map-plate {
+  position: relative;
+}
+.map-plate.editable {
+  cursor: crosshair;
+}
+.map-plate img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.map-image.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #8c9bac;
+  font-size: 13px;
+}
+.map-marker {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #2f80ed;
+  box-shadow: 0 1px 4px rgba(20, 60, 120, 0.35);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.map-marker.done {
+  background: #31957f;
+}
+.map-marker.selected {
+  background: #e8873a;
+  transform: scale(1.3);
+  z-index: 2;
+}
+.map-image-hint {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: rgba(20, 43, 69, 0.72);
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+}
+/* 后置高级项：默认折叠，避免地图页过于复杂 */
+details.advanced {
+  margin: 4px 0 14px;
+  border: 1px dashed #d7e2ee;
+  border-radius: 6px;
+  background: #fbfdff;
+}
+details.advanced > summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #5b7186;
+}
+details.advanced > .panel {
+  margin: 0 14px 14px;
 }
 .map-tools button {
   padding: 3px 7px;
@@ -1462,6 +1698,9 @@ footer {
   }
   .annotation-grid {
     grid-template-columns: 180px 1fr;
+    /* 折行后不再等高拉伸，否则单行面板会被撑满整屏 */
+    align-items: start;
+    align-content: start;
   }
   .annotation-grid > .panel:last-child {
     grid-column: 1/-1;
@@ -1518,6 +1757,8 @@ footer {
   }
   .annotation-grid {
     grid-template-columns: 1fr;
+    align-items: start;
+    align-content: start;
   }
   .calendar {
     grid-template-columns: repeat(3, 1fr);
@@ -4004,6 +4245,270 @@ table th {
   padding-top: 11px;
   padding-bottom: 11px;
 }
+/* ── 告警：闭环阶段条 + 分级（分级只用一个小圆点区分，不做整块染色） ── */
+.alarm-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.alarm-scope button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
+  background: #fbfcfe;
+  font-size: 13px;
+  color: #5f7287;
+  cursor: pointer;
+}
+.alarm-scope button.on {
+  border-color: #7fb0e0;
+  background: #f1f7fd;
+  color: #22364d;
+}
+.alarm-scope button b { font-size: 15px; color: #22364d; }
+.alarm-scope button.on b { color: #1d6fe0; }
+.alarm-note {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-left: 3px solid #cfdeec;
+  background: #f8fafc;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #51647a;
+}
+.alarm-note b { color: #2b3a4a; }
+/* 分级标识：小圆点 + 文案（不做大面积染色） */
+.alarm-lv {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-style: normal;
+  color: #3c4d60;
+}
+.alarm-lv i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9fb0c2;
+}
+.alarm-note .alarm-lv { margin: 0 2px; font-weight: 600; }
+.alarm-lv.lv-urgent i { background: #cf5348; }
+.alarm-lv.lv-important i { background: #d39a3c; }
+.alarm-lv.lv-minor i { background: #4a86c8; }
+.alarm-lv.lv-urgent { color: #b0463c; }
+.alarm-lv.lv-important { color: #a3762a; }
+.alarm-lv.lv-minor { color: #3a6ea8; }
+/* 闭环进度：5 段点阵 + 当前阶段 */
+.alarm-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.alarm-phase i {
+  width: 16px;
+  height: 6px;
+  border-radius: 3px;
+  background: #e1e8f0;
+}
+.alarm-phase i.on { background: #4a86c8; }
+.alarm-phase em {
+  margin-left: 4px;
+  font-size: 12px;
+  font-style: normal;
+  color: #5f7287;
+  white-space: nowrap;
+}
+
+/* 告警分类角标：业务=蓝，机器人本体异常=紫 */
+.alarm-cat {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+.alarm-cat.cat-biz { background: #e8f1ff; color: #1d6fe0; }
+.alarm-cat.cat-robot { background: #f1e9ff; color: #7a3ff2; }
+
+/* 工作台告警面板：分类下拉 + 分级芯片（可点筛选） */
+.wb-alarm-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.wb-alarm-summary select {
+  padding: 4px 8px;
+  border: 1px solid #d6dee8;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  color: #2b3a4a;
+}
+.wb-level-chips {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.wb-level-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid #dbe4ee;
+  border-radius: 999px;
+  background: #fbfcfe;
+  font-size: 12px;
+  color: #5f7287;
+  cursor: pointer;
+}
+.wb-level-chip i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9fb0c2;
+}
+.wb-level-chip b { font-size: 13px; color: #22364d; }
+.wb-level-chip.on {
+  border-color: #7fb0e0;
+  background: #f1f7fd;
+  color: #22364d;
+}
+.wb-level-chip.lv-urgent i { background: #cf5348; }
+.wb-level-chip.lv-important i { background: #d39a3c; }
+.wb-level-chip.lv-minor i { background: #4a86c8; }
+.wb-alarm-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #6f7f90;
+}
+.wb-alarm-note b { color: #22364d; }
+
+/* 行级提示：只留一条左侧细边（不做整行染色，级别靠"小圆点 + 文案"区分） */
+table tr.lv-urgent td:first-child { border-left: 3px solid #cf5348; }
+table tr.lv-important td:first-child { border-left: 3px solid #d39a3c; }
+table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
+
+/* 巡检结果查询：业务范围芯片（可点，计数与列表同源） */
+.result-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.result-scope button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
+  background: #fbfcfe;
+  font-size: 12px;
+  color: #5f7287;
+  cursor: pointer;
+}
+.result-scope button.on {
+  border-color: #7fb0e0;
+  background: #f1f7fd;
+  color: #22364d;
+}
+.result-scope button b { font-size: 18px; color: #22364d; }
+.result-scope button.on b { color: #1d6fe0; }
+/* 按巡检点视图：最近 3 条读数 */
+.point-result-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 10px;
+  border-top: 1px dashed #e4ebf3;
+  font-size: 12px;
+  color: #5f7287;
+}
+/* 导入地图：底图预览与可折叠的原始资料 */
+.map-import-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+  margin: 12px 0;
+  border: 1px solid #d6dee8;
+  border-radius: 6px;
+  object-fit: contain;
+  background: #f3f6f9;
+}
+.map-import-extra {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed #d6dee8;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #5f7287;
+}
+.map-import-extra summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 工作台「告警与闭环」面板 */
+.wb-alarm-panel .wb-panel-body { padding: 12px; }
+.wb-alarm-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wb-alarm-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-left: 4px solid transparent;
+}
+.wb-alarm-item b {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d2a37;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-alarm-item small {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: #8799aa;
+}
+.wb-alarm-item:hover { background: #f4f9ff; }
+.wb-alarm-item.lv-urgent { border-left-color: #cf5348; }
+.wb-alarm-item.lv-important { border-left-color: #d39a3c; }
+.wb-alarm-item.lv-minor { border-left-color: #4a86c8; }
+/* 分级小圆点：列表与芯片共用一套颜色 */
+.wb-alarm-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9fb0c2;
+}
+.wb-alarm-dot.lv-urgent { background: #cf5348; }
+.wb-alarm-dot.lv-important { background: #d39a3c; }
+.wb-alarm-dot.lv-minor { background: #4a86c8; }
 .btn {
   transition:
     background-color 160ms ease,
@@ -7196,7 +7701,8 @@ table th {
   }
 }
 
-/* ── 顶栏铃铛：消息中心入口（未读角标） ── */
+/* ── 顶栏铃铛：消息中心入口（未读角标） ──
+   角标拆分：红色脉冲圆点 = 告警未读（需立即处理），蓝色数字角标 = 普通未读 */
 .bell-btn {
   position: relative;
   display: inline-flex;
@@ -7211,6 +7717,31 @@ table th {
   background: #eef5fc;
   color: var(--blue);
 }
+/* 告警红点：位于铃铛图标右上方，脉冲呼吸 */
+.bell-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #e5484d;
+  box-shadow: 0 0 0 2px #fff;
+  animation: bell-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes bell-dot-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 2px #fff, 0 0 0 0 rgba(229,72,77,.55); }
+  50%      { transform: scale(1.15); box-shadow: 0 0 0 2px #fff, 0 0 0 6px rgba(229,72,77,0); }
+}
+/* 铃铛有告警入口提示：加一圈柔光边框 */
+.bell-btn.has-alarm {
+  animation: bell-btn-glow 2.2s ease-in-out infinite;
+}
+@keyframes bell-btn-glow {
+  0%, 100% { box-shadow: none; }
+  50%      { box-shadow: 0 0 0 2px rgba(229,72,77,.35); }
+}
+/* 普通未读角标（蓝）：位于铃铛右上角，红点内侧 */
 .bell-badge {
   position: absolute;
   top: -4px;
@@ -7219,7 +7750,7 @@ table th {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: #e5484d;
+  background: var(--blue, #3276c7);
   color: #fff;
   font-size: 10px;
   font-style: normal;
@@ -9377,30 +9908,40 @@ table th {
 .bigscreen .cs-process { max-height: 40vh; overflow: auto; flex-shrink: 0; }
 
 /* ── 管理驾驶舱版面比例（先定拼图比例，再让内容填格）─────────────────────
-   竖向：顶栏按内容高度 · 主体吃剩余
+   顶栏按内容高 · 主体吃剩余
    横向：左 22% · 中 52% · 右 26%
-   中栏三块：KPI 网格（内容高）· 巡检任务情况（内容高）· 告警排行（吃剩余）
-   左右各两块：左「风险区域 / 风险设备」，右「设备状态 / 告警趋势」
-   作用域限定 .monitor-screen：调度指挥驾驶舱沿用自己那套（.ds-root） */
+   左栏两块平分 · 中栏 KPI/任务情况按内容、告警排行吃满剩余 · 右栏两块吃满剩余 */
 .bigscreen .monitor-screen {
+  display: grid;
   --cs-col-left: 22%;
   --cs-col-center: 52%;
   --cs-col-right: 26%;
-  --cs-left-a: 58%;   /* 风险区域 */
-  --cs-left-b: 42%;   /* 风险设备 */
-  display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   padding: 12px;
   min-height: 0;
   overflow: hidden;
 }
-.bigscreen .monitor-screen .cs-nav,
-.bigscreen .monitor-screen .cs-kpi-board { min-height: 0; }
-/* KPI 指标卡固定 4 列：大屏画布宽度由 zoom 换算（始终 ≥1436px），
-   与真实窗口宽度无关，因此不能用 1180px 媒体查询把网格折成 3 列 */
+.bigscreen .monitor-screen .cs-nav { min-height: 0; flex-shrink: 0; }
+/* 左栏：两块等比撑满整个列高，避免「风险区域」卡短导致第二块顶留空 */
+.bigscreen .monitor-screen .cs-left {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+/* 中栏：KPI 网格（按内容高度）· 巡检任务情况（按内容高度）· 告警排行 TOP10（吃剩余高度） */
+.bigscreen .monitor-screen .cs-center {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+/* 右栏：设备状态 / 告警趋势 两块等比吃满列高 */
+.bigscreen .monitor-screen .cs-right {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+/* KPI 网格：4 列等宽 grid，11 张卡末行不足自然左对齐；
+   大屏画布由 zoom 放大（真实 viewport 只影响 media query），显式覆盖窄屏 3 列规则 */
 .bigscreen .monitor-screen .cs-kpi-board {
+  display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  flex-shrink: 0;
 }
 .bigscreen .monitor-screen .cs-body {
   display: grid;
@@ -9728,7 +10269,7 @@ table th {
 }
 
 /* Map commissioning: persistent steps within one map context. */
-.onboarding-steps { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); border:1px solid #cfdeec; background:#fff; margin:16px 0; }
+.onboarding-steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid #cfdeec; background:#fff; margin:16px 0; }
 .onboarding-steps button { text-align:left; border:0; border-right:1px solid #e0e8f0; background:transparent; color:#536b83; padding:16px; cursor:pointer; }
 .onboarding-steps button:last-child { border-right:0; }
 .onboarding-steps button.active { background:#eaf3ff; color:#165fa9; box-shadow:inset 0 -3px #2476ce; }
@@ -9736,6 +10277,12 @@ table th {
 .onboarding-sync { margin:16px 0; padding:12px 16px; background:#f4f8fc; border:1px solid #dce6ef; }
 .takeover-outcome { padding:8px 0 16px; border-bottom:1px solid #dce6ef; }
 .takeover-outcome details { margin-top:12px; }
+/* 4 步在窄屏回落为 2 列两行：补行分隔线，末行去掉底边 */
+@media(max-width:900px) {
+  .onboarding-steps { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .onboarding-steps button { border-bottom:1px solid #e0e8f0; }
+  .onboarding-steps button:nth-last-child(-n+2) { border-bottom:0; }
+}
 @media(max-width:1000px) { .onboarding-steps button { padding:10px 7px; } }
 
 /* Manual operation: scene and evidence on the left; actionable controls on the right. */

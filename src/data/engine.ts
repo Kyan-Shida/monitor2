@@ -9,12 +9,33 @@ import type {
   AtomicAction,
   WorkOrder,
   SlaLevel,
+  DeviceAsset,
+  InspectItem,
+  CandidateOrigin,
+  MapAsset,
+  BusinessTarget,
+  JudgeType,
+  InspectSpec,
 } from "./types";
-import { stages, atomicActionCapability } from "./types";
-import { rulesOf, evaluateRule, systemRulesOf } from "./alarmRules";
+import { stages, atomicActionCapability, captureKinds } from "./types";
+import {
+  rulesOf,
+  evaluateRule,
+  systemRulesOf,
+  type AlarmRule,
+} from "./alarmRules";
 import { fieldCommand, releaseOutputs } from "./fieldControl";
 import { bindingReasons } from "./planSchedule";
 import { hasMobility } from "./deviceProfile";
+import {
+  deviceOf,
+  isDeviceStopped,
+  isInspected,
+  defaultInspectItemName,
+  actionsOfPoint,
+  captureKindsOfPoint,
+  robotCoversPoint,
+} from "./deviceMaster";
 export interface Action {
   type: string;
   [key: string]: any;
@@ -33,6 +54,30 @@ export const SLA_MINUTES: Record<SlaLevel, number> = {
 /** 预警阈值（分钟）：剩余时间不足该值进入预警态 */
 export const SLA_WARN_MINUTES = 5;
 /**
+ * 模拟机器人读数（原型：真实读数应由机器人 / AI 回传）
+ * @description 按**该点位自己的判定规则**生成正常 / 异常读数，使模拟数据与阈值自洽：
+ *              正常取量程中点，异常取"严格超上限"；无量纲（期望状态）按期望值 / 反值生成。
+ *              规则未配置时给保守值（正常 0.65 / 异常 0.92）并交由复核判定。
+ * @param rule 该点位的判定规则
+ * @param abnormal 是否要求异常读数
+ * @returns 读数字符串
+ */
+function mockReading(rule: AlarmRule | undefined, abnormal: boolean): string {
+  if (!rule) return abnormal ? "0.92" : "0.65";
+  if (rule.type === "期望状态")
+    return abnormal
+      ? rule.expected === "开启"
+        ? "关闭"
+        : "开启"
+      : rule.expected || "开启";
+  const min = Number.isFinite(rule.min) ? rule.min : 0;
+  const max = Number.isFinite(rule.max) ? rule.max : 1;
+  const round = (n: number) => String(Math.round(n * 100) / 100);
+  if (!abnormal) return round((min + max) / 2);
+  // 异常必须严格超出上限：上限 + 至少 1 个单位（或上限的 15%）
+  return round(max + Math.max(1, Math.abs(max) * 0.15));
+}
+/**
  * 告警级别 → SLA 级别
  * @param level 告警级别（重要 / 紧急 / 一般）
  * @returns 对应 SLA 级别
@@ -47,6 +92,75 @@ function continueQueue(s: State, r: Robot) {
   r.current = next.id;
   r.state = "执行中";
 }
+/**
+ * 地图定版发布（单级）
+ * @description 平台不区分"试验版 / 正式版"，发布即把当前内容定版为「已发布」；
+ *              原始资料（点云 / 视频）与至少一个业务点位是硬前提
+ * @param s 状态
+ * @param m 目标地图
+ */
+function publishMap(s: State, m: MapAsset) {
+  must(m.cloud && m.video, "缺少原始点云或视频，禁止发布");
+  must(
+    s.points.some((p) => p.mapId === m.id && p.state !== "停用"),
+    "至少需要一个已标注业务点位",
+  );
+  m.state = "已发布";
+  m.history.unshift(`m${m.version} / p${m.pointSet} 已发布`);
+}
+/**
+ * 下发前确保已定版：内容还是草稿时，**随下发自动定版**
+ * @description 这是"不存在试验版 / 正式版"的落地方式——用户只需「下发」一个动作
+ * @param s 状态
+ * @param m 目标地图
+ * @returns 本次是否顺带完成了定版（用于文案提示）
+ */
+function ensurePublished(s: State, m: MapAsset): boolean {
+  if (m.state === "已发布") return false;
+  publishMap(s, m);
+  return true;
+}
+/**
+ * 业务巡检目标的「是否巡检」写穿到设备清单的巡检项
+ * @description 过渡期约定：设备清单的 `InspectItem.inspect` 仍是任务生成的实际依据，
+ *              同一仪表下**只要有一个业务目标开着**，该巡检项即为开——避免两处口径不一致
+ * @param s 状态
+ * @param instrumentId 仪表 id（与设备巡检项 id 同源）
+ */
+function syncInspectFlag(s: State, instrumentId: string) {
+  const list = (s.businessTargets || []).filter(
+    (b) => b.instrumentId === instrumentId,
+  );
+  if (!list.length) return;
+  const item = s.devices
+    ?.flatMap((d) => d.items)
+    .find((it) => it.id === instrumentId);
+  if (item) item.inspect = list.some((b) => b.inspect);
+}
+/**
+ * 地图下发的逐台校验与登记（单台 SYNC 与批量 SYNC_BATCH 共用同一口径）
+ * @description 只登记"传输中"记录；版本一致以机器人激活回执为准，不在此处改动机器人版本
+ * @param s 状态
+ * @param m 目标地图
+ * @param r 目标机器人
+ */
+function pushSync(s: State, m: MapAsset, r: Robot) {
+  must(r.region === m.region, "机器人服务区域与地图不匹配");
+  must(
+    !s.sessions.some(
+      (x) => x.robotId === r.id && !["已释放", "已超时"].includes(x.state),
+    ),
+    "人工控制会话占用",
+  );
+  s.syncs.unshift({
+    id: id("SYNC"),
+    mapId: m.id,
+    robotId: r.id,
+    mapVersion: m.version,
+    pointSet: m.pointSet,
+    state: "传输中",
+  });
+}
 export function constraints(
   s: State,
   t: Task,
@@ -57,9 +171,8 @@ export function constraints(
   const m = s.maps.find((m) => m.id === t.mapId);
   return [
     ...(r.region !== m?.region ? ["区域不匹配"] : []),
-    ...(t.items.some((p) => !r.capabilities.includes(p.kind))
-      ? ["检测能力不足"]
-      : []),
+    // 检测能力按"采集方式"判定（J′）：业务类型（仪表 / 阀门）不参与调度校验
+    ...(t.items.some((p) => !robotCoversPoint(s, p, r)) ? ["检测能力不足"] : []),
     ...((t.atomicActions || []).some(
       (action) => !r.capabilities.includes(atomicActionCapability[action]),
     )
@@ -92,16 +205,9 @@ export function constraints(
     )
       ? ["人工控制会话占用"]
       : []),
-    ...(t.items.some((p) =>
-      s.extras.some(
-        (x) =>
-          x.category === "equipment" &&
-          x.name === p.device &&
-          x.status === "停用",
-      ),
-    )
-      ? ["所属设备已停用"]
-      : []),
+    // 设备停用拦截：口径来自设备主数据。
+    // （旧实现读 extras.category === "equipment"，但种子里从无该类数据，该校验一直空转）
+    ...(t.items.some((p) => isDeviceStopped(s, p)) ? ["所属设备已停用"] : []),
     ...(t.items.some(
       (p) => s.points.find((q) => q.id === p.id)?.state !== "已启用",
     )
@@ -147,23 +253,19 @@ export function transition(state: State, a: Action): State {
     taskType: TaskType = "综合巡检任务",
     atomicActions?: AtomicAction[],
   ) {
-    const items = pids
+    let items = pids
       .map((pid) => s.points.find((p) => p.id === pid))
       .filter(Boolean) as Point[];
     must(
       items.length && items.every((p) => p.state === "已启用"),
       "请选择已启用且自主验证通过的点位",
     );
+    must(!items.some((p) => isDeviceStopped(s, p)), "任务包含已停用设备");
+    // 「是否巡检」过滤：设备主数据里关闭的检测项不进任务指令集（阶段③ 开关的落地处）
+    items = items.filter((p) => isInspected(s, p));
     must(
-      !items.some((p) =>
-        s.extras.some(
-          (x) =>
-            x.category === "equipment" &&
-            x.name === p.device &&
-            x.status === "停用",
-        ),
-      ),
-      "任务包含已停用设备",
+      items.length,
+      "所选点位的检测项均已在设备主数据中关闭「是否巡检」",
     );
     must(
       new Set(items.map((p) => p.mapId)).size === 1,
@@ -171,16 +273,11 @@ export function transition(state: State, a: Action): State {
     );
     const m = s.maps.find((m) => m.id === items[0].mapId)!;
     must(m.state === "已发布", "正式任务需要已发布地图");
+    // 任务指令集：由点位的「采集方式」（设备主数据里的巡检项 kind）推导原子动作，
+    // 而不是由业务类型（仪表 / 阀门）推导；旧数据无主数据时回落 Point.kind。
+    // 「怎么看」（PTZ / 补光 / 停留 / 避障）随点位快照一并带给执行端，与动作正交。
     const derivedActions = [
-      ...new Set(
-        items.map((p) =>
-          p.kind === "红外"
-            ? ("采集红外热像" as const)
-            : p.kind === "气体"
-              ? ("采集气体" as const)
-              : ("拍照" as const),
-        ),
-      ),
+      ...new Set(items.flatMap((p) => actionsOfPoint(s, p))),
     ];
     // 完成时限按优先级派发（分钟）：紧急 30 / 高 120 / 普通 240
     const limitMinutes =
@@ -206,6 +303,8 @@ export function transition(state: State, a: Action): State {
         ...p,
         mapVersion: m.version,
         pointSet: m.pointSet,
+        // 到位动作快照：任务创建后即使设备主数据的采集方式被改，历史任务口径不变
+        actions: actionsOfPoint(s, p),
       })),
       stage: 0,
       index: 0,
@@ -262,7 +361,16 @@ export function transition(state: State, a: Action): State {
       break;
     }
     case "IMPORT": {
-      must(a.name && a.file, "请输入地图名称并选择地图文件或示例包");
+      must(a.name && a.file, "请填写地图名称并选择地图图片");
+      const targets = (a.targets || []).map((t: any) => ({
+        id: String(t.id),
+        externalId: String(t.id),
+        source: "地图导入" as const,
+        kind: t.kind || "可见光",
+        x: Number(t.x),
+        y: Number(t.y),
+        state: "待确认" as const,
+      }));
       const m = {
         id: id("MAP"),
         name: a.name,
@@ -270,20 +378,34 @@ export function transition(state: State, a: Action): State {
         version: 1,
         pointSet: 1,
         state: "草稿" as const,
-        source: a.source,
+        source: a.source || "手持仪器",
         batch: id("B"),
         cloud: a.cloud || "",
         video: a.video || "",
         file: a.file,
         checksum: "demo-sha256:93b8…",
-        targets: [
-          { id: id("O"), kind: "仪表", x: 37, y: 34, state: "待确认" as const },
-          { id: id("O"), kind: "阀门", x: 65, y: 60, state: "待确认" as const },
-        ],
-        history: ["m1 / p1 导入草稿，待业务标注"],
+        // 底图：上传的图片（示例地图 / 用户本地图片）
+        image: a.image || undefined,
+        // 地图点位：随文件带入的定位ID（可直接绑定巡检点）
+        targets,
+        history: ["m1 / p1 导入草稿，待绑定巡检点"],
       };
       s.maps.unshift(m);
+      // 轨迹采样点：随文件带入（在地图工作台按顺序连线）
+      if (a.track?.length)
+        s.trackSamples = [
+          ...(s.trackSamples || []),
+          ...a.track.map((t: any, i: number) => ({
+            id: id("TS"),
+            mapId: m.id,
+            x: Number(t.x),
+            y: Number(t.y),
+            kind: t.kind || "停靠点",
+            seq: i + 1,
+          })),
+        ];
       object = m.id;
+      detail = `已导入地图（定位ID ${targets.length} 个 · 轨迹 ${(a.track || []).length} 点）`;
       break;
     }
     case "ARCHIVE": {
@@ -293,30 +415,373 @@ export function transition(state: State, a: Action): State {
       m.video = a.video;
       break;
     }
-    case "ANNOTATE": {
+    // ── 「地图 → 巡检任务」链路 · 阶段①② 地图与坐标（只增不改） ──
+    case "SET_MAP_IMAGE": {
       const m = map();
-      must(
-        a.name && a.device && a.item && a.requirement,
-        "请完整填写名称、设备、检测项与质量要求",
+      // 清除时写空串而非 undefined：与"从未有过底图"区分，避免被老缓存补图逻辑回填
+      m.image = a.image || "";
+      detail = a.image ? "底图已上传（可在图上标注点位）" : "底图已清除";
+      break;
+    }
+    case "CALIBRATE_FRAMES": {
+      const m = map();
+      m.frames = { ...(m.frames || {}), ...(a.frames || {}) };
+      // 有分辨率与原点即视为已标定，仅其一为部分标定
+      m.frames.calibState =
+        m.frames.resolution && m.frames.origin
+          ? "已标定"
+          : m.frames.resolution || m.frames.origin
+            ? "部分标定"
+            : "未标定";
+      detail = `坐标标定已保存（${m.frames.calibState}）`;
+      break;
+    }
+    case "SET_MAP_LAYERS": {
+      const m = map();
+      m.layers = { ...(m.layers || {}), ...(a.layers || {}) };
+      detail = "地图图层已更新";
+      break;
+    }
+    // ── 阶段③ 设备主数据：导入 → 审核 → 启停 / 是否巡检 ──
+    case "IMPORT_DEVICES": {
+      const rows = (a.devices || []) as Partial<DeviceAsset>[];
+      must(rows.length, "请提供要导入的设备清单");
+      must(rows.length <= 200, "单次最多导入 200 台设备，请拆分批次");
+      const batch = a.batch || "IMP-" + Date.now().toString(36).toUpperCase();
+      const incoming = new Map<string, Partial<DeviceAsset>>();
+      rows.forEach((r) => {
+        const code = String(r.id || "").trim();
+        must(code, "设备编码不能为空（编码是设备身份的唯一依据）");
+        must(
+          /^[A-Za-z0-9_-]{2,32}$/.test(code),
+          `设备编码「${code}」格式不合法（仅字母 / 数字 / 下划线 / 中划线）`,
+        );
+        must(!incoming.has(code), `设备编码「${code}」在本批次内重复`);
+        must(String(r.name || "").trim(), `设备「${code}」缺少设备名称`);
+        (r.items || []).forEach((it: InspectItem) => {
+          must(
+            it.id && it.target,
+            `设备「${code}」存在缺少编码或检测目标的巡检项`,
+          );
+          must(
+            captureKinds.includes(it.kind),
+            `设备「${code}」检测目标「${it.target}」的采集方式不合法（应为 ${captureKinds.join(" / ")}）`,
+          );
+          // 单位校验：需要读数的检测目标必须给出单位，否则阈值无法判定
+          const numeric = /读数|浓度|温度|液位|压力|电流|电压|振动|流量/.test(
+            it.target,
+          );
+          must(
+            !numeric || String(it.unit || "").trim(),
+            `检测目标「${it.target}」缺少单位（数值类检测必须带单位）`,
+          );
+        });
+        incoming.set(code, r);
+      });
+      const devs = (s.devices ??= []);
+      // 批量导入（默认）→ 待审核；标注页「＋快速新建」传 approved → 直接生效（来源=人工新增）
+      const autoApprove = a.approved === true;
+      let added = 0;
+      let updated = 0;
+      incoming.forEach((r, code) => {
+        const cur = devs.find((d) => d.id === code);
+        const rec: DeviceAsset = {
+          id: code,
+          name: String(r.name),
+          type: r.type || "未分类",
+          regionCode: r.regionCode || "",
+          locationDesc: r.locationDesc || "",
+          coord: r.coord,
+          coordSys: r.coordSys,
+          height: r.height,
+          parts: r.parts,
+          items: (r.items || []) as InspectItem[],
+          photo: cur?.photo,
+          remark: r.remark,
+          // 批量导入即进「待审核」：清单不直接生效，避免编码/单位错误污染任务口径
+          reviewState: autoApprove ? "已通过" : "待审核",
+          state: cur?.state === "停用" ? "停用" : "在用",
+          importBatch: autoApprove ? "人工新增" : batch,
+          importedAt: new Date().toLocaleString("zh-CN"),
+        };
+        if (cur) {
+          devs[devs.indexOf(cur)] = rec;
+          updated++;
+        } else {
+          devs.push(rec);
+          added++;
+        }
+      });
+      object = autoApprove ? incoming.keys().next().value || "人工新增" : batch;
+      detail = autoApprove
+        ? `设备已新建并直接生效（人工新增 ${added} 台，不经批量审核）`
+        : `设备清单已导入（新增 ${added} 台 / 更新 ${updated} 台，均进入待审核）`;
+      break;
+    }
+    case "REVIEW_DEVICE_IMPORT": {
+      const ids: string[] = a.ids?.length ? a.ids : a.id ? [a.id] : [];
+      must(ids.length, "请选择要审核的设备");
+      const devs = (s.devices ??= []);
+      const hit = devs.filter((d) => ids.includes(d.id));
+      must(hit.length === ids.length, "存在未找到的设备编码");
+      hit.forEach((d) =>
+        must(d.reviewState === "待审核", `设备「${d.name}」不处于待审核状态`),
       );
-      const old = s.points.find((p) => p.id === a.pointId);
+      if (a.pass === false) {
+        hit.forEach((d) => {
+          d.reviewState = "已驳回";
+          d.reviewNote = a.note || "资料不完整，请补充后重新导入";
+        });
+      } else {
+        hit.forEach((d) => {
+          d.reviewState = "已通过";
+          d.reviewNote = undefined;
+          // 审核通过即为"生效"：设备可直接在标注页选用
+          if (a.inspect !== undefined)
+            d.items.forEach((it) => (it.inspect = !!a.inspect));
+        });
+        // 设备清单版本：与地图 / 点位版本并列，供机器人同步比对（阶段⑧）
+        s.maps.forEach(
+          (m) => (m.deviceListVersion = (m.deviceListVersion || 1) + 1),
+        );
+      }
+      object = ids.length === 1 ? ids[0] : "批量审核";
+      detail =
+        a.pass === false
+          ? `已驳回 ${hit.length} 台设备（${hit.map((d) => d.id).join("、")}）`
+          : `已通过 ${hit.length} 台设备，设备清单版本已更新`;
+      break;
+    }
+    case "SET_INSPECT_FLAG": {
+      const d = deviceOf(s, a.deviceId);
+      must(d, "设备不存在");
+      must(
+        d!.reviewState === "已通过",
+        `设备「${d!.name}」尚未通过审核，不能配置「是否巡检」`,
+      );
+      const it = d!.items.find((x) => x.id === a.itemId);
+      must(it, "巡检项不存在");
+      it!.inspect = a.inspect !== false;
+      // 同一仪表的业务巡检目标一起跟随（两处开关必须同口径）
+      (s.businessTargets || [])
+        .filter((b) => b.instrumentId === it!.id)
+        .forEach((b) => (b.inspect = it!.inspect));
+      object = d!.id;
+      detail = `${d!.name} · ${it!.target}「是否巡检」已${it!.inspect ? "开启" : "关闭"}`;
+      break;
+    }
+    case "SET_DEVICE_STATE": {
+      const d = deviceOf(s, a.deviceId);
+      must(d, "设备不存在");
+      const next: "在用" | "停用" = a.state === "停用" ? "停用" : "在用";
+      if (next === "停用") {
+        const pts = s.points.filter((p) => p.device === d!.name);
+        must(
+          a.confirmed === true,
+          `停用「${d!.name}」将拦截其 ${pts.length} 个点位的任务下发，请二次确认`,
+        );
+        // 只拦截后续新建 / 派单；已在执行或已排队的任务不自动回收，交调度页人工处置
+      }
+      d!.state = next;
+      object = d!.id;
+      detail =
+        next === "停用"
+          ? "设备已停用（含该设备点位的任务将被拦截）"
+          : "设备已恢复启用";
+      break;
+    }
+    // ── 业务巡检目标：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 ──
+    case "ADD_BUSINESS_TARGET": {
+      const ins = s.instruments?.find((x) => x.id === a.instrumentId);
+      must(ins, "仪表不存在，请先在设备主数据中维护检测目标");
+      must(
+        ins!.state !== "停用",
+        `仪表「${ins!.name}」所属设备已停用，暂不能新增业务巡检目标`,
+      );
+      const req = s.requirements?.find((r) => r.id === a.requirementId);
+      must(req, "巡检要求不存在");
+      must(
+        String(a.algorithm || "").trim(),
+        `请为「${req!.name}」指定算法（AI 表达方式）`,
+      );
+      const judge: JudgeType = a.judge || req!.judge;
+      if (judge === "数值范围")
+        must(
+          Number.isFinite(a.min) && Number.isFinite(a.max) && a.min <= a.max,
+          "数值范围判定需要有效上下限（下限不大于上限）",
+        );
+      if (judge === "期望状态")
+        must(String(a.expected || "").trim(), "期望状态判定需要填写期望值");
+      const rec: BusinessTarget = {
+        id: id("BT"),
+        instrumentId: ins!.id,
+        requirementId: req!.id,
+        // 业务目标与业务要求：留空时按"仪表 + 判定方式"和巡检要求说明自动生成
+        goal:
+          String(a.goal || "").trim() ||
+          `确认${ins!.name}${judge === "期望状态" ? "状态符合要求" : "读数在正常范围内"}`,
+        require: String(a.require || "").trim() || req!.description,
+        algorithm: String(a.algorithm).trim(),
+        judge,
+        unit: judge === "数值范围" ? a.unit || ins!.unit : undefined,
+        min: judge === "数值范围" ? Number(a.min) : undefined,
+        max: judge === "数值范围" ? Number(a.max) : undefined,
+        expected: judge === "期望状态" ? String(a.expected).trim() : undefined,
+        criteria: a.criteria || req!.description,
+        // 告警设置：新建默认开启（重要级）；**调整入口只有「业务巡检目标」**
+        alarm: a.alarm || {
+          on: true,
+          level: "重要",
+          trigger: "单次超限即告警（一期不支持连续多次）",
+          notify: ["设备岗"],
+        },
+        needPhoto: !!a.needPhoto,
+        needVideo: !!a.needVideo,
+        needReview: !!a.needReview,
+        cycle: a.cycle || req!.cycle || "每日",
+        priority: a.priority || "普通",
+        inspect: a.inspect !== false,
+        createdAt: new Date().toLocaleString("zh-CN"),
+      };
+      s.businessTargets = [rec, ...(s.businessTargets || [])];
+      syncInspectFlag(s, ins!.id);
+      object = rec.id;
+      detail = `已为「${s.devices?.find((d) => d.id === ins!.deviceId)?.name || ins!.deviceId} · ${ins!.name}」新增业务巡检目标：${req!.name}（${rec.algorithm}）`;
+      break;
+    }
+    case "UPDATE_BUSINESS_TARGET": {
+      const b = s.businessTargets?.find((x) => x.id === a.id);
+      must(b, "业务巡检目标不存在");
+      if (a.algorithm !== undefined) {
+        must(String(a.algorithm).trim(), "算法不能为空");
+        b!.algorithm = String(a.algorithm).trim();
+      }
+      if (a.judge !== undefined) b!.judge = a.judge;
+      if (a.unit !== undefined) b!.unit = a.unit;
+      if (a.min !== undefined) b!.min = Number(a.min);
+      if (a.max !== undefined) b!.max = Number(a.max);
+      if (b!.judge === "数值范围")
+        must(
+          Number.isFinite(b!.min) &&
+            Number.isFinite(b!.max) &&
+            (b!.min as number) <= (b!.max as number),
+          "数值范围判定需要有效上下限（下限不大于上限）",
+        );
+      if (a.expected !== undefined) b!.expected = a.expected;
+      if (a.criteria !== undefined) b!.criteria = a.criteria;
+      if (a.goal !== undefined) b!.goal = a.goal;
+      if (a.require !== undefined) b!.require = a.require;
+      // 告警设置：按字段合并更新（平台唯一的告警配置入口）
+      if (a.alarm !== undefined)
+        b!.alarm = {
+          ...(b!.alarm || { on: true, level: "重要" as const }),
+          ...a.alarm,
+        };
+      if (a.needPhoto !== undefined) b!.needPhoto = !!a.needPhoto;
+      if (a.needVideo !== undefined) b!.needVideo = !!a.needVideo;
+      if (a.needReview !== undefined) b!.needReview = !!a.needReview;
+      if (a.cycle !== undefined) b!.cycle = a.cycle;
+      if (a.priority !== undefined) b!.priority = a.priority;
+      if (a.inspect !== undefined) b!.inspect = !!a.inspect;
+      syncInspectFlag(s, b!.instrumentId);
+      object = b!.id;
+      detail = `业务巡检目标已更新（是否巡检：${b!.inspect ? "开" : "关"}）`;
+      break;
+    }
+    // ── 巡检点管理：巡检点 = 名称 + 地图 + 地图点位 + 多个巡检项 ──
+    case "SAVE_POINT": {
+      const m = map();
+      must(String(a.name || "").trim(), "请填写巡检点名称");
       const target = m.targets.find((t) => t.id === a.targetId);
-      must(target, "请选择候选目标或人工新增目标");
+      must(target, "请选择地图上带定位ID的点");
+      must(
+        target!.externalId,
+        "所选点不是地图自带的定位ID点；请先在地图工作台补录定位ID",
+      );
+      const specs = (a.inspectItems || []) as InspectSpec[];
+      must(specs.length, "请至少添加一个巡检项（名称 + 业务目标 + 机器操作内容）");
+      const btOf = (sid: string) => s.businessTargets?.find((b) => b.id === sid);
+      const insOf = (sid: string) => {
+        const bt = btOf(sid);
+        must(bt, "巡检项的业务目标不存在，请先维护业务巡检目标");
+        const ins = s.instruments?.find((x) => x.id === bt!.instrumentId);
+        must(ins, "业务目标关联的仪表不存在");
+        return ins!;
+      };
+      specs.forEach((sp, i) => {
+        must(String(sp.name || "").trim(), `第 ${i + 1} 个巡检项缺少名称`);
+        const ins = insOf(sp.targetId);
+        must(ins.state !== "停用", `巡检项「${sp.name}」的仪表所属设备已停用`);
+        must(
+          (sp.actions || []).length,
+          `巡检项「${sp.name}」请至少选择一个原子动作`,
+        );
+        must(sp.pose, `巡检项「${sp.name}」缺少机器操作参数（云台 / 视角）`);
+      });
+      const firstIns = insOf(specs[0].targetId);
+      const firstDev = s.devices?.find((d) => d.id === firstIns.deviceId);
+      must(firstDev, "仪表所属设备不存在");
+      const old = s.points.find((p) => p.id === a.pointId);
+      // 一对一校验：一个定位ID点只能绑一个巡检点
+      if (target!.pointId && target!.pointId !== old?.id) {
+        const owner = s.points.find((p) => p.id === target!.pointId);
+        throw Error(
+          `该地图点位已被巡检点「${owner?.name || target!.pointId}」占用，请另选定位ID点`,
+        );
+      }
+      // 改绑地图点位时释放旧点位占用，避免一个定位ID挂两个巡检点
+      if (old && old.targetId !== target!.id) {
+        const prev = m.targets.find((t) => t.id === old.targetId);
+        if (prev && prev.pointId === old.id) {
+          prev.pointId = undefined;
+          prev.state = "待确认";
+        }
+      }
+      const pid = old?.id || id("P");
+      // 巡检项 → 逻辑点（内部对象、不暴露给用户）；重复保存保持幂等
+      const kept = (s.logicalPoints || []).filter(
+        (x) => x.physicalPointId !== pid,
+      );
+      const created = specs.map((sp) => {
+        const ins = insOf(sp.targetId);
+        return {
+          id: id("LP"),
+          deviceId: ins.deviceId,
+          itemIds: [ins.id],
+          region: m.region,
+          locateState: "已落位" as const,
+          physicalPointId: pid,
+          locateOrigin: "人工新增" as const,
+        };
+      });
+      s.logicalPoints = [...kept, ...created];
+      const normalized: InspectSpec[] = specs.map((sp) => ({
+        ...sp,
+        id: sp.id || id("IP"),
+        actions: [...new Set(sp.actions)],
+      }));
       const p: Point = {
-        id: old?.id || id("P"),
-        name: a.name,
-        device: a.device,
-        object: a.object || a.name,
-        item: a.item,
-        unit: a.unit || "",
-        kind: target!.kind,
-        requirement: a.requirement,
-        mapId: m.id,
+        id: pid,
+        name: String(a.name).trim(),
         targetId: target!.id,
+        mapId: m.id,
+        version: (old?.version || 0) + 1,
+        // 以下 5 个字段是"首个巡检项"的派生视图，仅为兼容旧页面与旧链接
+        device: firstDev!.name,
+        object: firstIns.name,
+        item: normalized[0].name,
+        unit: firstIns.unit || "",
+        kind: firstIns.capture,
+        requirement:
+          btOf(normalized[0].targetId)?.criteria || normalized[0].name,
+        state: old ? "待重新验证" : "待验证",
         x: target!.x,
         y: target!.y,
-        version: (old?.version || 0) + 1,
-        state: old ? "待重新验证" : "待验证",
+        pose: old?.pose || { x: target!.x, y: target!.y, yaw: 0 },
+        actionPlan: normalized[0].pose,
+        inspectItems: normalized,
+        logicalIds: created.map((x) => x.id),
+        taught: a.taught ?? old?.taught,
       };
       if (old) s.points = s.points.map((q) => (q.id === old.id ? p : q));
       else s.points.push(p);
@@ -325,17 +790,146 @@ export function transition(state: State, a: Action): State {
       m.pointSet++;
       m.state = "草稿";
       object = p.id;
+      detail = `已保存巡检点（${normalized.length} 个巡检项 · 覆盖 ${new Set(created.map((c) => c.deviceId)).size} 台设备）`;
+      break;
+    }
+    case "SURVEY_CAPTURE": {
+      const m = map();
+      must(a.pointType, "请选择踩点点位类型");
+      const rec = {
+        id: id("SS"),
+        mapId: m.id,
+        offline: !!a.offline,
+        synced: !a.offline,
+        pointType: a.pointType,
+        deviceCode: a.deviceCode,
+        target: a.target,
+        viewDir: a.viewDir,
+        ptzPreset: a.ptzPreset,
+        photo: a.photo,
+        remark: a.remark,
+        x: Number.isFinite(a.x) ? a.x : 50,
+        y: Number.isFinite(a.y) ? a.y : 50,
+      };
+      s.siteSurveys = [rec, ...(s.siteSurveys || [])];
+      object = rec.id;
+      detail = `现场踩点已记录（${a.pointType}${a.offline ? " · 离线待同步" : ""}）`;
+      break;
+    }
+    case "SURVEY_SYNC": {
+      const pending = (s.siteSurveys || []).filter((x) => x.offline && !x.synced);
+      must(pending.length, "没有待同步的离线踩点记录");
+      pending.forEach((x) => (x.synced = true));
+      detail = `已同步 ${pending.length} 条离线踩点记录`;
+      break;
+    }
+    case "TRACK_RECORD": {
+      const m = map();
+      const samples = s.trackSamples || [];
+      const seq = samples.filter((x) => x.mapId === m.id).length + 1;
+      const sample = {
+        id: id("TS"),
+        mapId: m.id,
+        x: Number.isFinite(a.x) ? a.x : 50,
+        y: Number.isFinite(a.y) ? a.y : 50,
+        kind: a.kind || "停靠点",
+        seq,
+      };
+      s.trackSamples = [...samples, sample];
+      // 轨迹变化同样属于地图内容变更
+      m.state = "草稿";
+      object = sample.id;
+      detail = `轨迹已记录（${sample.kind} · 第 ${seq} 点）`;
+      break;
+    }
+    case "ANNOTATE": {
+      const m = map();
+      must(
+        a.name && a.device && a.requirement,
+        "请完整填写点位名称、所属设备与采集要求",
+      );
+      // v3：设备与检测对象只能来自设备主数据（标注页可「＋快速新建」即时落库），不再手工输入设备名
+      const dev = deviceOf(s, a.device);
+      must(dev, "所选设备不在设备主数据中，请选择设备或先快速新建");
+      must(
+        dev!.reviewState === "已通过",
+        `设备「${dev!.name}」尚未通过审核，暂不能标注点位`,
+      );
+      must(dev!.state !== "停用", `设备「${dev!.name}」已停用，不能标注点位`);
+      // 「看什么」多选：一次停靠可覆盖多个检测对象（一个停靠位覆盖多设备/多目标的落地处）
+      const objects: string[] = (
+        a.objects?.length ? a.objects : [a.object]
+      ).filter((x: string) => dev!.items.some((it) => it.target === x));
+      must(
+        objects.length,
+        `请至少选择一个检测对象（来自设备「${dev!.name}」的清单）`,
+      );
+      const old = s.points.find((p) => p.id === a.pointId);
+      const target = m.targets.find((t) => t.id === a.targetId);
+      must(target, "请选择候选目标或人工新增目标");
+      const pid = old?.id || id("P");
+      // 逻辑点（阶段④）：不暴露给用户，按「一次停靠覆盖 N 个检测对象」自动派生；
+      // 重建前先清掉本点位旧记录，保证重复标注幂等
+      const kept = (s.logicalPoints || []).filter(
+        (x) => x.physicalPointId !== pid,
+      );
+      const created = objects.map((obj) => ({
+        id: id("LP"),
+        deviceId: dev!.id,
+        itemIds: [dev!.items.find((it) => it.target === obj)!.id],
+        region: m.region,
+        locateState: "已落位" as const,
+        physicalPointId: pid,
+        locateOrigin: (a.origin || "人工新增") as CandidateOrigin,
+      }));
+      s.logicalPoints = [...kept, ...created];
+      const primary = dev!.items.find((it) => it.target === objects[0])!;
+      const p: Point = {
+        id: pid,
+        name: a.name,
+        device: dev!.name,
+        object: objects[0],
+        item: a.item || defaultInspectItemName(objects[0]),
+        unit: a.unit ?? primary.unit,
+        kind: target!.kind,
+        requirement: a.requirement,
+        mapId: m.id,
+        targetId: target!.id,
+        x: target!.x,
+        y: target!.y,
+        version: (old?.version || 0) + 1,
+        state: old ? "待重新验证" : "待验证",
+        // 「怎么看」与标注同一入口保存（不再另开"动作编排"页面）
+        actionPlan: a.actionPlan || old?.actionPlan,
+        pose: a.pose || old?.pose || { x: target!.x, y: target!.y, yaw: 0 },
+        taught: a.taught ?? old?.taught,
+        logicalIds: created.map((x) => x.id),
+      };
+      if (old) s.points = s.points.map((q) => (q.id === old.id ? p : q));
+      else s.points.push(p);
+      target!.state = "已确认";
+      target!.pointId = p.id;
+      m.pointSet++;
+      m.state = "草稿";
+      object = p.id;
+      detail = `已标注点位（一次停靠覆盖 ${created.length} 个检测对象）`;
       break;
     }
     case "ADD_TARGET": {
       const m = map();
+      // 平台新增的地图点位：来源标记为"平台新增"，与随地图导入的定位ID区分开
       m.targets.push({
         id: id("O"),
+        source: "平台新增",
+        externalId: a.externalId,
         kind: a.kind || "仪表",
         x: a.x || 50,
         y: a.y || 48,
         state: "待确认",
       });
+      // 地图内容变了就打回草稿：否则"已发布"名不副实，下发给机器人的点位集与现实不符
+      m.state = "草稿";
+      m.history.unshift("新增地图点位，待重新发布");
       break;
     }
     case "UPLOAD_REFERENCE": {
@@ -356,43 +950,41 @@ export function transition(state: State, a: Action): State {
       const t = m.targets.find((t) => t.id === a.targetId)!;
       must(!t.pointId, "已关联业务点位的目标请先维护点位");
       t.state = "已剔除";
+      // 点位集变化同样打回草稿
+      m.state = "草稿";
+      m.history.unshift("剔除地图点位，待重新发布");
       break;
     }
     case "PUBLISH": {
       const m = map();
-      must(m.cloud && m.video, "缺少原始点云或视频，禁止发布");
-      const ps = s.points.filter((p) => p.mapId === m.id && p.state !== "停用");
-      must(ps.length, "至少需要一个已标注业务点位");
-      if (a.trial) m.state = "试验发布";
-      else {
-        must(
-          ps.every((p) => p.state === "已启用"),
-          "请先发布试验版本、同步验证机器人并完成自主验证",
-        );
-        m.state = "已发布";
-      }
-      m.history.unshift(`m${m.version} / p${m.pointSet} ${m.state}`);
+      // 单级发布：平台不区分"试验版 / 正式版"，定版即当前内容
+      publishMap(s, m);
+      object = m.id;
+      detail = "当前地图内容已定版发布";
       break;
     }
     case "SYNC": {
       const m = map();
-      must(m.state !== "草稿", "请先发布试验版本或正式版本");
-      const r = robot();
-      must(r.region === m.region, "机器人服务区域与地图不匹配");
-      must(
-        !s.sessions.some(
-          (x) => x.robotId === r.id && !["已释放", "已超时"].includes(x.state),
-        ),
-        "人工控制会话占用",
-      );
-      s.syncs.unshift({
-        id: id("SYNC"),
-        mapId: m.id,
-        robotId: r.id,
-        mapVersion: m.version,
-        pointSet: m.pointSet,
-        state: "传输中",
+      const published = ensurePublished(s, m);
+      pushSync(s, m, robot());
+      detail = `已下发 m${m.version} / p${m.pointSet}${published ? "（内容同时定版为已发布）" : ""}`;
+      break;
+    }
+    case "SYNC_BATCH": {
+      const m = map();
+      const ids: string[] = a.robotIds || [];
+      must(ids.length, "请至少选择一台设备");
+      // 先逐台校验再统一定版：避免"定版成功但下发被拒"的半截状态
+      const targets = ids.map((rid) => {
+        const r = s.robots.find((x) => x.id === rid);
+        must(r, `设备 ${rid} 不存在`);
+        must(r.region === m.region, "机器人服务区域与地图不匹配");
+        return r!;
       });
+      const published = ensurePublished(s, m);
+      targets.forEach((r) => pushSync(s, m, r));
+      object = m.id;
+      detail = `已向 ${targets.length} 台设备下发 m${m.version} / p${m.pointSet}${published ? "（内容同时定版为已发布）" : ""}`;
       break;
     }
     case "SYNC_STEP": {
@@ -437,7 +1029,11 @@ export function transition(state: State, a: Action): State {
           r.pointSet === m.pointSet,
         "请先将当前试验版本同步并激活",
       );
-      must(r.capabilities.includes(p.kind), "验证机器人能力不匹配");
+      const need = captureKindsOfPoint(s, p);
+      must(
+        need.every((k) => r.capabilities.includes(k)),
+        `验证机器人不具备该点位的采集方式（需要 ${need.join(" / ")}）`,
+      );
       if (a.fail) {
         p.state = "待重新验证";
         p.validated = undefined;
@@ -921,19 +1517,11 @@ export function transition(state: State, a: Action): State {
         t.failure = undefined;
       } else {
         let abnormal = !!a.abnormal;
-        const value = a.value !== undefined ? String(a.value) :
-          p.kind === "阀门"
-            ? abnormal
-              ? "关闭"
-              : "开启"
-            : p.kind === "红外"
-              ? abnormal
-                ? "72.5"
-                : "36.8"
-              : abnormal
-                ? "0.92"
-                : "0.65";
         const rule = rulesOf(s).find((r) => r.pointId === p.id);
+        // 模拟读数由该点位自己的判定规则驱动（J′）：不再按 Point.kind 硬编码，
+        // 保证"采到的数"与"它自己的标准"自洽（温度点不会再读出 0.92℃）
+        const value =
+          a.value !== undefined ? String(a.value) : mockReading(rule, abnormal);
         const evaluation = evaluateRule(rule, value);
         abnormal = evaluation.abnormal;
         const res = {
@@ -965,6 +1553,8 @@ export function transition(state: State, a: Action): State {
           else
             s.alarms.unshift({
               id: id("AL"),
+              // 由业务结果触发的告警恒为"业务"分类（机器人本体异常由机器人事件生成）
+              category: "业务",
               resultId: res.id,
               taskId: t.id,
               pointId: p.id,
@@ -973,6 +1563,10 @@ export function transition(state: State, a: Action): State {
               state: "待确认",
               notes: [
                 `规则 ${rule?.id || "无"} v${rule?.version || 0}：${evaluation.reason}`,
+                // 通知对象来自业务巡检目标的「告警设置」，随告警记录带出
+                ...(rule?.notify?.length
+                  ? [`通知 ${rule.notify.join("、")}`]
+                  : []),
               ],
               time: res.time,
             });

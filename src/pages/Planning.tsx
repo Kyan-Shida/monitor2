@@ -7,6 +7,7 @@ import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
 import { PlanRobotBinding } from "../components/PlanRobotBinding";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
 import { fmtTime } from "../data/selectors";
+import { actionsOfPoint, captureKindsOfPoint } from "../data/deviceMaster";
 import type { Task } from "../data/types";
 export function Planning({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
@@ -83,26 +84,53 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         : [...selected, id],
     );
   /**
-   * 已配置巡检点勾选表（数据源 s.points 来自"巡检点列表"页面，平台预先配置好）
-   * 模板/临时任务直接勾选即可，用户无需自己输入检测项
+   * 已配置巡检点勾选表（数据源 s.points 来自「巡检点管理」页，平台预先配置好）
+   * 模板/临时任务**以巡检点为最小单位**勾选（不选业务目标：业务目标是巡检项内部的事）
    */
   const pickerTable = (
     <Table
-      heads={["选择", "业务点位", "检测项", "质量要求", "版本 / 状态"]}
-      rows={s.points.map((p) => [
-        <input
-          type="checkbox"
-          checked={selected.includes(p.id)}
-          onChange={() => toggle(p.id)}
-        />,
-        p.name,
-        p.item,
-        p.requirement,
-        <>
-          <span>v{p.version} </span>
-          <Badge>{p.state}</Badge>
-        </>,
-      ])}
+      heads={[
+        "选择",
+        "巡检点",
+        "地图 / 地图点位",
+        "巡检项",
+        "机器操作内容",
+        "版本 / 状态",
+      ]}
+      rows={s.points.map((p) => {
+        const m = s.maps.find((x) => x.id === p.mapId);
+        const mp = m?.targets.find((t) => t.id === p.targetId);
+        const specs = p.inspectItems || [];
+        return [
+          <input
+            type="checkbox"
+            checked={selected.includes(p.id)}
+            onChange={() => toggle(p.id)}
+          />,
+          <>
+            <b>{p.name}</b>
+            <small>
+              {p.id} · {p.device}
+            </small>
+          </>,
+          <>
+            {m?.name || p.mapId}
+            <small>{mp?.externalId ? `定位ID ${mp.externalId}` : "无定位ID"}</small>
+          </>,
+          <>
+            {specs.length} 项
+            <small>{specs.map((sp) => sp.name).join(" / ") || p.item}</small>
+          </>,
+          <>
+            {actionsOfPoint(s, p).join(" / ") || "—"}
+            <small>{captureKindsOfPoint(s, p).join(" / ")}</small>
+          </>,
+          <>
+            <span>v{p.version} </span>
+            <Badge>{p.state}</Badge>
+          </>,
+        ];
+      })}
     />
   );
   if (page === "quick")
@@ -257,7 +285,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               </Field>
             </div>
             <Note>
-              巡检点从平台已配置的"巡检点列表"中勾选；机器人自主选择观察位置并执行采集。保存即生成新版本；停用的模板不参与计划生成；已被计划引用的模板不可删除。
+              巡检点从平台已配置的「巡检点管理」中勾选；机器人按各巡检项的机器操作内容执行采集。保存即生成新版本；停用的模板不参与计划生成；已被计划引用的模板不可删除。
             </Note>
             {pickerTable}
           </Modal>

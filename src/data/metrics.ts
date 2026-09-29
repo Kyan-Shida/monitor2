@@ -5,6 +5,7 @@
  */
 import type { State } from "./types";
 import { terminal } from "./selectors";
+import { deviceOf } from "./deviceMaster";
 
 /** 口径配置：成本 / 人力换算系数（口径可配，配置中心可改） */
 export const METRIC_CONFIG = {
@@ -63,6 +64,8 @@ export function scopedState(s: State, region?: string): State {
     alarms: s.alarms.filter((a) => taskIds.has(a.taskId)),
     maps: s.maps.filter((m) => m.region === region),
     points: s.points.filter((p) => mapIds.includes(p.mapId)),
+    // 设备清单同按厂区裁剪：覆盖率的分母必须与分子同一范围，否则厂区筛选后覆盖率会被拉低
+    devices: s.devices?.filter((d) => !d.region || d.region === region),
     workOrders: s.workOrders.filter((w) => alarmIds.has(w.alarmId)),
     fieldOrders: s.fieldOrders.filter((f) =>
       s.robots.some((r) => r.id === f.robotId && r.region === region),
@@ -213,17 +216,40 @@ export const metrics: MetricDef[] = [
   {
     key: "coverage",
     name: "覆盖率",
-    formula: "已启用点位数 / 全部巡检点位数 × 100%",
+    formula:
+      "已落位并启用的检测目标数 / 设备清单中声明要巡检（「是否巡检」= 开）的检测目标数 × 100%；无设备清单时回落到「点位启用率」",
     unit: "%",
     target: 98,
     positive: true,
     dims: ["厂区", "机型", "装置"],
     roles: "*",
-    calc: (s) =>
-      pct(
-        s.points.filter((p) => p.state === "已启用").length,
-        s.points.length,
-      ),
+    calc: (s) => {
+      // J′ 口径收敛：分母由「设备清单里声明要巡检的检测目标」决定，
+      // 关闭「是否巡检」的目标不进分母；待审核 / 已驳回 / 已停用设备的清单不计入。
+      // 这样"清单要求了但还没落位"才会体现为覆盖缺口（原来只统计点位自身启用率，看不出缺口）。
+      const targets = (s.devices || [])
+        .filter((d) => d.reviewState === "已通过" && d.state !== "停用")
+        .flatMap((d) =>
+          d.items
+            .filter((it) => it.inspect)
+            .map((it) => ({ device: d.id, target: it.target })),
+        );
+      // 兼容回退：旧缓存无设备清单时，按点位启用率计算
+      if (!targets.length)
+        return pct(
+          s.points.filter((p) => p.state === "已启用").length,
+          s.points.length,
+        );
+      const covered = targets.filter((t) =>
+        s.points.some(
+          (p) =>
+            p.state === "已启用" &&
+            p.object === t.target &&
+            deviceOf(s, p.device)?.id === t.device,
+        ),
+      ).length;
+      return pct(covered, targets.length);
+    },
   },
   {
     key: "autoRate",

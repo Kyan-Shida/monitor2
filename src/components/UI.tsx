@@ -16,22 +16,30 @@ export const Btn = ({
     {children}
   </button>
 );
-export const Badge = ({ children }: { children: ReactNode }) => (
-  <span
-    className={
-      "badge " +
-      (/失败|异常|歧义|离线|超限|待确认/.test(String(children))
-        ? "red"
-        : /已启用|已同步|完成|空闲|已恢复|已确认/.test(String(children))
-          ? "green"
-          : /待|暂停|草稿|接管|维护/.test(String(children))
-            ? "amber"
-            : "")
-    }
-  >
-    {children}
-  </span>
-);
+/** 分级等级（告警级别 / 业务状态通用）：显式 tone 优先，缺省时按文字关键字推断 */
+type Tone = "red" | "amber" | "blue" | "green";
+export const Badge = ({
+  children,
+  tone,
+}: {
+  children: ReactNode;
+  /** 显式色：red/amber/blue/green，优先级高于文字推断 */
+  tone?: Tone;
+}) => {
+  const text = String(children);
+  const cls =
+    tone ??
+    (/失败|异常|歧义|离线|超限|待确认|已驳回|紧急/.test(text)
+      ? "red"
+      : /已启用|已同步|完成|空闲|已恢复|已确认|已通过|通过|正常|已落位/.test(text)
+        ? "green"
+        : /待|暂停|草稿|接管|维护|孤立|重要/.test(text)
+          ? "amber"
+          : /一般|普通/.test(text)
+            ? "blue"
+            : "");
+  return <span className={"badge " + cls}>{children}</span>;
+};
 export const Panel = ({
   title,
   extra,
@@ -71,17 +79,19 @@ export const Empty = ({ children = "暂无记录" }: { children?: ReactNode }) =
 );
 /**
  * 通用表格
- * @description 表头支持 ReactNode（可用 <span className="th-note"> 在表头下挂小字副注，
- *              避免长说明被 th 的 nowrap 撑宽导致其他列挤压）
- * @param heads 表头单元格（字符串或节点）
- * @param rows 行数据，二维数组，行内元素顺序与 heads 对齐
+ * @description 表头支持 ReactNode；行级可通过 rowClass 回调返回 className 做视觉分级（如告警行）
+ * @param heads 表头单元格
+ * @param rows 行数据，二维数组
+ * @param rowClass 可选：按行内容和行号返回 className；缺省全部无额外样式
  */
-export function Table({
+export function Table<T extends ReactNode[]>({
   heads,
   rows,
+  rowClass,
 }: {
   heads: ReactNode[];
-  rows: ReactNode[][];
+  rows: T[];
+  rowClass?: (row: T, i: number) => string;
 }) {
   return (
     <div className="table-scroll">
@@ -89,14 +99,13 @@ export function Table({
         <thead>
           <tr>
             {heads.map((h, i) => (
-              // 表头可能为节点，故用下标作 key（表头顺序固定不变）
               <th key={i}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i}>
+            <tr key={i} className={rowClass ? rowClass(r, i) : ""}>
               {r.map((c, j) => (
                 <td key={j}>{c}</td>
               ))}

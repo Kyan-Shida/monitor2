@@ -42,12 +42,12 @@ export const groups = [
   ],
   [
     "资源与地图",
-    "equipment:设备资源树::点位与对象",
-    "points:巡检点列表::点位与对象",
+    "equipment:设备主数据::点位与对象",
+    "points:业务巡检目标::点位与对象",
     "rules:采集结果与告警规则::点位与对象",
-    "annotation:点位标注与验证工作台::点位与对象",
-    "routes:路线管理::路线与轨道",
-
+    // 巡检点管理（原「点位标注与验证工作台」）：巡检点 = 名称 + 地图 + 地图点位 + 多个巡检项
+    "annotation:巡检点管理::点位与对象",
+    // 原「路线与轨道 → 路线管理」已下线：路线随地图带入，不再作为独立目录
     "maps:地图管理::地图",
   ],
   [
@@ -82,7 +82,6 @@ const hiddenIds = [
   "queue",
   "calendar",
   "dispatch-log",
-  "routes",
   "services",
   "analytics",
   "users",
@@ -113,8 +112,12 @@ const paths: Record<string, string> = {
   device: "robots/device",
   equipment: "resources/equipment",
   points: "resources/points",
+  /** 添加 / 编辑巡检点（内置页）：名称 + 地图 + 地图点位 + 多个巡检项 */
+  "point-edit": "resources/points/edit",
+  /** 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证 */
+  "point-annotate": "resources/points/annotate",
+  /** 巡检点管理（菜单页）：已配置巡检点列表 + 添加巡检点 */
   annotation: "resources/annotation",
-  routes: "resources/routes",
   templates: "resources/templates",
   plans: "planning/plans",
   "plan-edit": "planning/plan-edit",
@@ -151,12 +154,17 @@ const paths: Record<string, string> = {
   audit: "system/audit",
   point: "resources/points/detail",
   "task-detail": "planning/tasks/detail",
+  /** 地图详情内置页：挂在「地图管理」下（列表 → 详情 → 两个抽屉） */
+  "map-detail": "robots/maps/detail",
   /** 独立大屏窗口：由顶栏「驾驶舱大屏」以新标签页打开，不进入侧边栏与中心 Tab */
   bigscreen: "screen/bigscreen",
 };
 const parents: Record<string, string> = {
   robot: "robots",
-  annotation: "points",
+  "map-detail": "maps",
+  /** 添加 / 编辑巡检点、地图标注工作台、巡检点详情都归属「巡检点管理」 */
+  "point-edit": "annotation",
+  "point-annotate": "annotation",
   "plan-edit": "plans",
   review: "results",
   "result-detail": "archive",
@@ -164,7 +172,8 @@ const parents: Record<string, string> = {
   "replay-detail": "archive",
   "result-view": "results",
   alarm: "alarms",
-  point: "points",
+  /** 巡检点详情：归属「巡检点管理」（原挂在已下线的「巡检点列表」内置页下） */
+  point: "annotation",
   "task-detail": "tasks",
 };
 /**
@@ -217,11 +226,27 @@ export function menuIdOf(page: string): string {
 export const routeMeta = [
   ...pages,
   {
-    ...pages.find((x) => x.id === "points")!,
+    // 添加 / 编辑巡检点（内置页）：从「巡检点管理」列表的「添加巡检点」或行内「编辑」进入
+    ...pages.find((x) => x.id === "annotation")!,
+    id: "point-edit",
+    name: "添加 / 编辑巡检点",
+    path: paths["point-edit"],
+    parent: "annotation",
+  },
+  {
+    // 地图标注工作台（内置页）：候选目标、图面双击打点、试采与自主验证；仍被地图上线工作台第 1 步内嵌
+    ...pages.find((x) => x.id === "annotation")!,
+    id: "point-annotate",
+    name: "地图标注工作台",
+    path: paths["point-annotate"],
+    parent: "annotation",
+  },
+  {
+    ...pages.find((x) => x.id === "annotation")!,
     id: "point",
     name: "巡检点详情",
     path: paths.point,
-    parent: "points",
+    parent: "annotation",
   },
   {
     ...pages.find((x) => x.id === "tasks")!,
@@ -261,6 +286,14 @@ export const routeMeta = [
     name: "巡检结果详情",
     path: paths["result-view"],
     parent: "results",
+  },
+  {
+    // 地图详情内置页：无侧边栏入口，挂在「地图管理」目录下（列表 →「详情」进入）
+    ...pages.find((x) => x.id === "maps")!,
+    id: "map-detail",
+    name: "地图详情",
+    path: paths["map-detail"],
+    parent: "maps",
   },
   {
     // 驾驶舱大屏：仅由顶栏入口以新标签页打开，故不写入 groups（不出现在侧边栏与中心 Tab）

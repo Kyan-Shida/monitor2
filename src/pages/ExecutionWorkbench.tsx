@@ -2,13 +2,7 @@ import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import {
-  stages,
-  taskTypeActions,
-  atomicActionCapability,
-  type TaskType,
-  type AtomicAction,
-} from "../data/types";
+import { stages } from "../data/types";
 import { stageOf, terminal, minutesLeft, timeAt } from "../data/selectors";
 import {
   Btn,
@@ -23,16 +17,6 @@ import {
 import { ObjectLink, Kpis, EventTimeline } from "../components/Business";
 import { MapCanvas } from "../components/MapCanvas";
 import { Video } from "../components/Video";
-const actionOptions: {
-  id: AtomicAction;
-  description: string;
-}[] = [
-  { id: "拍照", description: "采集一张可见光照片" },
-  { id: "录像片段", description: "采集一段现场视频" },
-  { id: "采集红外热像", description: "生成红外热像与温度数据" },
-  { id: "采集气体", description: "读取气体传感器采样值" },
-  { id: "录制声音", description: "录制设备声音片段" },
-];
 export function Execution({ id }: { id?: string }) {
   const { s } = useStore();
   const linkedTask = s.tasks.find(task => task.id === id);
@@ -60,14 +44,7 @@ function LiveTaskMonitor({ id }: { id: string }) {
     p = t.items[t.index];
   const [abnormal, A] = useState(false),
     [quickOpen, setQuickOpen] = useState(false),
-    [quickName, setQuickName] = useState("临时现场核验"),
-    [quickPriority, setQuickPriority] = useState("高"),
-    [quickType, setQuickType] = useState<TaskType>("光学任务"),
-    [quickActions, setQuickActions] = useState<AtomicAction[]>(["拍照"]),
-    [quickRobot, setQuickRobot] = useState(r?.id || s.robots[0]?.id || ""),
-    [quickPoints, setQuickPoints] = useState<string[]>(p ? [p.id] : []),
     [submittedTask, setSubmittedTask] = useState("");
-  const quickRobotData = s.robots.find((x) => x.id === quickRobot);
   const results = s.results.filter((x) => x.taskId === t.id);
   const valid = results.filter(
     (x) => !["无效", "失败", "待复核"].includes(x.status),
@@ -248,23 +225,7 @@ function LiveTaskMonitor({ id }: { id: string }) {
             <div className="live-counts"><span>待复核 <b>{results.filter(x => x.status === "待复核").length}</b></span><span>异常 <b>{results.filter(x => x.abnormal).length}</b></span><span>失败 / 跳过 <b>{t.skipped.length}</b></span></div>
       <div className="live-task-controls">
 
-        <Btn
-          primary
-          onClick={() => {
-            const inferredType: TaskType =
-              p?.kind === "红外"
-                ? "红外任务"
-                : p?.kind === "气体"
-                  ? "气体采集任务"
-                  : "光学任务";
-            setQuickRobot(r?.id || s.robots[0]?.id || "");
-            setQuickPoints(p ? [p.id] : []);
-            setQuickName(`${p?.device || t.name} 临时核验`);
-            setQuickType(inferredType);
-            setQuickActions(taskTypeActions[inferredType]);
-            setQuickOpen(true);
-          }}
-        >
+        <Btn primary onClick={() => setQuickOpen(true)}>
           ＋ 下发临时任务
         </Btn>
         <Btn
@@ -360,7 +321,14 @@ function LiveTaskMonitor({ id }: { id: string }) {
         </Panel>
         </aside>
       </div>
-      {quickOpen && <QuickTaskDrawer robotId={t.robotId} onClose={() => setQuickOpen(false)} onCreated={setSubmittedTask} />}
+      {quickOpen && (
+        <QuickTaskDrawer
+          robotId={t.robotId}
+          pointIds={p ? [p.id] : []}
+          onClose={() => setQuickOpen(false)}
+          onCreated={setSubmittedTask}
+        />
+      )}
     </>
   );
 }

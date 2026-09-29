@@ -1,6 +1,7 @@
 import type { State, Task, Robot, Result } from "./types";
 import { stages, atomicActionCapability } from "./types";
 import { hasMobility } from "./deviceProfile";
+import { captureKindsOfPoint, robotCoversPoint } from "./deviceMaster";
 export const terminal = ["完成", "部分完成", "失败", "取消", "超期"];
 export const queueStates = ["已分配", "下发中", "待执行"];
 export const robotColors: Record<string, string> = {
@@ -41,7 +42,49 @@ export const logNames: Record<string, string> = {
   EMERGENCY_STOP: "紧急停止",
   RECHARGE: "自动回充",
   POSTURE: "姿态动作",
+  // ── 「地图 → 巡检任务」链路（阶段①~⑧）新增动作中文名 ──
+  SURVEY_CAPTURE: "现场踩点",
+  SURVEY_SYNC: "踩点离线同步",
+  TRACK_RECORD: "轨迹录制",
+  SET_MAP_IMAGE: "上传地图底图",
+  CALIBRATE_FRAMES: "坐标标定",
+  SET_MAP_LAYERS: "地图图层更新",
+  IMPORT_DEVICES: "设备清单导入",
+  REVIEW_DEVICE_IMPORT: "设备清单审核",
+  SET_INSPECT_FLAG: "是否巡检开关",
+  SET_DEVICE_STATE: "设备启停",
+  ADD_BUSINESS_TARGET: "新增业务巡检目标",
+  UPDATE_BUSINESS_TARGET: "业务巡检目标更新",
+  SAVE_POINT: "保存巡检点",
+  GEN_LOGICAL_POINTS: "生成逻辑点",
+  BIND_LOGICAL_POINT: "逻辑点绑定",
+  GEN_CANDIDATE_BY_SURVEY: "候选点·现场踩点",
+  GEN_CANDIDATE_BY_COORD: "候选点·坐标反推",
+  GEN_CANDIDATE_BY_AI: "候选点·AI 推荐",
+  CLUSTER_CANDIDATES: "候选点聚类",
+  TRIAL_RUN: "下发试采",
+  TRIAL_RECEIPT: "试采回执",
+  CONFIRM_POINT: "确认物理点",
+  SAVE_ACTION_PLAN: "保存动作编排",
+  SAVE_ROUTE: "保存路线",
+  CALIBRATE: "点位重校准",
 };
+/**
+ * 解析平台时间字符串
+ * @description 兼容 "2026/9/24 20:53"（zh-CN locale）、"2026-09-24 20:53" 与 ISO 三种写法；
+ *              结果查询的时间范围筛选与工作台「最近告警」排序共用它，避免各处自己写正则
+ * @param x 时间字符串
+ * @returns 时间戳；无法解析时返回 NaN
+ */
+export const parseTime = (x: string): number => {
+  const m = x?.match(
+    /(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/,
+  );
+  return m
+    ? new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)).getTime()
+    : Date.parse(x || "");
+};
+
 export const stageOf = (t?: Task) =>
   !t
     ? "—"
@@ -181,9 +224,13 @@ export function checks(s: State, t: Task, r: Robot) {
       detail: r.region + " / " + m?.region,
     },
     {
+      // 采集方式口径（J′）：与引擎 constraints、计划绑定 bindingReasons 共用同一判定
       name: "检测能力",
-      pass: t.items.every((p) => r.capabilities.includes(p.kind)),
-      detail: [...new Set(t.items.map((p) => p.kind))].join(" / "),
+      pass: t.items.every((p) => robotCoversPoint(s, p, r)),
+      detail:
+        [...new Set(t.items.flatMap((p) => captureKindsOfPoint(s, p)))].join(
+          " / ",
+        ) || "—",
     },
     {
       name: "原子动作能力",

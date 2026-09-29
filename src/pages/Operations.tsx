@@ -287,7 +287,7 @@ export function Operations({
                 </Badge>
               </dd>
             </dl>
-            <Btn onClick={() => go("maps", cur.mapId, "sync")}>
+            <Btn onClick={() => go("map-detail", cur.mapId, "sync")}>
               版本同步工作台
             </Btn>
           </Panel>
@@ -681,7 +681,7 @@ export function Operations({
               <button
                 className="attention"
                 key={r.id}
-                onClick={() => go("maps", r.mapId, "sync")}
+                onClick={() => go("map-detail", r.mapId, "sync")}
               >
                 <i className="severity amber" />
                 <div>

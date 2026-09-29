@@ -119,9 +119,12 @@ test("configured rule controls live result and preserves original rule snapshot 
   let rule = { ...rulesOf(s)[0], max: 0.5 };
   s = run(s, { type: "SAVE_ALARM_RULE", rule });
   s.tasks.find((t) => t.id === "T009")!.stage = 6;
-  s = run(s, { type: "TICK", id: "T009" });
+  // 注入"异常读数"：模拟读数由该点位自己的规则生成（上限已改为 0.5 → 读数严格超限），
+  // 这样"规则决定判定结果"验证的是规则本身，而不是按 Point.kind 硬编码的读数
+  s = run(s, { type: "TICK", id: "T009", abnormal: true });
   const result = s.results[0];
   assert.equal(result.abnormal, true);
+  assert.ok(Number(result.raw) > 0.5, "异常读数应严格超出配置上限");
   assert.equal(result.ruleSnapshot!.max, 0.5);
   s = run(s, { type: "SAVE_ALARM_RULE", rule: { ...rule, max: 1 } });
   assert.equal(
@@ -148,13 +151,20 @@ test("point rules treat inclusive bounds as normal; empty/missing rules require 
   });
   const disabled = run(s, { type: "TICK", id: task.id, value: "0.92" });
   assert.equal(disabled.results[0].status, "待复核");
-  s.points.push({ ...s.points[0], id: "P-new" });
+  // 未绑定业务目标的巡检点 = 未配置告警：不判定、进复核
+  s.points.push({ ...s.points[0], id: "P-new", inspectItems: [] });
   assert.equal(rulesOf(s).find((r) => r.pointId === "P-new")?.enabled, false);
+  // 告警设置来自业务巡检目标：绑定了"已开启告警"的目标即视为已配置
+  s.points.push({ ...s.points[0], id: "P-bind" });
+  const bound = rulesOf(s).find((r) => r.pointId === "P-bind")!;
+  assert.equal(bound.enabled, true);
+  assert.equal(bound.level, "重要");
+  assert.equal(bound.max, 0.8);
 });
 
 test("customer history additions retain task snapshots and original active task scope", () => {
   const s = seed();
-  assert.equal(s.schema, 5);
+  assert.equal(s.schema, 6);
   assert.equal(s.tasks.find(t=>t.id==="T009")!.items.length,3);
   const history=s.tasks.find(t=>t.id==="T040")!;
   assert.equal(history.index,history.items.length);

@@ -67,6 +67,10 @@ import {
 import { useStore } from "./data/store";
 import { canSee, roleOf, roles } from "./data/roles";
 import { Maps } from "./pages/Maps";
+import { MapDetail } from "./pages/MapDetail";
+import { BusinessTargets } from "./pages/BusinessTargets";
+import { InspectionPoints } from "./pages/InspectionPoints";
+import { PointEdit } from "./pages/PointEdit";
 import { Annotation } from "./pages/Annotation";
 import { Planning } from "./pages/Planning";
 import { AlarmConfiguration } from "./pages/AlarmConfiguration";
@@ -82,10 +86,11 @@ import { PageTabs } from "./components/PageTabs";
 import {
   NotificationCenter,
   noticeMessages,
-  unreadNoticeCount,
+  splitUnreadCount,
 } from "./components/NotificationCenter";
 import { ObjectDetails } from "./pages/ObjectDetails";
 import { DeviceArchive } from "./pages/DeviceArchive";
+import { DeviceMaster } from "./pages/DeviceMaster";
 import { MonitorCockpit } from "./pages/MonitorCockpit";
 import { DispatchCockpit } from "./pages/DispatchCockpit";
 import { CockpitScreen } from "./pages/CockpitScreen";
@@ -199,8 +204,8 @@ export default function App() {
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
   }, [userMenu]);
-  /** 消息中心未读数：铃铛角标与弹窗列表同口径 */
-  const noticeUnread = unreadNoticeCount(noticeMessages(s));
+  /** 消息中心未读数拆分：红色为告警未读（需立即处理），蓝色为其他未读。告警单独提级，入口即可见。 */
+  const noticeSplit = splitUnreadCount(noticeMessages(s));
   // 当前页面所在一级组自动展开（首次进入时）
   useEffect(() => {
     const m = routeMeta.find((p) => p.id === route.page);
@@ -267,8 +272,20 @@ export default function App() {
     ].includes(page)
   )
     body = <Operations page={page} id={id} tab={tab} />;
+  // 业务巡检目标：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准（巡检项从这里选"检什么、怎么判"）
+  else if (page === "points") body = <BusinessTargets />;
+  // 巡检点管理：已配置巡检点列表 +「添加巡检点」；id 传入时按该地图预筛
+  else if (page === "annotation") body = <InspectionPoints id={id} />;
+  // 添加 / 编辑巡检点（内置页）：名称 + 地图 + 地图点位 + 多个巡检项
+  else if (page === "point-edit")
+    body = <PointEdit id={id === "new" ? undefined : id} />;
+  // 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证
+  else if (page === "point-annotate") body = <Annotation id={id} />;
   else if (page === "maps") body = <Maps id={id} tab={tab} />;
-  else if (page === "annotation") body = <Annotation id={id} />;
+  // 地图详情内置页：列表「详情」进入，内部两个抽屉（地图工作台 / 地图下发）
+  else if (page === "map-detail") body = <MapDetail id={id} tab={tab} />;
+  // 设备主数据（阶段③）：清单导入 / 审核 / 启停 / 是否巡检的后台，沿用 equipment 路由
+  else if (page === "equipment") body = <DeviceMaster />;
   else if (
     ["point", "task-detail", "replay-detail", "result-view"].includes(page)
   )
@@ -279,6 +296,7 @@ export default function App() {
   else if (page === "dispatch" || page === "queue") body = <DispatchDesk key={id || "primary"} id={id} />;
   else if (["queue"].includes(page))
     body = <Scheduling page={page} id={id} />;
+  // 旧深链 `rules`：规则配置挂在点位上，故落到巡检点列表（Supporting 的 points 视图）
   else if (page === "rules") body = <Supporting page="points" />;
   else if (page === "report") body = <InspectionReport />;
   else if (page === "execution") body = <Execution id={id} />;
@@ -560,15 +578,22 @@ export default function App() {
             <button title="重置演示" onClick={() => R(true)}>
               <RotateCcw size={17} />
             </button>
-            {/* 消息中心入口：点击弹出消息中心弹窗（不再直接跳转告警页），铃铛带未读角标 */}
+            {/* 消息中心入口：点击弹出消息中心弹窗（不再直接跳转告警页）。
+              角标拆分：红色圆点告警未读（需立即处理）· 蓝色角标其他未读，
+              让告警在入口层面即见，不再埋在 Tab 里 */}
             <button
-              className="bell-btn"
-              title="消息中心"
+              className={"bell-btn" + (noticeSplit.alarm > 0 ? " has-alarm" : "")}
+              title={noticeSplit.alarm > 0 ? `有 ${noticeSplit.alarm} 条未处理告警` : "消息中心"}
               onClick={() => SETNOTICE(true)}
             >
               <Bell size={18} />
-              {noticeUnread > 0 && (
-                <i className="bell-badge">{noticeUnread > 99 ? "99+" : noticeUnread}</i>
+              {noticeSplit.alarm > 0 && (
+                <i className="bell-dot" />
+              )}
+              {noticeSplit.other > 0 && (
+                <i className="bell-badge">
+                  {noticeSplit.other > 99 ? "99+" : noticeSplit.other}
+                </i>
               )}
             </button>
             {/* 用户下拉菜单：头像 + 姓名角色，点击展开角色切换与退出登录（原型阶段代替真实登录） */}
