@@ -73,6 +73,14 @@ await build({
     // 而脚本只能扫 HTML 标签里的外链，脚本内部（JS 字符串）引用的资源扫不到，
     // 留成独立文件就会在 file:// 下 404（表现为吉祥物等图片不显示）
     assetsInlineLimit: 8 * 1024 * 1024,
+    rollupOptions: {
+      output: {
+        // 把动态 import()（如 xlsx）也内联进主 chunk，避免出现独立 JS 文件。
+        // file:// 协议下浏览器会以 CORS 拦截本地 module 脚本，
+        // 若 xlsx 被拆成单独 chunk，离线打开时 Excel 导入/导出功能会失效。
+        inlineDynamicImports: true,
+      },
+    },
   },
 });
 
