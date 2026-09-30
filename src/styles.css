@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   font-family:
     Inter,
     -apple-system,
@@ -799,7 +799,284 @@ h4 {
   width: 100%;
   min-width: 0;
 }
-/* 「告警设置」：平台唯一的告警配置入口（业务巡检目标的「配业务逻辑与算法」内） */
+/* 原子动作：按上装分组选择 */
+.payload-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.payload-group {
+  border: 1px solid #e6ecf3;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fafcfe;
+}
+.payload-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.payload-head b {
+  font-size: 14px;
+}
+.payload-head small {
+  color: #8a9bb0;
+  font-size: 12px;
+}
+/* 逐项动作编排卡片 */
+.action-cards {
+  display: grid;
+  gap: 12px;
+}
+.action-card {
+  border: 1px solid #e6ecf3;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff;
+}
+.action-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.action-card-head .actions {
+  margin-left: auto;
+}
+.action-card .field {
+  margin-bottom: 10px;
+}
+/* 巡检项编辑抽屉：模式切换 */
+.drawer-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: #f4f7fb;
+  border: 1px solid #e6ecf3;
+  border-radius: 8px;
+}
+.drawer-mode-bar .actions {
+  gap: 6px;
+}
+.mode-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
+.mode-radio input {
+  margin: 0;
+}
+.mode-radio.active {
+  background: #fff;
+  border-color: #3b82f6;
+  color: #2563eb;
+  font-weight: 500;
+}
+/* 操控台 */
+.cockpit {
+  border: 1px solid #e6ecf3;
+  border-radius: 10px;
+  background: #fafcfe;
+  padding: 12px;
+}
+.cockpit-video-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.video-pane {
+  border: 1px solid #dde6f0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0f1724;
+}
+.video-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 12px;
+}
+.video-placeholder {
+  height: 130px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 13px;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+}
+.video-placeholder.thermal {
+  background: linear-gradient(135deg, #4a1d1d 0%, #0f172a 100%);
+}
+.cockpit-recorder {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.cockpit-recorder select {
+  margin-left: 6px;
+}
+.cockpit-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid #e6ecf3;
+  margin-bottom: 12px;
+}
+.cockpit-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: #5b6b7c;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
+.cockpit-tabs button.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  background: #eef4fb;
+}
+.cockpit-body {
+  min-height: 180px;
+}
+.cockpit-grid {
+  display: grid;
+  gap: 12px;
+}
+.cockpit-grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.cockpit-grid.four-col {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.cockpit-section {
+  background: #fff;
+  border: 1px solid #e6ecf3;
+  border-radius: 8px;
+  padding: 12px;
+}
+.cockpit-section b {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.cockpit-section .inline-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.cockpit-section .inline-filter span:first-child {
+  white-space: nowrap;
+  min-width: 80px;
+}
+.cockpit-section input[type="range"] {
+  flex: 1;
+}
+.status-tile {
+  background: #fff;
+  border: 1px solid #e6ecf3;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+.status-tile span {
+  display: block;
+  color: #8a9bb0;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.status-tile strong {
+  font-size: 18px;
+  color: #1f2937;
+}
+.dpad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+}
+.dpad.small button {
+  width: 44px;
+  height: 30px;
+  font-size: 12px;
+}
+.dpad-mid {
+  display: flex;
+  gap: 4px;
+}
+.dpad button {
+  width: 56px;
+  height: 36px;
+  border: 1px solid #cdd9e8;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.dpad button:hover {
+  background: #eef4fb;
+}
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.aux-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.aux-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #e6ecf3;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.aux-toggle input {
+  margin-left: auto;
+}
+/* Excel 导入 */
+.excel-import .actions {
+  margin-bottom: 10px;
+}
+.file-btn {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+}
+.file-btn input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+/* 「告警设置」：平台唯一的告警配置入口（巡检目标台账的「配业务逻辑与算法」内） */
 .alarm-setting {
   padding: 12px 14px;
   margin: 10px 0 14px;
@@ -1213,6 +1490,14 @@ details.advanced > .panel {
 }
 .dot.teal {
   background: #39a69a;
+}
+/* 地图图例：巡检路线（绿色虚线） */
+.dot.green {
+  background: #4ade80;
+}
+/* 地图图例：自动巡检路网（橙色实线） */
+.dot.orange {
+  background: #e8862a;
 }
 .video {
   border-radius: 3px;
@@ -6062,8 +6347,8 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 .cs-kpi-board {
   display: grid;
-  /* 紧凑网格：中列较窄，4 列铺开自动换行；顶端占位、不拉伸 */
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* 评审定稿：3×3 九宫格（去掉「今日计划任务 / 今日已完成任务」后正好 9 项）；顶端占位、不拉伸 */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   flex: 0 0 auto;
 }
@@ -6770,6 +7055,38 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 .ds-selects select {
   width: 100%;
+}
+/* 指挥驾驶舱 KPI 数字条：单行 8 格等分。
+   此前缺少样式，8 个数字块按块级纵向堆叠、溢出 grid 的 8% 行高，
+   视觉上压到下方「设备状态」等面板（评审截图红框问题） */
+.cs-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 0;
+}
+.cs-kpi {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 174, 204, 0.18);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(20, 43, 69, 0.62) 0%, rgba(11, 22, 38, 0.9) 100%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.cs-kpi b {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.05;
+  color: #3ec0d8;
+  text-shadow: 0 0 14px rgba(62, 192, 216, 0.25);
+}
+.cs-kpi span {
+  font-size: 12px;
+  color: var(--cs-dim, #8ba3bd);
 }
 .cs-kv {
   display: grid;
@@ -9935,11 +10252,11 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .bigscreen .monitor-screen .cs-right {
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 }
-/* KPI 网格：4 列等宽 grid，11 张卡末行不足自然左对齐；
-   大屏画布由 zoom 放大（真实 viewport 只影响 media query），显式覆盖窄屏 3 列规则 */
+/* KPI 网格：3×3 九宫格（评审定稿，去掉两项后正好 9 张卡）；
+   大屏画布由 zoom 放大（真实 viewport 只影响 media query），显式覆盖窄屏规则保持 3 列 */
 .bigscreen .monitor-screen .cs-kpi-board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   flex-shrink: 0;
 }
@@ -10383,3 +10700,33 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .reference-upload-error { color:#b13f38; font-size:12px; margin:0 0 10px; }
 .result-query-filters { align-items:flex-end; }
 .result-query-filters > .btn { min-height:34px; }
+
+/* 设备主数据：左侧设备树 + 右侧台账布局 */
+.device-layout{display:flex;gap:16px;align-items:flex-start}
+.device-main{flex:1 1 auto;min-width:0}
+.device-tree{flex:0 0 240px;max-width:240px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:10px;position:sticky;top:12px;max-height:calc(100vh - 96px);overflow:auto;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.device-tree .tree-group{border-left:1px dashed #e2e8f0;margin-left:12px;padding-left:6px}
+.device-tree .tree-node{display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .15s}
+.device-tree .tree-node:hover{background:#f1f5f9}
+.device-tree .tree-node.sel{background:#eef2ff;color:#3730a3;font-weight:600}
+.device-tree .tree-node.root{font-weight:700;color:#0f172a;margin-bottom:4px}
+.device-tree .tree-node.group{font-weight:600;color:#1e293b;margin-top:4px}
+.device-tree .tree-node.leaf{padding-left:8px;color:#475569;font-weight:400}
+.device-tree .tree-chevron{display:flex;align-items:center;color:#94a3b8;flex:0 0 14px}
+.device-tree .tree-icon{display:flex;align-items:center;color:#64748b;flex:0 0 14px}
+.device-tree .tree-node.sel .tree-icon{color:#4f46e5}
+.device-tree .tree-label{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.device-tree .tree-count{flex:0 0 auto;font-size:11px;color:#64748b;background:#f1f5f9;border-radius:10px;padding:1px 7px;font-weight:500}
+.device-tree .tree-node.sel .tree-count{background:#dbe4ff;color:#3730a3}
+.device-tree .tree-dot{flex:0 0 6px;height:6px;border-radius:50%;background:#94a3b8;margin-left:14px}
+.device-tree .tree-node.leaf:hover .tree-dot{background:#64748b}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;margin-bottom:16px}
+.detail-grid>div{display:flex;flex-direction:column;gap:3px}
+.detail-grid span{font-size:12px;color:#94a3b8}
+.detail-grid strong{font-size:14px;color:#0f172a;font-weight:600;word-break:break-all}
+.drawer-sub{margin:4px 0 8px;font-size:14px;color:#0f172a;font-weight:600}
+
+.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:13px;color:#475569;flex-wrap:wrap}
+.pagination .page-btns{display:flex;align-items:center;gap:8px}
+.pagination .page-info{min-width:52px;text-align:center;color:#0f172a;font-weight:600}
+.pagination select{padding:4px 8px;border-radius:6px;border:1px solid #d1d5db;background:#fff}

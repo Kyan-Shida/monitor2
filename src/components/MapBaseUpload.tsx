@@ -6,9 +6,9 @@
 import { useRef, useState } from "react";
 import { useStore } from "../data/store";
 import { Btn } from "./UI";
+import { MAP_IMAGE_MAX_SIZE } from "../data/types";
 
-/** 底图大小上限（单张）：超过则拒绝，避免撑爆 localStorage */
-const MAX_SIZE = 2 * 1024 * 1024;
+/** 底图大小上限：与「地图管理」导入入口共用同一常量（data/types.ts），避免两处口径不一致 */
 
 export function MapBaseUpload({ mapId }: { mapId: string }) {
   const { s, act } = useStore();
@@ -27,8 +27,10 @@ export function MapBaseUpload({ mapId }: { mapId: string }) {
       setError("请选择图片文件（JPG / PNG / WebP）。");
       return;
     }
-    if (file.size > MAX_SIZE) {
-      setError("图片过大（建议 2 MB 以内），请压缩后再上传。");
+    if (file.size > MAP_IMAGE_MAX_SIZE) {
+      setError(
+        `图片过大（建议 ${MAP_IMAGE_MAX_SIZE / 1024 / 1024} MB 以内），请压缩后再上传。`,
+      );
       return;
     }
     try {

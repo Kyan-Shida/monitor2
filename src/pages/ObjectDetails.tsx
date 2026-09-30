@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { ObjectLink, Pager } from "../components/Business";
@@ -47,7 +47,7 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
             <Btn onClick={() => go("point-edit", p.id)}>编辑巡检点</Btn>
           </div>
         </div>
-        {/* 巡检点详情只展示最近检测结果：判定规则 / 告警设置在业务巡检目标里维护 */}
+        {/* 巡检点详情只展示最近检测结果：判定规则 / 告警设置在巡检目标台账里维护 */}
         <Panel
           title="最近检测结果"
           extra={<span>{results.length} 条</span>}

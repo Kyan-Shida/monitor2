@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file seed.ts
  * @description 全部演示种子数据（点位/地图/机器人/模板/计划/任务/结果/告警/日志/工单…），
  *              含「地图 → 巡检任务」链路新增集合（devices/logicalPoints/routes/siteSurveys/trackSamples/trialReceipts）
@@ -705,11 +705,11 @@ const deriveLogicalPoints = (pts: Point[]): LogicalPoint[] =>
       locateOrigin: "人工新增",
     };
   });
-// ── 工厂树与业务巡检目标（客户定稿模型）──────────────────────────────
+// ── 工厂树与巡检目标台账（客户定稿模型）──────────────────────────────
 /**
  * 巡检要求模板库
  * @description 「仪表只是资产，不能直接巡检」——这 7 条要求是"看什么、怎么判"的标准表达；
- *              业务巡检目标 = 仪表 + 其中一条要求 + 算法 + 阈值 + 判断标准
+ *              巡检目标台账 = 仪表 + 其中一条要求 + 算法 + 阈值 + 判断标准
  */
 const requirements: Requirement[] = [
   {
@@ -834,12 +834,12 @@ const requirementOfInstrument = (ins: Instrument) => {
   return /阀|位/.test(ins.name) ? "REQ-STATE" : "REQ-APPEAR";
 };
 /**
- * 由仪表派生业务巡检目标
+ * 由仪表派生巡检目标台账
  * @description 种子保证"清单里的每台仪表都有一条可直接执行的目标"：
  *              要求取模板默认值，阈值与点位判定规则**同源**（都按单位给量程），避免两处量程漂移
  * @param ins 仪表列表
  * @param devs 设备主数据（取巡检项的频率 / 优先级 / 是否巡检）
- * @returns 业务巡检目标列表
+ * @returns 巡检目标台账列表
  */
 const deriveBusinessTargets = (
   ins: Instrument[],
@@ -847,7 +847,7 @@ const deriveBusinessTargets = (
 ): BusinessTarget[] => {
   /**
    * 默认开启告警的仪表：与改造前"已配置判定规则"的三个巡检点（P001~P003）对齐；
-   * 其余目标默认只记录结果，可在「业务巡检目标 › 告警设置」里逐个打开
+   * 其余目标默认只记录结果，可在「巡检目标台账 › 告警设置」里逐个打开
    */
   const ALARM_ON = ["II-V001-P", "II-V001-V", "II-V002-T"];
   return ins.map((x) => {
@@ -904,7 +904,7 @@ export function seed(): State {
     ...d,
   }));
   /**
-   * 工厂树与业务巡检目标：仪表 ← **已通过审核**设备的检测目标；业务目标 ← 仪表 + 巡检要求。
+   * 工厂树与巡检目标台账：仪表 ← **已通过审核**设备的检测目标；业务目标 ← 仪表 + 巡检要求。
    * 未通过审核 / 被驳回的清单不进入工厂树（与设备主数据的"待审核不生效"口径一致）
    */
   const ins = deriveInstruments(devs.filter((d) => d.reviewState === "已通过"));
@@ -2239,7 +2239,7 @@ export function seed(): State {
     instruments: ins,
     /** 巡检要求模板库（看滴漏 / 看高温 / 看仪表读数 / 看外观破损 / 看气体浓度 / 看阀位 / 听异响） */
     requirements: structuredClone(requirements),
-    /** 业务巡检目标 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准（巡检项从这里选） */
+    /** 巡检目标台账 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准（巡检项从这里选） */
     businessTargets: biz,
     /** 逻辑巡检点：**不暴露给用户**，由「设备主数据 + 点位」派生（见 deriveLogicalPoints） */
     logicalPoints: lps,

@@ -1,30 +1,25 @@
-/**
+﻿/**
  * @file PointEdit.tsx
  * @description 添加 / 编辑巡检点（内置页）：一个巡检点在这里一次定义完。
  *   ① 巡检点身份：巡检点名称 + 选择地图 + 选择「地图中带有定位ID的点」
- *   ② 巡检项列表：每项 = 巡检项名称 + **业务巡检目标** + **机器操作内容**（原子动作 + 云台 / 视角参数），
+ *   ② 巡检项列表：每项 = 巡检项名称 + **巡检目标台账** + **机器操作内容**（原子动作 + 云台 / 视角参数），
  *      逐项「保存本项」；多个巡检项保存后共同组成这个巡检点。
  * @interaction 菜单「巡检点管理」→「＋ 添加巡检点」/ 行内「编辑巡检点」；
- *              引擎 action：SAVE_POINT；业务目标不够用时可就地「＋ 快速新建业务巡检目标」（ADD_BUSINESS_TARGET）
+ *              引擎 action：SAVE_POINT；业务目标不够用时可就地「＋ 快速新建巡检目标台账」（ADD_BUSINESS_TARGET）
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Badge, Btn, Empty, Field, Modal, Note, Panel, Table } from "../components/UI";
 import { MapImageCanvas, type ImageMarker } from "../components/MapImageCanvas";
-import { atomicActions } from "../data/types";
+import { InspectItemDrawer } from "../components/InspectItemDrawer";
 import type {
-  AtomicAction,
   BusinessTarget,
   InspectSpec,
   JudgeType,
-  PointActionPlan,
 } from "../data/types";
 import { defaultRangeOfUnit } from "../data/alarmRules";
 import { defaultRequirementOfInstrument } from "../data/deviceMaster";
-
-/** 避障策略选项（到点后的通行策略） */
-const AVOID = ["标准", "谨慎", "绕行"];
 
 export function PointEdit({ id }: { id?: string }) {
   const { s, act } = useStore();
@@ -37,7 +32,7 @@ export function PointEdit({ id }: { id?: string }) {
   /** 正在编辑的巡检项草稿；null 表示不在编辑态 */
   const [draft, DRAFT] = useState<InspectSpec | null>(null);
   const [err, ERR] = useState("");
-  /** 「＋ 快速新建业务巡检目标」弹窗 */
+  /** 「＋ 快速新建巡检目标台账」弹窗 */
   const [btOpen, BTO] = useState(false);
   const [bt, BT] = useState({
     instrumentId: "",
@@ -93,8 +88,10 @@ export function PointEdit({ id }: { id?: string }) {
 
   const upd = (patch: Partial<InspectSpec>) =>
     DRAFT((d) => (d ? { ...d, ...patch } : d));
-  const updPose = (patch: Partial<PointActionPlan>) =>
-    DRAFT((d) => (d ? { ...d, pose: { ...d.pose, ...patch } } : d));
+
+  /** 当前地图的现场踩点记录 / 试采回执：作为 Excel / 操控台的参考数据来源 */
+  const surveys = (s.siteSurveys || []).filter((x) => x.mapId === mapId);
+  const trials = (s.trialReceipts || []).filter((x) => x.pointId === targetId);
 
   /** 新开一条巡检项草稿（默认带一个原子动作，参数取保守值） */
   function newItem() {
@@ -118,7 +115,7 @@ export function PointEdit({ id }: { id?: string }) {
   function saveItem() {
     if (!draft) return;
     if (!draft.name.trim()) return ERR("请填写巡检项名称");
-    if (!draft.targetId) return ERR("请选择业务巡检目标（检什么、怎么判）");
+    if (!draft.targetId) return ERR("请选择巡检目标台账（检什么、怎么判）");
     if (!draft.actions.length) return ERR("请至少选择一个原子动作");
     const rec: InspectSpec = {
       ...draft,
@@ -219,6 +216,9 @@ export function PointEdit({ id }: { id?: string }) {
           巡检点 = 名称 + 地图 + 地图点位（带定位ID）+ 多个巡检项；巡检项 = 名称 + 业务目标 + 机器操作内容
         </span>
         <div className="actions">
+          <Btn primary disabled={!!draft} onClick={savePoint}>
+            {editing ? "保存巡检点" : "创建巡检点"}
+          </Btn>
           <Btn onClick={() => go("annotation")}>返回巡检点列表</Btn>
         </div>
       </div>
@@ -300,11 +300,11 @@ export function PointEdit({ id }: { id?: string }) {
         >
           <p className="muted">
             一个停靠位上「一次要看几个东西」就在这里配：每个巡检项独立选
-            <b>业务巡检目标</b>（检什么、怎么判），并独立编排
+            <b>巡检目标台账</b>（检什么、怎么判），并独立编排
             <b>机器操作内容</b>（原子动作 + 云台 / 视角）。
           </p>
           <Table
-            heads={["巡检项名称", "业务巡检目标", "原子动作", "云台 / 视角", "操作"]}
+            heads={["巡检项名称", "巡检目标台账", "原子动作", "云台 / 视角", "操作"]}
             rows={items.map((sp) => [
               <b>{sp.name}</b>,
               labelOfBt(sp.targetId),
@@ -340,214 +340,31 @@ export function PointEdit({ id }: { id?: string }) {
             </Empty>
           )}
 
-          {draft && (
-            <>
-              <Note>
-                正在编辑巡检项：填好后点「保存本项」加入本巡检点；多个巡检项共同组成一个巡检点。
-              </Note>
-              <Field label="巡检项名称">
-                <input
-                  value={draft.name}
-                  placeholder="例如 压力读数 / 泵体滴漏"
-                  onChange={(e) => upd({ name: e.target.value })}
-                />
-              </Field>
-              <Field label="业务巡检目标（检什么 · 怎么判）">
-                <div className="actions">
-                  <select
-                    value={draft.targetId}
-                    onChange={(e) => {
-                      const bid = e.target.value;
-                      const b = btOf(bid);
-                      const req = (s.requirements || []).find(
-                        (r) => r.id === b?.requirementId,
-                      );
-                      const ins = insOf(bid);
-                      upd({
-                        targetId: bid,
-                        // 名称留空时按"巡检要求（退了用仪表名）"给个默认值，可改
-                        name: draft.name || req?.name || ins?.name || "",
-                      });
-                    }}
-                  >
-                    <option value="">请选择业务巡检目标</option>
-                    {bts.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {labelOfBt(b.id)}
-                        {b.inspect ? "" : "（已关闭是否巡检）"}
-                      </option>
-                    ))}
-                  </select>
-                  <Btn onClick={openBt}>＋ 快速新建业务巡检目标</Btn>
-                </div>
-              </Field>
-              {!bts.length && (
-                <Note>
-                  还没有业务巡检目标：业务目标 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准。
-                  请先在「业务巡检目标」里建，或点上方「＋ 快速新建」。
-                </Note>
-              )}
-              <Field label="机器操作内容 · 原子动作（到点后做什么）">
-                <div className="actions">
-                  {atomicActions.map((a: AtomicAction) => (
-                    <label key={a} className="inline-filter">
-                      <input
-                        type="checkbox"
-                        checked={draft.actions.includes(a)}
-                        onChange={(e) =>
-                          upd({
-                            actions: e.target.checked
-                              ? [...draft.actions, a]
-                              : draft.actions.filter((x) => x !== a),
-                          })
-                        }
-                      />
-                      <span>{a}</span>
-                    </label>
-                  ))}
-                </div>
-              </Field>
-              <Field label="机器操作内容 · 云台（可通过操作云台编辑参数）">
-                <div className="ptz-row">
-                  {(
-                    [
-                      ["pan", "水平", -180, 180],
-                      ["tilt", "俯仰", -90, 90],
-                      ["zoom", "变焦", 1, 30],
-                    ] as const
-                  ).map(([k, label, min, max]) => (
-                    <label key={k} className="inline-filter">
-                      <span>{label}</span>
-                      <input
-                        type="range"
-                        min={min}
-                        max={max}
-                        aria-label={`${label}滑杆`}
-                        value={draft.pose.ptz[k]}
-                        onChange={(e) =>
-                          updPose({
-                            ptz: {
-                              ...draft.pose.ptz,
-                              [k]: Number(e.target.value),
-                            },
-                          })
-                        }
-                      />
-                      <input
-                        type="number"
-                        min={min}
-                        max={max}
-                        aria-label={label}
-                        value={draft.pose.ptz[k]}
-                        onChange={(e) =>
-                          updPose({
-                            ptz: {
-                              ...draft.pose.ptz,
-                              [k]: Number(e.target.value),
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  ))}
-                </div>
-              </Field>
-              <Field label="机器操作内容 · 视角与到点执行">
-                <div className="actions">
-                  <label className="inline-filter">
-                    <span>观察方向：</span>
-                    <input
-                      value={draft.pose.viewDir || ""}
-                      placeholder="例如 正对表盘"
-                      onChange={(e) => updPose({ viewDir: e.target.value })}
-                    />
-                  </label>
-                  <label className="inline-filter">
-                    <span>补光：</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      aria-label="补光"
-                      value={draft.pose.light ?? 0}
-                      onChange={(e) =>
-                        updPose({ light: Number(e.target.value) })
-                      }
-                    />
-                    <span>{draft.pose.light ?? 0}%</span>
-                  </label>
-                  <label className="inline-filter">
-                    <span>升降：</span>
-                    <input
-                      type="number"
-                      step="0.1"
-                      aria-label="升降高度"
-                      value={draft.pose.lift ?? 0}
-                      onChange={(e) => updPose({ lift: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="inline-filter">
-                    <span>停留：</span>
-                    <input
-                      type="number"
-                      aria-label="停留秒数"
-                      value={draft.pose.dwellSec ?? 5}
-                      onChange={(e) =>
-                        updPose({ dwellSec: Number(e.target.value) })
-                      }
-                    />
-                    <span>秒</span>
-                  </label>
-                  <label className="inline-filter">
-                    <span>避障：</span>
-                    <select
-                      aria-label="避障策略"
-                      value={draft.pose.avoidPolicy || "标准"}
-                      onChange={(e) => updPose({ avoidPolicy: e.target.value })}
-                    >
-                      {AVOID.map((x) => (
-                        <option key={x}>{x}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="inline-filter">
-                    <span>预置位：</span>
-                    <input
-                      value={draft.pose.preset || ""}
-                      placeholder="例如 P-03"
-                      onChange={(e) => updPose({ preset: e.target.value })}
-                    />
-                  </label>
-                </div>
-              </Field>
-              <div className="actions">
-                <Btn primary onClick={saveItem}>
-                  保存本项
-                </Btn>
-                <Btn
-                  onClick={() => {
-                    DRAFT(null);
-                    ERR("");
-                  }}
-                >
-                  取消本项
-                </Btn>
-              </div>
-            </>
-          )}
         </Panel>
       </div>
 
-      <div className="actions toolbar-inline">
-        <Btn primary disabled={!!draft} onClick={savePoint}>
-          {editing ? "保存巡检点" : "创建巡检点"}
-        </Btn>
-        <Btn onClick={() => go("annotation")}>返回巡检点列表</Btn>
-        <small className="muted">
-          保存后巡检点进入「待验证」；通过「地图标注工作台」的自主验证后转「已启用」，
-          再由任务模板 / 临时任务引用。
-        </small>
-      </div>
+      {draft && (
+        <InspectItemDrawer
+          draft={draft}
+          onChange={upd}
+          onSave={saveItem}
+          onCancel={() => {
+            DRAFT(null);
+            ERR("");
+          }}
+          businessTargets={bts}
+          labelOfBt={labelOfBt}
+          onOpenBt={openBt}
+          surveys={surveys}
+          trials={trials}
+        />
+      )}
+
+      {/* 保存 / 返回按钮已移至顶部 context-bar；此处仅保留状态提示 */}
+      <small className="muted">
+        保存后巡检点进入「待验证」；通过「地图标注工作台」的自主验证后转「已启用」，
+        再由任务模板 / 临时任务引用。
+      </small>
       {err && (
         <p role="alert" className="reference-upload-error">
           {err}
@@ -556,7 +373,7 @@ export function PointEdit({ id }: { id?: string }) {
 
       {btOpen && (
         <Modal
-          title="快速新建业务巡检目标"
+          title="快速新建巡检目标台账"
           drawer
           drawerWidth={620}
           onClose={() => BTO(false)}
@@ -576,11 +393,11 @@ export function PointEdit({ id }: { id?: string }) {
           }
         >
           <Note>
-            业务巡检目标 = 业务目标与要求 + 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 +
+            巡检目标台账 = 业务目标与要求 + 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 +
             <b>告警设置</b>。此处为现场补录入口，建完提交即人工新增、直接生效（不进入批量审核）。
             <br />
-            新建默认<b>开启告警（重要级，通知设备岗）</b>；告警开关 / 等级 / 通知只改「业务巡检目标」里的
-            「告警设置」——巡检点本身不配置告警。若原有业务目标不合适，请到「业务巡检目标」里就地调整。
+            新建默认<b>开启告警（重要级，通知设备岗）</b>；告警开关 / 等级 / 通知只改「巡检目标台账」里的
+            「告警设置」——巡检点本身不配置告警。若原有业务目标不合适，请到「巡检目标台账」里就地调整。
           </Note>
           <Field label="检测目标（仪表）">
             <select

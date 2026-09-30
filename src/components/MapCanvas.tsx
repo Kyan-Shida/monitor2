@@ -199,6 +199,21 @@ export function MapCanvas({
   pickCoords = false,
   /** 坐标标定（阶段②）：坐标拾取换算世界坐标用；缺省按 0.05 米/像素估算 */
   frames,
+  /**
+   * 巡航点模式（地图详情页专用）：只渲染地图携带的「巡航点」——带 ID 的定位标记，
+   * 并支持悬浮查看坐标（x,y）；不渲染业务点位（业务在巡检目标台账 / 巡检点管理中配置）。
+   */
+  cruiseOnly = false,
+  /**
+   * 巡检路线图层（地图百分比坐标）：按途经巡航点顺序连成虚线，
+   * 由调用方从 s.routes 的 nodeIds 换算成坐标序列后传入。
+   */
+  routePaths = [],
+  /**
+   * 自动巡检路网（地图百分比坐标）：由调用方按「所有点都在线上」生成的正交路网，
+   * 橙色实线渲染（评审参考样式）；点标记绘制其上，视觉上全部落在路网中。
+   */
+  network = [],
 }: {
   points?: Point[];
   targets?: Candidate[];
@@ -221,6 +236,12 @@ export function MapCanvas({
   pickCoords?: boolean;
   /** 坐标标定（阶段②） */
   frames?: MapFrames;
+  /** 巡航点模式：只展示地图携带的巡航点（带 ID），悬浮显示坐标 */
+  cruiseOnly?: boolean;
+  /** 巡检路线图层：途经点坐标序列（地图百分比坐标） */
+  routePaths?: { id: string; name: string; pts: { x: number; y: number }[] }[];
+  /** 自动巡检路网：正交折线段集合（地图百分比坐标），橙色实线 */
+  network?: { x: number; y: number }[][];
 }) {
   const [zoom, Z] = useState(1);
   /** clipPath / 渐变的唯一前缀：同页多实例不冲突 */
@@ -233,6 +254,8 @@ export function MapCanvas({
   );
   /** 坐标拾取读数：鼠标位置的地图百分比坐标 */
   const [pick, SETPICK] = useState<{ x: number; y: number } | null>(null);
+  /** 巡航点模式下，悬浮高亮的巡航点 ID（用于显示坐标气泡） */
+  const [hoverTid, SETHOVER] = useState<string | null>(null);
   /**
    * 屏幕坐标 → 地图百分比坐标（与双击加点同一套换算）
    * @param svg SVG 根节点
@@ -479,65 +502,145 @@ export function MapCanvas({
               opacity="0.9"
             />
           )}
-          {targets
-            .filter((t) => t.state === "待确认")
-            .map((t) => (
-              <g
-                key={t.id}
-                className="map-point"
-                onClick={() => onSelect?.(t.id)}
-                transform={`translate(${t.x * 9} ${t.y * 5.2})`}
+          {/* 自动巡检路网：橙色实线（点标记绘制其上，形成"所有点都在线上"的评审参考样式） */}
+          {network.map((line, i) =>
+            line.length > 1 ? (
+              <polyline
+                key={"net" + i}
+                points={line.map((p) => `${p.x * 9} ${p.y * 5.2}`).join(" ")}
+                fill="none"
+                stroke="#e8862a"
+                strokeWidth="4"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                opacity="0.92"
+              />
+            ) : null,
+          )}
+          {/* 巡检路线图层：一条路线一条绿色虚线（与执行轨迹蓝色区分） */}
+          {routePaths.map((rt) =>
+            rt.pts.length > 1 ? (
+              <polyline
+                key={rt.id}
+                points={rt.pts.map((p) => `${p.x * 9} ${p.y * 5.2}`).join(" ")}
+                fill="none"
+                stroke="#4ade80"
+                strokeWidth="2.5"
+                strokeDasharray="10 7"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                opacity="0.9"
               >
-                <rect
-                  x="-10"
-                  y="-10"
-                  width="20"
-                  height="20"
-                  transform="rotate(45)"
-                  fill="#d49631"
+                <title>{rt.name}</title>
+              </polyline>
+            ) : null,
+          )}
+          {!cruiseOnly &&
+            targets
+              .filter((t) => t.state === "待确认")
+              .map((t) => (
+                <g
+                  key={t.id}
+                  className="map-point"
+                  onClick={() => onSelect?.(t.id)}
+                  transform={`translate(${t.x * 9} ${t.y * 5.2})`}
+                >
+                  <rect
+                    x="-10"
+                    y="-10"
+                    width="20"
+                    height="20"
+                    transform="rotate(45)"
+                    fill="#d49631"
+                    stroke="white"
+                    strokeWidth="3"
+                  />
+                  <text x="16" y="-13" fill="#ecc985" fontSize="14">
+                    候选{t.kind}
+                  </text>
+                </g>
+              ))}
+
+          {cruiseOnly &&
+            targets.map((t) => {
+              const cid = t.externalId || t.id;
+              const cx = t.x * 9;
+              const cy = t.y * 5.2;
+              const fill =
+                t.state === "已剔除"
+                  ? "#9aa1a8"
+                  : t.source === "平台新增"
+                    ? "#31957f"
+                    : t.state === "待确认"
+                      ? "#d49631"
+                      : "#2379ce";
+              return (
+                <g
+                  key={t.id}
+                  className="map-point"
+                  onMouseEnter={() => SETHOVER(t.id)}
+                  onMouseLeave={() => SETHOVER(null)}
+                  transform={`translate(${cx} ${cy})`}
+                >
+                  <circle r="9" fill={fill} stroke="white" strokeWidth="3" />
+                  <text x="13" y="-8" fontSize="13" fill="#e8eef3">
+                    {cid}
+                  </text>
+                  {hoverTid === t.id && (
+                    <g transform="translate(13 -6)">
+                      <rect
+                        x="-2"
+                        y="2"
+                        width="116"
+                        height="22"
+                        rx="4"
+                        fill="#0f172a"
+                        opacity="0.92"
+                      />
+                      <text x="6" y="17" fontSize="12" fill="#e8eef3">
+                        {`坐标 (${t.x}, ${t.y})`}
+                      </text>
+                    </g>
+                  )}
+                </g>
+              );
+            })}
+          {!cruiseOnly &&
+            points.map((p) => (
+              <g
+                key={p.id}
+                className="map-point"
+                onClick={() => onSelect?.(p.targetId)}
+                transform={`translate(${p.x * 9} ${p.y * 5.2})`}
+              >
+                {selected === p.targetId && (
+                  <circle r="22" fill="#2d74dc33" stroke="#6ea8ef" />
+                )}
+                <circle
+                  r="9"
+                  fill={
+                    p.targetId === selected
+                      ? "#2379ce"
+                      : pointStates[p.id] === "异常"
+                        ? "#c85d50"
+                        : pointStates[p.id] === "失败"
+                          ? "#8d5666"
+                          : pointStates[p.id] === "已完成"
+                            ? "#31957f"
+                            : pointStates[p.id] === "待执行"
+                              ? "#9daaba"
+                              : p.state === "已启用"
+                                ? "#2379ce"
+                                : "#d49631"
+                  }
                   stroke="white"
                   strokeWidth="3"
                 />
-                <text x="16" y="-13" fill="#ecc985" fontSize="14">
-                  候选{t.kind}
+                <text x="15" y="-13" fontSize="14" fill="#e8eef3">
+                  {p.name}
                 </text>
               </g>
             ))}
-          {points.map((p) => (
-            <g
-              key={p.id}
-              className="map-point"
-              onClick={() => onSelect?.(p.targetId)}
-              transform={`translate(${p.x * 9} ${p.y * 5.2})`}
-            >
-              {selected === p.targetId && (
-                <circle r="22" fill="#2d74dc33" stroke="#6ea8ef" />
-              )}
-              <circle
-                r="9"
-                fill={
-                  p.targetId === selected
-                    ? "#2379ce"
-                    : pointStates[p.id] === "异常"
-                      ? "#c85d50"
-                      : pointStates[p.id] === "失败"
-                        ? "#8d5666"
-                        : pointStates[p.id] === "已完成"
-                          ? "#31957f"
-                          : pointStates[p.id] === "待执行"
-                            ? "#9daaba"
-                            : p.state === "已启用"
-                              ? "#2379ce"
-                              : "#d49631"
-                }
-                stroke="white"
-                strokeWidth="3"
-              />
-              <text x="15" y="-13" fontSize="14" fill="#e8eef3">
-                {p.name}
-              </text>
-            </g>
-          ))}
           {/* 轨道区段图层：占用 / 空闲 / 检修三态，占用时标注归属机器 */}
           {rails.map((x) => (
             <g key={x.id} transform={`translate(${x.x * 9} ${x.y * 5.2})`}>
@@ -697,11 +800,11 @@ export function MapCanvas({
       <div className="map-legend">
         <span>
           <i className="dot blue" />
-          业务点位
+          {cruiseOnly ? "巡航点（地图自带）" : "业务点位"}
         </span>
         <span>
           <i className="dot amber" />
-          待确认目标
+          {cruiseOnly ? "待确认巡航点" : "待确认目标"}
         </span>
         <span>
           <i className="dot teal" />
@@ -709,6 +812,18 @@ export function MapCanvas({
         </span>
         {rails.length > 0 && <span>轨道区段</span>}
         {chargers.length > 0 && <span>充电桩</span>}
+        {routePaths.some((rt) => rt.pts.length > 1) && (
+          <span>
+            <i className="dot green" />
+            巡检路线
+          </span>
+        )}
+        {network.length > 0 && (
+          <span>
+            <i className="dot orange" />
+            巡检路网
+          </span>
+        )}
         <span>三维点云示意</span>
       </div>
     </div>

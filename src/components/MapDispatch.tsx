@@ -43,6 +43,11 @@ export function MapDispatch({ mapId }: { mapId: string }) {
   };
   return (
     <>
+      {m.state === "草稿" && (
+        <Note>
+          <b>当前地图为草稿状态：</b>下发将自动定版为当前版本（m{m.version} / p{m.pointSet}）并同步给所选设备。
+        </Note>
+      )}
       <Note>
         下发只登记“传输中”，**传输完成不等于已同步**——需机器人激活回执确认版本一致后，
         平台才更新机器人实际版本；任务执行中需等待维护窗口。

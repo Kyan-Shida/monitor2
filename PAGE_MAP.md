@@ -1,4 +1,4 @@
-# 原型页面 ↔ 代码文件映射速查
+﻿# 原型页面 ↔ 代码文件映射速查
 
 > 改动任何页面前先查表找文件，按 **页面 ID → 路由 URL → 组件文件** 三步走。
 > 全局样式走 `styles.css`，数据走 `src/data/`，文档清单见文末「文档索引」。
@@ -37,7 +37,7 @@
 
 | 页面 ID | 路由 URL | 组件文件 | 备注 |
 |---------|---------|---------|------|
-| `workbench` | `#/workbench` | `src/pages/Workbench.tsx` | 角色默认落地页（6 个待办 KPI，点击弹出该类明细弹窗；页面只读展示，复核等写操作跳转对应页面） |
+| `workbench` | `#/workbench` | `src/pages/Workbench.tsx` | 角色默认落地页（6 个待办 KPI，点击弹出该类明细弹窗；页面只读展示，复核等写操作跳转对应页面）。**快捷入口 4 项**（2026-09-30 调整）：新建任务 → `quick`（直达临时任务创建抽屉）· 任务调度 → `dispatch` · 结果查询 → `results`（原「结果复核」）· 告警记录 → `alarms` |
 
 ### 🛠️ 巡检执行（一级中心）
 
@@ -77,14 +77,14 @@
 | 页面 ID | 路由 URL | 组件文件 | 备注 |
 |---------|---------|---------|------|
 | `equipment` | `#/resources/equipment` | `src/pages/DeviceMaster.tsx` | **设备主数据**（阶段③）：清单导入 → 待审核 → 通过/驳回 → 启停与「是否巡检」；设备是"巡检什么"的唯一来源，禁止由点位反推 |
-| `points` | `#/resources/points` | `src/pages/BusinessTargets.tsx` | **业务巡检目标**：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准；列表 + 两步抽屉（选检测目标 → 配业务逻辑）。巡检项从这里选目标 |
+| `points` | `#/resources/points` | `src/pages/BusinessTargets.tsx` | **巡检目标台账**：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准；列表 + 两步抽屉（选检测目标 → 配业务逻辑）。巡检项从这里选目标 |
 | `annotation` | `#/resources/annotation` | `src/pages/InspectionPoints.tsx` | **巡检点管理**（原「点位标注与验证工作台」槽位）：已配置巡检点列表（地图/状态筛选 + 搜索 + 分页）+「＋ 添加巡检点」 |
 | `point-edit` | `#/resources/points/edit` | `src/pages/PointEdit.tsx` | **添加 / 编辑巡检点内置页**（父页面 `annotation`）：巡检点名称 + 地图 + 地图点位（带定位ID）+ 多个巡检项（名称 + 业务目标 + 原子动作 / 云台参数），逐项保存 |
 | `point-annotate` | `#/resources/points/annotate` | `src/pages/Annotation.tsx` | **地图标注工作台内置页**（父页面 `annotation`）：候选目标 / 图面双击打点 / 试采与自主验证；仍被地图上线工作台第 1 步内嵌 |
 | `maps` | `#/robots/maps` | `src/pages/Maps.tsx` | **地图管理**：只有地图列表（区域/状态筛选 + 搜索 + 分页 + 「详情」）；旧深链 `?tab=workflow/survey/archive/changes` 仍可进入（已不在界面暴露） |
-| `map-detail` | `#/robots/maps/detail/:id` | `src/pages/MapDetail.tsx` | **地图详情内置页**（父页面 `maps`）：信息 / 版本三元组 / 内容概览 / 版本历史 / 预览；**操作区只有两个按钮**——**地图工作台**（`components/MapWorkbench.tsx`：底图 + 定位ID（区分来源）+ 轨迹，可继续新增）与**地图下发**（`components/MapDispatch.tsx`：多选设备批量下发 + 回执）；`?tab=workbench/sync` 可直达抽屉 |
+| `map-detail` | `#/robots/maps/detail/:id` | `src/pages/MapDetail.tsx` | **地图详情内置页**（父页面 `maps`）：信息 / 版本三元组 / 内容概览 / 版本历史 / 预览；**操作区只有两个按钮**——**地图工作台**（`components/MapWorkbench.tsx`：底图 + 定位ID（区分来源）+ 轨迹，可继续新增）与**地图下发**（`components/MapDispatch.tsx`：多选设备批量下发 + 回执）；`?tab=workbench/sync` 可直达抽屉。**地图预览**（`components/MapSpatialPreview.tsx`，2D `MapCanvas` / 3D SVG 双视图）：2026-09-30 起叠加**自动巡检路网**（橙色实线，蛇形正交连线，覆盖全部巡航点——"所有点都在线上"）与本地图**巡检路线**（绿色虚线，来自 `s.routes` 按途经巡航点连线） |
 
-> 已删除：`objects`（设备 → 对象 → 检测项）独立页——能力已并入设备主数据的检测项视图；
+> 已删除：`objects`（设备 → 对象 → 检测项）独立页——能力已并入设备主数据；设备的检测项与「是否巡检」开关现由「设备清单」行内「详情」右侧抽屉承载；
 > `routes`（路线管理，含「路线与轨道」子分组）——2026-09-30 删除，路线随地图带入。
 
 ### 🤖 机器人管理（一级中心）
@@ -93,11 +93,13 @@
 |---------|---------|---------|------|
 | `robots` | `#/robots/monitor` | `src/pages/Operations.tsx`（`page="robots"`） | 机器台账（列表） |
 | `robot` | `#/robots/detail/:id` | `src/pages/Operations.tsx`（`page="robot"`） | 机器人运行监测，内部 3 个 tab（monitor/tasks/records） |
-| `health` | `#/robots/health` | `src/pages/Operations.tsx`（`page="health"`） | 能力与健康，顶部带机器人选择器 |
-| `robot-map` | `#/robots/map` | `src/pages/Operations.tsx`（`page="robot-map"`） | 地图与版本，顶部带机器人选择器 |
-| `device` | `#/robots/device` | `src/pages/Operations.tsx`（`page="device"`） | 机型专项，顶部带机器人选择器 |
+| `robot-new` | `#/robots/new` | `src/pages/RobotNew.tsx` | **新增机器人**（表单页）：编码（唯一）/ 名称 / 机型 / 区域 / 地图 / 采集能力 / 移动能力 / 机型约束 / 固件；引擎 action `ADD_ROBOT`（2026-09-30 新增） |
+| `health` | `#/robots/health` | `src/pages/Operations.tsx`（`page="health"`） | **机器人能力**（合并页）：页内 3 个 tab——能力与健康（`?tab=ability`，默认）/ 地图与版本（`?tab=map`）/ 机型专项（`?tab=device`）；顶部带机器人选择器 |
+| `robot-map` | `#/robots/map` | `src/pages/Operations.tsx`（`page="robot-map"`） | （已合并进 `health`）地图与版本；**侧边栏已隐藏**，旧链接仍可打开 |
+| `device` | `#/robots/device` | `src/pages/Operations.tsx`（`page="device"`） | （已合并进 `health`）机型专项；**侧边栏已隐藏**，旧链接仍可打开 |
 
 > `health` / `robot-map` / `device`（以及已移入「巡检执行 › 执行」的 `manual`）共享同一机器人选择状态（`useViewState("robot-detail.selected")`），且**路由 `id` 优先于该状态**，便于从驾驶舱/执行台定向跳入。
+> 2026-09-30：原三个二级页「能力与健康 / 地图与版本 / 机型专项」合并为「机器人能力」一页（页内 Tab 切换），`robot-map` / `device` 加入 `hiddenIds`（路由保留）；同日新增 `robot-new` 页面，页面总数 38 → 37（`engine.test.ts` 断言同步）。
 
 ### 📈 分析与报表（一级中心）
 
@@ -160,7 +162,8 @@
 | `DispatchCockpit.tsx` | — | 调度指挥驾驶舱（地图 + 控制带 + 告警/SLA） |
 | `CockpitScreen.tsx` | — | 大屏外壳（顶栏 Tab 切两个驾驶舱） |
 | `Metrics.tsx` | — | 指标中心（指标卡 + 口径 + 下钻弹窗） |
-| `Operations.tsx` | `robots` / `robot` / `health` / `robot-map` / `manual`（菜单已移入「巡检执行 › 执行」）/ `device` / `calendar`(转调 Legacy) | 机器台账 + 运行监测 + 能力/地图/人工操作/机型 |
+| `Operations.tsx` | `robots` / `robot` / `health`（合并页，页内 3 Tab）/ `robot-map`（隐藏，兼容旧链）/ `manual`（菜单已移入「巡检执行 › 执行」）/ `device`（隐藏，兼容旧链）/ `calendar`(转调 Legacy) | 机器台账 + 运行监测 + 机器人能力/地图/人工操作/机型 |
+| `RobotNew.tsx` | `robot-new` | 新增机器人表单页（引擎 `ADD_ROBOT`） |
 | `OperationsLegacy.tsx` | `calendar`（其余分支为历史死代码） | 旧版运维页；现仅任务日历在用 |
 | `Maps.tsx` | — | 地图管理（内部 tab：list / detail / archive / sync / changes） |
 | `Annotation.tsx` | `point-annotate`（内置页） | 地图标注工作台（候选目标 / 试采 / 自主验证）；不再是菜单页 |
@@ -375,22 +378,22 @@
 | 深链迁移 | 全平台 `go("maps", id, "sync")` → `go("map-detail", id, "sync")`；标注页「进入地图上线工作台 / 发布检查」→「地图工作台 / 地图详情」 |
 | **单级定版（无试验 / 正式版）** | `MapAsset.state` 由 `草稿 \| 试验发布 \| 已发布` 收敛为 **`草稿 \| 已发布`**；`PUBLISH` 改为单级定版（不再要求点位全部已启用）；**`SYNC` / `SYNC_BATCH` 下发时自动定版**（新增 `publishMap` / `ensurePublished`）；详情页移除「发布版本」按钮；旧缓存里的 `试验发布` 在 `store.withSeedDefaults` 归一为 `已发布`；`MapOnboarding` 第 3 步文案改为「定版发布」 |
 
-## 2026-09-30 工厂树与业务巡检目标（客户定稿模型第一步）
+## 2026-09-30 工厂树与巡检目标台账（客户定稿模型第一步）
 
 | 变更 | 说明 |
 |---|---|
 | **下线「路线管理」** | 菜单项 + 「路线与轨道」子分组 + 路由 `resources/routes` + `pages/Routes.tsx` **整体删除**（路线随地图带入）；`pages.length` 39 → **38** |
-| **「巡检点列表」→「业务巡检目标」** | 沿用原菜单槽位与路由（`#/resources/points`），组件换成 `pages/BusinessTargets.tsx`；巡检点列表原退为内置页 `point-list`，**本轮已并入「巡检点管理」并删除该路由**，巡检点详情父级改为 `annotation` |
+| **「巡检点列表」→「巡检目标台账」** | 沿用原菜单槽位与路由（`#/resources/points`），组件换成 `pages/BusinessTargets.tsx`；巡检点列表原退为内置页 `point-list`，**本轮已并入「巡检点管理」并删除该路由**，巡检点详情父级改为 `annotation` |
 | **「点位标注与验证工作台」→「巡检点管理」** | `annotation` 菜单项改名，组件换成 `pages/InspectionPoints.tsx`（巡检点列表 +「＋ 添加巡检点」）；新增内置页 `point-edit`（`#/resources/points/edit`，名称 + 地图 + 地图点位 + 多个巡检项）与 `point-annotate`（`#/resources/points/annotate`，原 `Annotation.tsx` 降级为地图标注工作台，仍被地图上线工作台第 1 步内嵌）。**菜单项数与 `pages.length` 均不变（38）** |
 | **巡检点 / 巡检项定形** | 新增 `InspectSpec`（巡检项 = 名称 + 业务目标 + 原子动作 + 云台参数），`Point.inspectItems[]`；任务指令集与「需要哪些采集方式」改为**以巡检项配置为准**（不再按 `p.kind` 硬编码推），引擎新增 `SAVE_POINT`（含一对一占用校验） |
-| **告警只有一处入口** | `BusinessTarget` 增 `goal` / `require` / `alarm`（告警开关 · 等级 · 触发条件 · 通知）；`rulesOf()` 的默认来源改为**所绑业务目标**（阈值 + 等级 + 开关）。`SAVE_ALARM_RULE` 与 `s.alarmRules` 保留为历史规则版本，但**UI 入口全部收口**：巡检点详情不再内嵌 `AlarmConfiguration`，巡检点列表的规则查看改为**只读**并指向「业务巡检目标」 |
+| **告警只有一处入口** | `BusinessTarget` 增 `goal` / `require` / `alarm`（告警开关 · 等级 · 触发条件 · 通知）；`rulesOf()` 的默认来源改为**所绑业务目标**（阈值 + 等级 + 开关）。`SAVE_ALARM_RULE` 与 `s.alarmRules` 保留为历史规则版本，但**UI 入口全部收口**：巡检点详情不再内嵌 `AlarmConfiguration`，巡检点列表的规则查看改为**只读**并指向「巡检目标台账」 |
 | **巡检点详情只读** | `ObjectDetails` 的 `point` 分支只保留「最近检测结果」（任务 / 时间 / 结果 / 判定 / 详情），删除「业务目标要求」面板与规则编辑器 |
 | **Mock 地图定位ID点** | 示例地图除 11 个已被占用的定位ID（`O101`~`O111`）外，新增 12 个**空闲定位ID点**（`O201`~`O212`），「添加巡检点」可直接绑定 |
 | **模板 / 临时任务收口到巡检点** | 巡检模板勾选表与临时任务抽屉的列与文案全部改为巡检点口径（巡检点 / 地图定位ID / 巡检项 / 机器操作内容），不再出现"业务目标 / 业务点位"字样 |
 | **巡检结果查询按业务场景重排** | `Results.tsx`（`results`）：7 个平铺下拉 → **业务范围芯片（可点，计数与列表同源）+ 时间范围（今日/近7天/近30天/自定义）+ 区域 · 设备 + 关键词 + 更多筛选（任务/机器人/原始状态，默认收起）**；新增**按巡检点视角**（最近 3 条读数 + 点位详情），保留按任务视角。新增 `parseTime()` 供时间筛选与排序共用 |
 | **告警事件：闭环可视化 + 去花哨** | 4 张彩色分级卡 + 分级图例 → **闭环阶段条**（全部/待确认/处理中/待复查/已恢复/已闭环，可点筛选）+ 一行闭环与分级口径说明；表格新增**闭环进度**（5 段点阵 + n/5）与**处置与工单**（工单号 · 状态 · SLA 剩余 · 责任人 / 复查任务 / 尚未派单）；等级改为**小圆点 + 文案**，行级只留左侧细边（删除整行渐变染色） |
 | **工作台速览：分级逻辑修正** | 「分级告警信息」→「**告警与闭环**」：去掉无意义的第四档"其他"，3 档芯片**可点筛选且计数与列表同源**；修正口径矛盾（已恢复属未闭环、已关闭才闭环）；列表由取数组尾部改为**按真实时间倒序**取最近 5 条；补「未闭环 N · 近 7 天已闭环 N」与闭环链说明 |
-| 新增数据集合 | `State.areas`（区域）/ `instruments`（仪表）/ `requirements`（巡检要求模板）/ `businessTargets`（业务巡检目标） |
+| 新增数据集合 | `State.areas`（区域）/ `instruments`（仪表）/ `requirements`（巡检要求模板）/ `businessTargets`（巡检目标台账） |
 | 种子派生（加层不改义） | 仪表 ← **已通过审核**设备的检测目标（13 台）；区域 ← 设备的厂区去重；业务目标 ← 仪表 + 按「采集方式 + 单位」映射的默认巡检要求（13 条），阈值走 `alarmRules.defaultRangeOfUnit`，与点位判定规则**同源** |
 | 巡检要求模板库 | 看滴漏 / 看高温 / 看仪表读数 / 看外观破损 / 看气体浓度 / 看阀位状态 / 听异响；每条带默认算法（AI 表达方式）与判定方式（数值范围 / 期望状态 / 有无目标 / 等级评分） |
 | 新 action | `ADD_BUSINESS_TARGET`（校验仪表在册且非停用、要求存在、算法必填、数值范围上下限有效、期望状态必填）、`UPDATE_BUSINESS_TARGET`（含 `inspect` 开关） |

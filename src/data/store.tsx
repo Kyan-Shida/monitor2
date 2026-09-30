@@ -1,4 +1,4 @@
-import { useContext, useState, useEffect, useRef, type ReactNode } from "react";
+﻿import { useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import { StoreContext as C } from "./storeContext";
 import { advanceAutomation } from "./automation";
 import { seed } from "./seed";
@@ -54,7 +54,7 @@ export function migrate(raw: unknown): State | null {
  */
 function withSeedDefaults(s: State): State {
   const needMapImage = s.maps?.some((m) => m.image === undefined);
-  // 设备主数据 / 工厂树 / 业务巡检目标：老缓存缺任一项即整体回填（它们同源派生，必须成套）
+  // 设备主数据 / 工厂树 / 巡检目标台账：老缓存缺任一项即整体回填（它们同源派生，必须成套）
   const needDevices =
     !s.devices?.length ||
     !s.logicalPoints?.length ||

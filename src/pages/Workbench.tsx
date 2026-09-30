@@ -414,9 +414,10 @@ export function Workbench() {
    * 按当前角色权限过滤，无权限的入口不展示
    */
   const shortcuts = [
-    { label: "新建任务", icon: FilePlus2, page: "plan-edit", group: "巡检执行" },
-    { label: "任务调度", icon: Split, page: "dispatch", group: "巡检执行" },
-    { label: "结果复核", icon: Eye, page: "review", group: "结果与异常" },
+    // 新建任务：直达「临时巡检任务」创建抽屉（quick 路由渲染 QuickTaskDrawer，关闭后回任务列表）
+    { label: "新建任务", icon: FilePlus2, page: "quick", group: "调度中心" },
+    { label: "任务调度", icon: Split, page: "dispatch", group: "调度中心" },
+    { label: "结果查询", icon: Eye, page: "results", group: "结果与异常" },
     { label: "告警记录", icon: BellRing, page: "alarms", group: "结果与异常" },
   ].filter((x) => canSee(role, x.page, x.group));
 

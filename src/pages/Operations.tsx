@@ -246,23 +246,103 @@ export function Operations({
         </select>
       </div>
     );
-    if (page === "health")
+    // 「机器人能力」合并页：能力与健康 / 地图与版本 / 机型专项 三个 Tab（原三个二级页面合并而来）
+    if (page === "health") {
+      const capTab = ["ability", "map", "device"].includes(tab || "")
+        ? tab!
+        : "ability";
       return (
         <>
           {common}
-          <Panel title="能力、组件与业务影响">
-            {/* 可用性口径来自 data/robotCapabilities，与计划绑定机器人页共用 */}
-            <Table
-              heads={["能力 / 组件", "可用性", "业务影响"]}
-              rows={capabilityMatrix(cur).map((c) => [
-                c.key,
-                <Badge key={c.key}>{c.availability}</Badge>,
-                c.impact,
-              ])}
-            />
-          </Panel>
+          <div className="object-tabs">
+            {(
+              [
+                ["ability", "能力与健康"],
+                ["map", "地图与版本"],
+                ["device", "机型专项"],
+              ] as const
+            ).map(([k, n]) => (
+              <button
+                key={k}
+                className={capTab === k ? "active" : ""}
+                onClick={() => go("health", cur.id, k)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          {capTab === "ability" && (
+            <Panel title="能力、组件与业务影响">
+              {/* 可用性口径来自 data/robotCapabilities，与计划绑定机器人页共用 */}
+              <Table
+                heads={["能力 / 组件", "可用性", "业务影响"]}
+                rows={capabilityMatrix(cur).map((c) => [
+                  c.key,
+                  <Badge key={c.key}>{c.availability}</Badge>,
+                  c.impact,
+                ])}
+              />
+            </Panel>
+          )}
+          {capTab === "map" && (
+            <Panel title="当前实际激活版本">
+              <dl>
+                <dt>地图</dt>
+                <dd>
+                  <ObjectLink type="maps" id={cur.mapId} tab="detail">
+                    {cur.mapId}
+                  </ObjectLink>
+                </dd>
+                <dt>空间版本</dt>
+                <dd>m{cur.mapVersion}</dd>
+                <dt>点位版本</dt>
+                <dd>p{cur.pointSet}</dd>
+                <dt>最近同步</dt>
+                <dd>
+                  <Badge>
+                    {s.syncs.find((x) => x.robotId === cur.id)?.state ||
+                      "初始激活副本"}
+                  </Badge>
+                </dd>
+              </dl>
+              <Btn onClick={() => go("map-detail", cur.mapId, "sync")}>
+                版本同步工作台
+              </Btn>
+            </Panel>
+          )}
+          {capTab === "device" && (
+            <Panel title={`${cur.deviceType}机型专项 · 差异配置`}>
+              <Note>{profileOf(cur.deviceType).summary}</Note>
+              <Table
+                heads={["配置维度", "本机型内容"]}
+                rows={[
+                  ["移动能力", cur.mobility.join(" / ")],
+                  [
+                    "机型约束",
+                    `最低派单电量 ${cur.constraints.minBattery}%` +
+                      (cur.constraints.railSectionId
+                        ? ` · 所在区段 ${cur.constraints.railSectionId}`
+                        : "") +
+                      (cur.constraints.maxSpeed
+                        ? ` · 限速 ${cur.constraints.maxSpeed} m/s`
+                        : ""),
+                  ],
+                  [
+                    "详情关注项",
+                    profileOf(cur.deviceType).detailTabs.join(" / "),
+                  ],
+                  ["地图图层", profileOf(cur.deviceType).mapLayers.join(" / ")],
+                  ["操控重点", profileOf(cur.deviceType).controlPanel.join(" / ")],
+                  ["告警类型", profileOf(cur.deviceType).alarmTypes.join(" / ")],
+                  ["任务约束", profileOf(cur.deviceType).taskConstraints.join(" / ")],
+                  ["健康度 / 固件", `${cur.health} · ${cur.firmware}`],
+                ]}
+              />
+            </Panel>
+          )}
         </>
       );
+    }
     if (page === "robot-map")
       return (
         <>

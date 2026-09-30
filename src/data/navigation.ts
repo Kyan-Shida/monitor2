@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 /**
  * @file navigation.ts
  * @description 菜单结构与路由：一级业务中心 → 页面（按业务域归并，不按厂商能力域切分）
@@ -42,8 +42,8 @@ export const groups = [
   ],
   [
     "资源与地图",
-    "equipment:设备主数据::点位与对象",
-    "points:业务巡检目标::点位与对象",
+    "equipment:设备台账::点位与对象",
+    "points:巡检目标台账::点位与对象",
     "rules:采集结果与告警规则::点位与对象",
     // 巡检点管理（原「点位标注与验证工作台」）：巡检点 = 名称 + 地图 + 地图点位 + 多个巡检项
     "annotation:巡检点管理::点位与对象",
@@ -54,9 +54,9 @@ export const groups = [
     "机器人管理",
     "robots:机器台账::机器人资产",
     "robot:机器人运行监测::机器人资产",
-    "health:能力与健康::机器人能力",
-    "robot-map:地图与版本::机器人能力",
-    "device:机型专项::机器人能力",
+    "robot-new:新增机器人::机器人资产",
+    // 原「能力与健康 / 地图与版本 / 机型专项」三页合并为一个「机器人能力」页（页内 Tab 切换）
+    "health:机器人能力::机器人能力",
   ],
   ["分析与报表", "metrics:分析报表", "analytics:基础分析", "report:巡检结果报表::巡检报表"],
   [
@@ -87,6 +87,9 @@ const hiddenIds = [
   "users",
   "quick",
   "replay",
+  // 已合并进「机器人能力」页（health 的页内 Tab）；路由保留，旧链接仍可打开
+  "robot-map",
+  "device",
 ];
 const roots = [
   "workbench",
@@ -105,6 +108,8 @@ const paths: Record<string, string> = {
   calendar: "monitor/calendar",
   robots: "robots/monitor",
   robot: "robots/detail",
+  /** 新增机器人（内置表单页）：挂在「机器人管理 › 机器人资产」下 */
+  "robot-new": "robots/new",
   maps: "robots/maps",
   health: "robots/health",
   "robot-map": "robots/map",

@@ -1,7 +1,7 @@
 /**
  * @file MapDetail.tsx
  * @description 地图详情（内置页，挂在「地图管理」目录下）：展示单张地图的详细信息与状态，
- *              并提供两个内嵌抽屉——**地图工作台**（继续新增点位 / 轨迹）与**地图下发**（多选设备同步）。
+ *              并提供两个内嵌抽屉——**地图工作台**（管理巡航点）与**地图下发**（多选设备同步）。
  * @interaction 地图列表「详情」→ `#/robots/maps/detail/:id`；深链 `?tab=sync` / `?tab=workbench` 直达抽屉
  */
 import { useState } from "react";
@@ -19,17 +19,17 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
   const [drawer, DRAWER] = useState(
     tab === "sync" ? "下发" : tab === "workbench" ? "工作台" : "",
   );
+  /** 草稿状态下的下发确认弹窗 */
+  const [confirmDispatch, SETCONFIRM] = useState(false);
   if (!m) return <Note>地图不存在，请从地图列表进入。</Note>;
   const pts = s.points.filter((p) => p.mapId === m.id);
-  const imported = m.targets.filter((t) => t.source !== "平台新增");
-  const added = m.targets.filter((t) => t.source === "平台新增");
-  const track = (s.trackSamples || []).filter((x) => x.mapId === m.id);
-  const synced = s.robots.filter(
-    (r) =>
-      r.mapId === m.id &&
-      r.mapVersion === m.version &&
-      r.pointSet === m.pointSet,
-  );
+
+  const openWorkbench = () => DRAWER("工作台");
+  const openDispatch = () => {
+    if (m.state === "草稿") SETCONFIRM(true);
+    else DRAWER("下发");
+  };
+
   return (
     <>
       <div className="context-bar">
@@ -38,16 +38,23 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
           {m.id} · {m.region} · m{m.version} / p{m.pointSet}
         </span>
         <Badge>{m.state}</Badge>
-        {/* 详情页只保留两个动作：地图工作台（继续补充地图内容）与地图下发（同步给设备） */}
+        {/* 详情页只保留两个动作：地图工作台（管理巡航点）与地图下发（同步给设备） */}
         <div className="actions">
-          <Btn primary onClick={() => DRAWER("工作台")}>
+          <Btn primary onClick={openWorkbench}>
             地图工作台
           </Btn>
-          <Btn primary onClick={() => DRAWER("下发")}>
+          <Btn primary onClick={openDispatch}>
             地图下发
           </Btn>
         </div>
       </div>
+
+      {m.state === "草稿" && (
+        <Note>
+          <b>当前地图为草稿状态：</b>编辑内容尚未下发到设备，请点击「地图下发」定版并同步。
+        </Note>
+      )}
+
       <Panel title="地图信息">
         <dl className="kv">
           <dt>地图编号 / 名称</dt>
@@ -86,37 +93,20 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
         </dl>
       </Panel>
       <div className="grid two">
-        <Panel title="地图内容概览">
+        <Panel title="巡航点清单（带ID）">
+          <p className="muted">
+            巡航点即地图携带的定位标记（带ID）；在「地图工作台」增删改。业务化（绑定设备成为可执行巡检点）在「巡检点管理 / 巡检目标台账」完成。
+          </p>
           <Table
-            heads={["内容", "数量", "说明"]}
-            rows={[
-              [
-                "地图自带定位ID",
-                `${imported.length} 个`,
-                "随地图文件带入，保持原样",
-              ],
-              [
-                "平台新增点位",
-                `${added.length} 个`,
-                "在「地图工作台」继续新增",
-              ],
-              ["轨迹采样点", `${track.length} 个`, "按顺序连线，作为初始路线依据"],
-              [
-                "业务点位",
-                `${pts.length} 个`,
-                "在「巡检点管理」里绑定地图点位后成为可执行巡检点",
-              ],
-              [
-                "版本一致的设备",
-                `${synced.length} / ${s.robots.length} 台`,
-                "以机器人激活回执为准",
-              ],
-            ]}
+            heads={["ID / 定位号", "来源", "类型", "坐标 (x,y)", "状态"]}
+            rows={m.targets.map((t) => [
+              t.externalId || t.id,
+              t.source,
+              t.kind,
+              `(${t.x}, ${t.y})`,
+              <Badge>{t.state}</Badge>,
+            ])}
           />
-          <div className="actions">
-            <Btn onClick={() => DRAWER("工作台")}>打开地图工作台</Btn>
-            <Btn onClick={() => DRAWER("下发")}>打开地图下发</Btn>
-          </div>
         </Panel>
         <Panel title="版本历史">
           {m.history.length ? (
@@ -128,22 +118,14 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
           ) : (
             <p className="muted">暂无版本记录</p>
           )}
-          <h4>点位版本清单</h4>
-          {pts.length ? (
-            pts.map((p) => (
-              <p key={p.id}>
-                {p.name} · v{p.version} <Badge>{p.state}</Badge>
-              </p>
-            ))
-          ) : (
-            <p className="muted">该地图还没有业务点位，去「地图工作台」补点位后再标注。</p>
-          )}
         </Panel>
       </div>
-      <Panel title="地图预览与业务目标">
+      <Panel title="地图预览 · 巡航点">
         <MapSpatialPreview
           map={m}
           points={pts}
+          cruiseOnly
+          routes={(s.routes || []).filter((r) => r.mapId === m.id)}
           onSelect={() => go("annotation", m.id)}
         />
       </Panel>
@@ -163,6 +145,26 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
         </Modal>
       )}
 
+      {confirmDispatch && (
+        <Modal title="草稿地图即将下发" onClose={() => SETCONFIRM(false)}>
+          <p>
+            当前地图处于<b>草稿</b>状态，点击「确认下发」后将自动定版为当前版本，并把
+            m{m.version} / p{m.pointSet} 同步给所选设备。
+          </p>
+          <div className="actions">
+            <Btn onClick={() => SETCONFIRM(false)}>取消</Btn>
+            <Btn
+              primary
+              onClick={() => {
+                SETCONFIRM(false);
+                DRAWER("下发");
+              }}
+            >
+              确认下发
+            </Btn>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

@@ -83,55 +83,115 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         ? selected.filter((x) => x !== id)
         : [...selected, id],
     );
+  /** 巡检点选择器的筛选与分页（模板弹窗与临时任务共用同一数据源与口径） */
+  const [pickStateF, PSF] = useViewState<string>("planning.picker.state", "全部");
+  const [pickMapF, PMF] = useViewState<string>("planning.picker.map", "全部");
+  const PICK_SIZE = 6;
+  const pickFiltered = s.points.filter(
+    (p) =>
+      (p.id + p.name + p.device).includes(pickQuery.trim()) &&
+      (pickStateF === "全部" || p.state === pickStateF) &&
+      (pickMapF === "全部" || p.mapId === pickMapF),
+  );
+  const pickRows = pickFiltered.slice(
+    (pickPage - 1) * PICK_SIZE,
+    pickPage * PICK_SIZE,
+  );
   /**
    * 已配置巡检点勾选表（数据源 s.points 来自「巡检点管理」页，平台预先配置好）
    * 模板/临时任务**以巡检点为最小单位**勾选（不选业务目标：业务目标是巡检项内部的事）
    */
   const pickerTable = (
-    <Table
-      heads={[
-        "选择",
-        "巡检点",
-        "地图 / 地图点位",
-        "巡检项",
-        "机器操作内容",
-        "版本 / 状态",
-      ]}
-      rows={s.points.map((p) => {
-        const m = s.maps.find((x) => x.id === p.mapId);
-        const mp = m?.targets.find((t) => t.id === p.targetId);
-        const specs = p.inspectItems || [];
-        return [
-          <input
-            type="checkbox"
-            checked={selected.includes(p.id)}
-            onChange={() => toggle(p.id)}
-          />,
-          <>
-            <b>{p.name}</b>
-            <small>
-              {p.id} · {p.device}
-            </small>
-          </>,
-          <>
-            {m?.name || p.mapId}
-            <small>{mp?.externalId ? `定位ID ${mp.externalId}` : "无定位ID"}</small>
-          </>,
-          <>
-            {specs.length} 项
-            <small>{specs.map((sp) => sp.name).join(" / ") || p.item}</small>
-          </>,
-          <>
-            {actionsOfPoint(s, p).join(" / ") || "—"}
-            <small>{captureKindsOfPoint(s, p).join(" / ")}</small>
-          </>,
-          <>
-            <span>v{p.version} </span>
-            <Badge>{p.state}</Badge>
-          </>,
-        ];
-      })}
-    />
+    <>
+      <div className="filter-bar">
+        <input
+          aria-label="巡检点搜索"
+          placeholder="搜索巡检点 / 编码 / 设备"
+          value={pickQuery}
+          onChange={(e) => {
+            PQ(e.target.value);
+            PP(1);
+          }}
+        />
+        <select
+          aria-label="按地图筛选"
+          value={pickMapF}
+          onChange={(e) => {
+            PMF(e.target.value);
+            PP(1);
+          }}
+        >
+          <option value="全部">全部地图</option>
+          {s.maps.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="按状态筛选"
+          value={pickStateF}
+          onChange={(e) => {
+            PSF(e.target.value);
+            PP(1);
+          }}
+        >
+          {["全部", "已启用", "待验证", "待重新验证", "待标注", "停用"].map(
+            (x) => (
+              <option key={x}>{x}</option>
+            ),
+          )}
+        </select>
+        <span>
+          共 {pickFiltered.length} 个 · 已选 {selected.length} 个
+        </span>
+      </div>
+      <Table
+        heads={[
+          "选择",
+          "巡检点",
+          "地图 / 地图点位",
+          "巡检项",
+          "机器操作内容",
+          "版本 / 状态",
+        ]}
+        rows={pickRows.map((p) => {
+          const m = s.maps.find((x) => x.id === p.mapId);
+          const mp = m?.targets.find((t) => t.id === p.targetId);
+          const specs = p.inspectItems || [];
+          return [
+            <input
+              type="checkbox"
+              checked={selected.includes(p.id)}
+              onChange={() => toggle(p.id)}
+            />,
+            <>
+              <b>{p.name}</b>
+              <small>
+                {p.id} · {p.device}
+              </small>
+            </>,
+            <>
+              {m?.name || p.mapId}
+              <small>{mp?.externalId ? `定位ID ${mp.externalId}` : "无定位ID"}</small>
+            </>,
+            <>
+              {specs.length} 项
+              <small>{specs.map((sp) => sp.name).join(" / ") || p.item}</small>
+            </>,
+            <>
+              {actionsOfPoint(s, p).join(" / ") || "—"}
+              <small>{captureKindsOfPoint(s, p).join(" / ")}</small>
+            </>,
+            <>
+              <span>v{p.version} </span>
+              <Badge>{p.state}</Badge>
+            </>,
+          ];
+        })}
+      />
+      <Pager page={pickPage} count={pickFiltered.length} onChange={PP} />
+    </>
   );
   if (page === "quick")
     return (

@@ -1,9 +1,9 @@
-/**
+﻿/**
  * @file BusinessTargets.tsx
- * @description 业务巡检目标 = **仪表 + 巡检要求 + 算法 + 阈值 + 判断标准**。
+ * @description 巡检目标台账 = **仪表 + 巡检要求 + 算法 + 阈值 + 判断标准**。
  *              核心前提：「仪表本身只是资产，不能直接巡检」——必须叠加巡检要求才可执行。
  *              列表 + 新增/编辑抽屉（两步：① 选检测目标（区域 → 设备 → 仪表）② 配业务逻辑与算法）。
- * @interaction 菜单「资源与地图 › 点位与对象 › 业务巡检目标」（`points` 槽位）；
+ * @interaction 菜单「资源与地图 › 点位与对象 › 巡检目标台账」（`points` 槽位）；
  *              「巡检点管理 › 添加巡检点」的巡检项从这里选（也可就地快速新建）；
  *              引擎 action：ADD_BUSINESS_TARGET / UPDATE_BUSINESS_TARGET
  */
@@ -52,7 +52,7 @@ export function BusinessTargets() {
     [pager, PG] = useViewState("bt.page", 1);
   const [open, OPEN] = useState(false);
   const [step, STEP] = useState(0);
-  /** 编辑中的业务巡检目标 id；空串表示新增 */
+  /** 编辑中的巡检目标台账 id；空串表示新增 */
   const [editId, EDIT] = useState("");
   /** 抽屉第一步选中的仪表 id */
   const [pick, PICK] = useState("");
@@ -259,7 +259,7 @@ export function BusinessTargets() {
     <>
       <div className="metric-strip">
         <div>
-          <span>业务巡检目标</span>
+          <span>巡检目标台账</span>
           <strong>{targets.length}</strong>
         </div>
         <div>
@@ -308,16 +308,16 @@ export function BusinessTargets() {
           />
         </div>
         <Btn primary onClick={openAdd}>
-          ＋ 添加业务巡检目标
+          ＋ 添加巡检目标台账
         </Btn>
       </div>
       <Panel
-        title="业务巡检目标列表"
+        title="巡检目标台账列表"
         extra={<span>{list.length} 条</span>}
       >
         <p className="muted">
           仪表本身只是资产、<b>不能直接巡检</b>；叠加巡检要求（看什么）+ 算法（AI
-          表达方式）+ 阈值 + 判断标准后，才是可执行的业务巡检目标。
+          表达方式）+ 阈值 + 判断标准后，才是可执行的巡检目标台账。
         </p>
         <Table
           heads={[
@@ -386,13 +386,13 @@ export function BusinessTargets() {
             ];
           })}
         />
-        {!rows.length && <Empty>没有符合条件的业务巡检目标，点「＋ 添加业务巡检目标」新建。</Empty>}
+        {!rows.length && <Empty>没有符合条件的巡检目标台账，点「＋ 添加巡检目标台账」新建。</Empty>}
         <Pager page={cur} count={list.length} size={PAGE_SIZE} onChange={PG} />
       </Panel>
 
       {open && (
         <Modal
-          title={editId ? "编辑业务巡检目标" : "添加业务巡检目标"}
+          title={editId ? "编辑巡检目标台账" : "添加巡检目标台账"}
           drawer
           drawerWidth={920}
           onClose={() => OPEN(false)}
@@ -414,7 +414,7 @@ export function BusinessTargets() {
                   disabled={!form.requirementId || !form.algorithm.trim()}
                   onClick={save}
                 >
-                  {editId ? "保存修改" : "创建业务巡检目标"}
+                  {editId ? "保存修改" : "创建巡检目标台账"}
                 </Btn>
               )}
             </>

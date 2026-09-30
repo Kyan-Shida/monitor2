@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file types.ts
  * @description 全量数据模型类型 + 链路常量（stages / taskTypeActions / atomicActionCapability）；
  *              含「地图 → 巡检任务」链路新增类型（DeviceAsset/LogicalPoint/Route/TrialReceipt…）
@@ -120,7 +120,7 @@ export interface PTZ {
 
 /**
  * 巡检项：巡检点下的一个执行项
- * @description **巡检项 = 巡检项名称 + 业务巡检目标 + 机器操作内容**；
+ * @description **巡检项 = 巡检项名称 + 巡检目标台账 + 机器操作内容**；
  *              多个巡检项组成一个巡检点——机器人到点后**逐项执行**。
  *              机器操作内容 = 原子动作（做什么）+ 云台/视角参数（怎么看，可操作云台细化）
  */
@@ -128,13 +128,65 @@ export interface InspectSpec {
   id: string;
   /** 巡检项名称（如 压力读数 / 泵体滴漏） */
   name: string;
-  /** 业务巡检目标 id（仪表 + 巡检要求 + 算法 + 阈值 + 判断标准） */
+  /** 巡检目标台账 id（仪表 + 巡检要求 + 算法 + 阈值 + 判断标准） */
   targetId: string;
   /** 机器操作内容：原子动作集合 */
   actions: AtomicAction[];
-  /** 机器操作参数：云台 / 观察方向 / 补光 / 升降 / 停留 / 避障 / 预置位 */
+  /** 机器操作参数：云台 / 观察方向 / 补光 / 升降 / 停留 / 避障 / 预置位（共享默认视角） */
   pose: PointActionPlan;
+  /**
+   * 逐项原子动作编排：按「上装（云台 / 相机 / 气体 / 声音）+ 动作模板」单独配置参数
+   * @description 缺省不填时复用 `pose` 的共享视角；一旦为该动作单独配置，则以这里为准。
+   *              参数来源分两种：`import` = 运维跑图时预设并导入；`manual` = 现场实测 / 监控操作录入。
+   */
+  actionConfigs?: Partial<Record<AtomicAction, AtomicActionConfig>>;
 }
+
+/**
+ * 单项原子动作的参数编排
+ * @description 与 `PointActionPlan` 同构，但显式记录「参数来源」：
+ *              `import` 由现场踩点 / 试采回执预设导入；`manual` 由现场实测或操控台逐帧录入。
+ */
+export interface AtomicActionConfig {
+  /**
+   * 参数来源：
+   * - import = 运维跑图预设 / Excel 导入；
+   * - manual = 用户手动输入；
+   * - cockpit = 通过操控台（云台/镜头/机器人移动）边调边看并自动记录。
+   */
+  source: "import" | "manual" | "cockpit";
+  /** 导入来源说明（如 现场踩点 SS-xxx / 试采 TR-xxx / Excel 导入），manual / cockpit 时为空 */
+  importRef?: string;
+  ptz?: PTZ;
+  /** 升降杆高度 */
+  lift?: number;
+  /** 补光灯亮度 */
+  light?: number;
+  /** 停留时间（秒） */
+  dwellSec?: number;
+  /** 避障策略 */
+  avoidPolicy?: string;
+  /** 观察方向 */
+  viewDir?: string;
+  /** 云台预置位 */
+  preset?: string;
+  /**
+   * 操控台额外记录项（镜头聚焦、光圈、机器人移动速度、辅助功能开关等）。
+   * @description 上装能力差异大，通用字段无法穷举，扩展字段用 key-value 记录。
+   */
+  extra?: Record<string, string | number | boolean>;
+}
+
+/**
+ * 上装分组：把原子动作按执行载荷归类，供「按上装选动作模板」展示
+ * @description 一个上装对应一类机器人能力（可见光相机 / 红外相机 / 气体采集 / 声音采集）。
+ */
+export const payloadGroups: { name: string; caption: string; actions: AtomicAction[] }[] = [
+  { name: "可见光相机", caption: "拍照 / 录像（可见光）", actions: ["拍照", "录像片段"] },
+  { name: "红外相机", caption: "热成像采集", actions: ["采集红外热像"] },
+  { name: "气体采集", caption: "气体浓度采样", actions: ["采集气体"] },
+  { name: "声音采集", caption: "现场声音录制", actions: ["录制声音"] },
+];
 
 /** 点位级机器人动作编排（阶段⑥：解决"到得了之后怎么看"） */
 export interface PointActionPlan {
@@ -217,6 +269,14 @@ export interface SiteSurvey {
   y: number;
 }
 
+/**
+ * 地图底图上传大小上限（单张）：超过则前端直接拒绝。
+ * @description 底图以 dataUrl 形式存进状态并持久化到 localStorage，
+ *              base64 后体积约为原图的 1.33 倍；2026-09-30 评审要求由 2 MB 放宽到 3 MB，
+ *              再大容易撑爆 localStorage（写失败会静默降级为「仅内存」，刷新即丢）。
+ */
+export const MAP_IMAGE_MAX_SIZE = 3 * 1024 * 1024;
+
 /** 采集方式（机器人能力口径；业务类型如"仪表/阀门"归设备主数据） */
 export type CaptureKind = "可见光" | "红外" | "气体" | "声音";
 
@@ -239,9 +299,9 @@ export interface InspectItem {
   priority: "普通" | "高" | "紧急";
 }
 
-/* ── 工厂树与业务巡检目标（客户定稿模型）───────────────────────────────
+/* ── 工厂树与巡检目标台账（客户定稿模型）───────────────────────────────
    区域 → 设备 → 仪表；仪表只是资产，不能直接巡检；
-   仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 = 业务巡检目标（可执行的最小巡检单元） */
+   仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 = 巡检目标台账（可执行的最小巡检单元） */
 
 /** 区域（工厂树第一层） */
 export interface Area {
@@ -252,7 +312,7 @@ export interface Area {
 /**
  * 仪表：实际被巡检的资产对象
  * @description 挂在设备下（单归属），本身只是资产，**不能直接巡检**；
- *              必须叠加「巡检要求」形成业务巡检目标后才可执行
+ *              必须叠加「巡检要求」形成巡检目标台账后才可执行
  */
 export interface Instrument {
   id: string;
@@ -280,9 +340,9 @@ export interface Requirement {
   name: string;
   kind: RequirementKind;
   description: string;
-  /** 背后的算法 / AI 表达方式（默认值，业务巡检目标可覆盖） */
+  /** 背后的算法 / AI 表达方式（默认值，巡检目标台账可覆盖） */
   algorithm: string;
-  /** 默认判定方式与阈值（可被业务巡检目标覆盖） */
+  /** 默认判定方式与阈值（可被巡检目标台账覆盖） */
   judge: JudgeType;
   unit?: string;
   min?: number;
@@ -296,7 +356,7 @@ export interface Requirement {
 }
 
 /**
- * 告警设置（**整个平台唯一的告警配置入口**，挂在业务巡检目标上）
+ * 告警设置（**整个平台唯一的告警配置入口**，挂在巡检目标台账上）
  * @description 巡检点 / 点位不提供告警配置：巡检点的判定直接复用所绑业务目标的
  *              阈值（`judge/min/max/expected`）与这里的三项设置（是否告警 / 等级 / 通知）
  */
@@ -312,8 +372,8 @@ export interface BusinessAlarm {
 }
 
 /**
- * 业务巡检目标 = 业务目标 + 业务要求 + 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 + 告警设置
- * @description 任务的最小执行单元：一个巡检点（地图上的业务执行点）可绑定多个业务巡检目标，
+ * 巡检目标台账 = 业务目标 + 业务要求 + 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 + 告警设置
+ * @description 任务的最小执行单元：一个巡检点（地图上的业务执行点）可绑定多个巡检目标台账，
  *              任务执行到点后逐项展开
  */
 export interface BusinessTarget {
@@ -806,7 +866,7 @@ export interface State {
   instruments?: Instrument[];
   /** 巡检要求（模板库） */
   requirements?: Requirement[];
-  /** 业务巡检目标（仪表 + 巡检要求 + 算法 + 阈值 + 判断标准） */
+  /** 巡检目标台账（仪表 + 巡检要求 + 算法 + 阈值 + 判断标准） */
   businessTargets?: BusinessTarget[];
   /** 逻辑巡检点（阶段④） */
   logicalPoints?: LogicalPoint[];

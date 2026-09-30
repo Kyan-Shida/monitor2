@@ -492,17 +492,28 @@ export function Results({ page, id }: { page: string; id?: string }) {
       </>
     );
   }
-  // 「结果详情」内置页：只读展示单个结果的证据、值链路、复核历史与关联告警；复核操作在「结果详情 / 复核」页完成
-  if (page === "result-detail") {
-    const rd = s.results.find((x) => x.id === id);
+  // 「结果详情」内置页 + 「结果详情 / 复核」页（review）：
+  // review 与 result-detail 共用同一套证据 / 值链路 / 复核表单渲染；
+  // 此前 review 无分支处理，侧边栏与「进入复核」按钮进入后为空白页（闭环断链，2026-09-30 修复）。
+  // review 态默认聚焦第一条待复核结果，并可在页头下拉切换。
+  if (page === "result-detail" || page === "review") {
+    const isReview = page === "review";
+    const pending = s.results.filter((x) => x.status === "待复核");
+    const rd = isReview
+      ? s.results.find((x) => x.id === id) || pending[0]
+      : s.results.find((x) => x.id === id);
     if (!rd)
-      return <Note>未找到该巡检结果，请从设备巡检档案或巡检结果列表进入。</Note>;
+      return isReview ? (
+        <Note>暂无巡检结果可复核。</Note>
+      ) : (
+        <Note>未找到该巡检结果，请从设备巡检档案或巡检结果列表进入。</Note>
+      );
     const p = pointOf(s, rd),
       t = s.tasks.find((x) => x.id === rd.taskId);
     return (
       <>
         <div className="context-bar">
-          <b>结果详情</b>
+          <b>{isReview ? "结果详情 / 复核" : "结果详情"}</b>
           <span className="bc-id">{rd.id}</span>
           <Badge>{rd.status === "待复核" ? "待判定" : rd.abnormal ? "异常" : "正常"}</Badge>
           <Badge>{rd.status}</Badge>
@@ -517,10 +528,28 @@ export function Results({ page, id }: { page: string; id?: string }) {
           </ObjectLink>
           <ObjectLink type="robot" id={t?.robotId} />
           <span className="muted">采集 {rd.time}</span>
+          {isReview && (
+            <span className="muted">待复核 {pending.length} 条</span>
+          )}
           <div className="actions">
-            <Btn primary onClick={() => go("review", rd.id)}>
-              进入复核
-            </Btn>
+            {isReview && pending.length > 0 && (
+              <select
+                aria-label="切换待复核结果"
+                value={rd.id}
+                onChange={(e) => go("review", e.target.value)}
+              >
+                {pending.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.id} · {x.item}
+                  </option>
+                ))}
+              </select>
+            )}
+            {!isReview && (
+              <Btn primary onClick={() => go("review", rd.id)}>
+                进入复核
+              </Btn>
+            )}
           </div>
         </div>
         <div className="grid two">

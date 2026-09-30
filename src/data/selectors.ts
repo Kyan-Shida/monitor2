@@ -1,4 +1,4 @@
-import type { State, Task, Robot, Result } from "./types";
+﻿import type { State, Task, Robot, Result } from "./types";
 import { stages, atomicActionCapability } from "./types";
 import { hasMobility } from "./deviceProfile";
 import { captureKindsOfPoint, robotCoversPoint } from "./deviceMaster";
@@ -53,8 +53,8 @@ export const logNames: Record<string, string> = {
   REVIEW_DEVICE_IMPORT: "设备清单审核",
   SET_INSPECT_FLAG: "是否巡检开关",
   SET_DEVICE_STATE: "设备启停",
-  ADD_BUSINESS_TARGET: "新增业务巡检目标",
-  UPDATE_BUSINESS_TARGET: "业务巡检目标更新",
+  ADD_BUSINESS_TARGET: "新增巡检目标台账",
+  UPDATE_BUSINESS_TARGET: "巡检目标台账更新",
   SAVE_POINT: "保存巡检点",
   GEN_LOGICAL_POINTS: "生成逻辑点",
   BIND_LOGICAL_POINT: "逻辑点绑定",

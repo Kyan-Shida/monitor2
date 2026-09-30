@@ -374,17 +374,6 @@ export function MonitorCockpit({
     () => s.alarms.filter((a) => a.state !== "已关闭").length,
     [s.alarms],
   );
-  const todayPlanned = useMemo(
-    () => s.tasks.filter((t) => t.created.slice(0, 10) === TODAY).length,
-    [s.tasks, TODAY],
-  );
-  const todayCompleted = useMemo(
-    () =>
-      s.tasks.filter(
-        (t) => t.created.slice(0, 10) === TODAY && ["完成", "部分完成"].includes(t.state),
-      ).length,
-    [s.tasks, TODAY],
-  );
   const todayFoundRisk = useMemo(
     () => s.alarms.filter((a) => a.time.slice(0, 10) === TODAY).length,
     [s.alarms, TODAY],
@@ -499,15 +488,13 @@ export function MonitorCockpit({
 
         {/* 中：顶部紧凑 KPI 卡网格 + 巡检任务情况 + 告警排行 TOP10 占满剩余高度 */}
         <main className="cs-center">
-          {/* 紧凑 KPI 网格：占中列顶部，下方「巡检任务情况」「告警排行」依次排布 */}
+          {/* 紧凑 KPI 网格：3×3 九宫格（按评审去掉「今日计划任务 / 今日已完成任务」两项） */}
           <div className="cs-kpi-board">
             <KpiCard value={safetyDays} label="天 安全生产" tone="green" />
             <KpiCard value={sc.robots.length} label="台 巡检设备" />
             <KpiCard value={monthInspect} label="次 本月巡检" />
             <KpiCard value={monthRisk} label="次 本月风险" tone={monthRisk > 0 ? "red" : "cyan"} />
             <KpiCard value={unhandledRisk} label="次 未处理风险" tone={unhandledRisk > 0 ? "red" : "cyan"} />
-            <KpiCard value={todayPlanned} label="个 今日计划任务" />
-            <KpiCard value={todayCompleted} label="个 今日已完成任务" tone="green" />
             <KpiRing value={mv("taskRate")} label="任务完成率" />
             <KpiRing value={mv("closeRate")} label="风险排除率" />
             <KpiCard value={todayFoundRisk} label="个 今日发现风险" tone={todayFoundRisk > 0 ? "amber" : "cyan"} />

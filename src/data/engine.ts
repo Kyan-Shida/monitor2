@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   State,
   Task,
   Robot,
@@ -26,7 +26,7 @@ import {
 } from "./alarmRules";
 import { fieldCommand, releaseOutputs } from "./fieldControl";
 import { bindingReasons } from "./planSchedule";
-import { hasMobility } from "./deviceProfile";
+import { hasMobility, profileOf } from "./deviceProfile";
 import {
   deviceOf,
   isDeviceStopped,
@@ -121,7 +121,7 @@ function ensurePublished(s: State, m: MapAsset): boolean {
   return true;
 }
 /**
- * 业务巡检目标的「是否巡检」写穿到设备清单的巡检项
+ * 巡检目标台账的「是否巡检」写穿到设备清单的巡检项
  * @description 过渡期约定：设备清单的 `InspectItem.inspect` 仍是任务生成的实际依据，
  *              同一仪表下**只要有一个业务目标开着**，该巡检项即为开——避免两处口径不一致
  * @param s 状态
@@ -562,7 +562,7 @@ export function transition(state: State, a: Action): State {
       const it = d!.items.find((x) => x.id === a.itemId);
       must(it, "巡检项不存在");
       it!.inspect = a.inspect !== false;
-      // 同一仪表的业务巡检目标一起跟随（两处开关必须同口径）
+      // 同一仪表的巡检目标台账一起跟随（两处开关必须同口径）
       (s.businessTargets || [])
         .filter((b) => b.instrumentId === it!.id)
         .forEach((b) => (b.inspect = it!.inspect));
@@ -590,13 +590,13 @@ export function transition(state: State, a: Action): State {
           : "设备已恢复启用";
       break;
     }
-    // ── 业务巡检目标：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 ──
+    // ── 巡检目标台账：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 ──
     case "ADD_BUSINESS_TARGET": {
       const ins = s.instruments?.find((x) => x.id === a.instrumentId);
       must(ins, "仪表不存在，请先在设备主数据中维护检测目标");
       must(
         ins!.state !== "停用",
-        `仪表「${ins!.name}」所属设备已停用，暂不能新增业务巡检目标`,
+        `仪表「${ins!.name}」所属设备已停用，暂不能新增巡检目标台账`,
       );
       const req = s.requirements?.find((r) => r.id === a.requirementId);
       must(req, "巡检要求不存在");
@@ -628,7 +628,7 @@ export function transition(state: State, a: Action): State {
         max: judge === "数值范围" ? Number(a.max) : undefined,
         expected: judge === "期望状态" ? String(a.expected).trim() : undefined,
         criteria: a.criteria || req!.description,
-        // 告警设置：新建默认开启（重要级）；**调整入口只有「业务巡检目标」**
+        // 告警设置：新建默认开启（重要级）；**调整入口只有「巡检目标台账」**
         alarm: a.alarm || {
           on: true,
           level: "重要",
@@ -646,12 +646,12 @@ export function transition(state: State, a: Action): State {
       s.businessTargets = [rec, ...(s.businessTargets || [])];
       syncInspectFlag(s, ins!.id);
       object = rec.id;
-      detail = `已为「${s.devices?.find((d) => d.id === ins!.deviceId)?.name || ins!.deviceId} · ${ins!.name}」新增业务巡检目标：${req!.name}（${rec.algorithm}）`;
+      detail = `已为「${s.devices?.find((d) => d.id === ins!.deviceId)?.name || ins!.deviceId} · ${ins!.name}」新增巡检目标台账：${req!.name}（${rec.algorithm}）`;
       break;
     }
     case "UPDATE_BUSINESS_TARGET": {
       const b = s.businessTargets?.find((x) => x.id === a.id);
-      must(b, "业务巡检目标不存在");
+      must(b, "巡检目标台账不存在");
       if (a.algorithm !== undefined) {
         must(String(a.algorithm).trim(), "算法不能为空");
         b!.algorithm = String(a.algorithm).trim();
@@ -685,7 +685,7 @@ export function transition(state: State, a: Action): State {
       if (a.inspect !== undefined) b!.inspect = !!a.inspect;
       syncInspectFlag(s, b!.instrumentId);
       object = b!.id;
-      detail = `业务巡检目标已更新（是否巡检：${b!.inspect ? "开" : "关"}）`;
+      detail = `巡检目标台账已更新（是否巡检：${b!.inspect ? "开" : "关"}）`;
       break;
     }
     // ── 巡检点管理：巡检点 = 名称 + 地图 + 地图点位 + 多个巡检项 ──
@@ -703,7 +703,7 @@ export function transition(state: State, a: Action): State {
       const btOf = (sid: string) => s.businessTargets?.find((b) => b.id === sid);
       const insOf = (sid: string) => {
         const bt = btOf(sid);
-        must(bt, "巡检项的业务目标不存在，请先维护业务巡检目标");
+        must(bt, "巡检项的业务目标不存在，请先维护巡检目标台账");
         const ins = s.instruments?.find((x) => x.id === bt!.instrumentId);
         must(ins, "业务目标关联的仪表不存在");
         return ins!;
@@ -953,6 +953,32 @@ export function transition(state: State, a: Action): State {
       // 点位集变化同样打回草稿
       m.state = "草稿";
       m.history.unshift("剔除地图点位，待重新发布");
+      break;
+    }
+    /**
+     * 地图工作台保存：整表替换当前地图的巡航点集合，并自动把坐标变更同步到已绑定业务点位。
+     * 保存后地图变为草稿，需要重新下发定版。
+     */
+    case "SAVE_MAP_TARGETS": {
+      const m = map();
+      must(Array.isArray(a.targets), "巡航点数据格式错误");
+      m.targets = a.targets;
+      s.points
+        .filter((p) => p.mapId === m.id)
+        .forEach((p) => {
+          const t = m.targets.find((t) => t.id === p.targetId);
+          if (t) {
+            p.x = t.x;
+            p.y = t.y;
+          }
+        });
+      m.pointSet++;
+      m.state = "草稿";
+      m.history.unshift(
+        `m${m.version} / p${m.pointSet} 编辑巡航点，待重新发布`,
+      );
+      object = m.id;
+      detail = `已保存 ${m.targets.length} 个巡航点，当前为草稿，请下发定版`;
       break;
     }
     case "PUBLISH": {
@@ -1563,7 +1589,7 @@ export function transition(state: State, a: Action): State {
               state: "待确认",
               notes: [
                 `规则 ${rule?.id || "无"} v${rule?.version || 0}：${evaluation.reason}`,
-                // 通知对象来自业务巡检目标的「告警设置」，随告警记录带出
+                // 通知对象来自巡检目标台账的「告警设置」，随告警记录带出
                 ...(rule?.notify?.length
                   ? [`通知 ${rule.notify.join("、")}`]
                   : []),
@@ -2011,6 +2037,55 @@ export function transition(state: State, a: Action): State {
       must(al, "告警不存在");
       al!.notes.push("超时升级：" + (a.reason || "SLA 超时，升级至上一级处置"));
       detail = `${al!.name} 已升级`;
+      break;
+    }
+    // ── 机器人管理：新增机器人（编码唯一 + 必选地图，能力 / 约束按机型给默认） ──
+    case "ADD_ROBOT": {
+      const rid = String(a.id || "").trim();
+      must(rid, "请填写机器人编码");
+      must(!s.robots.some((r) => r.id === rid), `机器人编码 ${rid} 已存在`);
+      must(String(a.name || "").trim(), "请填写机器人名称");
+      const deviceType = (a.deviceType || "四轮车") as Robot["deviceType"];
+      const map = s.maps.find((m) => m.id === a.mapId);
+      must(map, "请选择机器人所在的地图");
+      const capabilities: string[] = a.capabilities?.length
+        ? a.capabilities
+        : ["可见光"];
+      const mobility =
+        a.mobility?.length ? a.mobility : [...profileOf(deviceType).mobility];
+      const constraints: Robot["constraints"] = {
+        minBattery: Number.isFinite(a.minBattery)
+          ? Number(a.minBattery)
+          : profileOf(deviceType).constraints.minBattery,
+        needChargingPlan: a.needChargingPlan !== false,
+      };
+      if (deviceType === "四轮车")
+        constraints.maxSpeed = Number.isFinite(a.maxSpeed)
+          ? Number(a.maxSpeed)
+          : 1.5;
+      if (deviceType === "挂轨" && a.railSectionId)
+        constraints.railSectionId = String(a.railSectionId);
+      const robot: Robot = {
+        id: rid,
+        name: String(a.name).trim(),
+        region: String(a.region || map!.region).trim(),
+        battery: 100,
+        capabilities,
+        state: "空闲",
+        mapId: map!.id,
+        mapVersion: map!.version,
+        pointSet: map!.pointSet,
+        x: 50,
+        y: 50,
+        deviceType,
+        mobility,
+        constraints,
+        health: 100,
+        firmware: String(a.firmware || "").trim() || "v1.0.0",
+      };
+      s.robots.unshift(robot);
+      object = robot.id;
+      detail = `新增机器人 ${robot.name}（${robot.deviceType} · ${robot.region}）已接入台账`;
       break;
     }
     default:

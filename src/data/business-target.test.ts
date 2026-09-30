@@ -1,4 +1,4 @@
-import { test } from "node:test";
+﻿import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run } from "./engine";
@@ -6,7 +6,7 @@ import { parse, parentOf, menuIdOf, pages } from "./navigation";
 import { defaultRequirementOfInstrument } from "./deviceMaster";
 import { rulesOf } from "./alarmRules";
 
-/** 便捷取业务巡检目标 */
+/** 便捷取巡检目标台账 */
 const bt = (s: ReturnType<typeof seed>, id: string) =>
   s.businessTargets!.find((b) => b.id === id)!;
 
@@ -33,7 +33,7 @@ test("工厂树三层齐全：区域 → 设备 → 仪表，且仪表归属可�
   }
 });
 
-test("业务巡检目标 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准；阈值与点位规则同源", () => {
+test("巡检目标台账 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准；阈值与点位规则同源", () => {
   const s = seed();
   assert.equal(s.businessTargets!.length, s.instruments!.length);
   // 压力表（可见光 + MPa）→ 看仪表读数，量程与点位判定规则一致（0.2–0.8 MPa）
@@ -64,7 +64,7 @@ test("业务巡检目标 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标�
     );
 });
 
-test("仪表只是资产：新增业务巡检目标需要巡检要求 + 算法 + 合法判定参数", () => {
+test("仪表只是资产：新增巡检目标台账需要巡检要求 + 算法 + 合法判定参数", () => {
   const s = seed();
   // 仪表不存在（未通过审核的清单不进工厂树）
   assert.throws(
@@ -200,9 +200,9 @@ test("导航调整：路线管理目录下线；原「点位标注与验证工�
   // 路线管理目录已删除：菜单项与目录层级都不再存在（旧 URL 落到兜底视图，不报错）
   assert.ok(!pages.some((p) => p.id === "routes"));
   assert.equal(parentOf("routes"), undefined);
-  // 业务巡检目标仍在 points 槽位；「巡检点管理」占用原「点位标注与验证工作台」槽位（annotation）
+  // 巡检目标台账仍在 points 槽位；「巡检点管理」占用原「点位标注与验证工作台」槽位（annotation）
   const btSlot = pages.find((p) => p.id === "points")!;
-  assert.equal(btSlot.name, "业务巡检目标");
+  assert.equal(btSlot.name, "巡检目标台账");
   assert.equal(btSlot.path, "resources/points");
   assert.equal(pages.find((p) => p.id === "annotation")!.name, "巡检点管理");
   // 内置页不占菜单项：添加/编辑巡检点、地图标注工作台、巡检点详情
@@ -222,7 +222,7 @@ test("导航调整：路线管理目录下线；原「点位标注与验证工�
   assert.equal(menuIdOf("point-edit"), "annotation");
 });
 
-test("告警设置只在业务巡检目标上：点位规则按目标的阈值 / 等级 / 开关生效", () => {
+test("告警设置只在巡检目标台账上：点位规则按目标的阈值 / 等级 / 开关生效", () => {
   let s = seed();
   // P001 的巡检项绑定 BT-II-V001-P：等级与开关来自业务目标（而不是点位自己）
   assert.equal(rulesOf(s).find((r) => r.pointId === "P001")!.level, "重要");

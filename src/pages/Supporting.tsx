@@ -1,4 +1,4 @@
-import { AlarmConfiguration } from "./AlarmConfiguration";
+﻿import { AlarmConfiguration } from "./AlarmConfiguration";
 import { rulesOf } from "../data/alarmRules";
 import { SystemAlarmParameters } from "../components/SystemAlarmParameters";
 import { ObjectLink, Pager } from "../components/Business";
@@ -239,7 +239,7 @@ export function Supporting({ page }: { page: string }) {
             drawerWidth={700}
             onClose={() => setRulePoint("")}
           >
-              {/* 只读：告警设置统一在「业务巡检目标 › 告警设置」维护 */}
+              {/* 只读：告警设置统一在「巡检目标台账 › 告警设置」维护 */}
               <AlarmConfiguration
                 key={rulePoint}
                 pointId={rulePoint}

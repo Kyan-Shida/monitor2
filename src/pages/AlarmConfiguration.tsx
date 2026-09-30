@@ -1,4 +1,4 @@
-import { SystemAlarmParameters } from "../components/SystemAlarmParameters";
+﻿import { SystemAlarmParameters } from "../components/SystemAlarmParameters";
 import { go } from "../data/navigation";
 import { useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
@@ -56,7 +56,7 @@ export function AlarmConfiguration({
   embedded?: boolean;
   /**
    * 只读模式：点位侧（巡检点详情 / 规则查看）只能查看生效中的规则，
-   * 因为**平台唯一的告警配置入口是「业务巡检目标 › 配业务逻辑与算法 › 告警设置」**
+   * 因为**平台唯一的告警配置入口是「巡检目标台账 › 配业务逻辑与算法 › 告警设置」**
    */
   readOnly?: boolean;
 }) {
@@ -66,15 +66,15 @@ export function AlarmConfiguration({
   const [edit, E] = useState<AlarmRule>(),
     [picked, P] = useState(rules[0]?.id);
   const rule = rules.find((r) => r.id === picked) || rules[0];
-  /** 规则来源：业务巡检目标的告警设置，或历史保存的规则版本 */
+  /** 规则来源：巡检目标台账的告警设置，或历史保存的规则版本 */
   const sourceOf = (r: AlarmRule) =>
-    s.alarmRules?.some((x) => x.id === r.id) ? "规则版本" : "业务巡检目标";
+    s.alarmRules?.some((x) => x.id === r.id) ? "规则版本" : "巡检目标台账";
   return (
     <>
       <Note>
         {readOnly ? (
           <>
-            <b>告警设置只有一处入口</b>：「业务巡检目标 › 配业务逻辑与算法 › 告警设置」
+            <b>告警设置只有一处入口</b>：「巡检目标台账 › 配业务逻辑与算法 › 告警设置」
             （告警开关 + 等级 + 通知），巡检点本身不配置告警。此处只查看该点位当前生效的判定与告警规则。
           </>
         ) : (

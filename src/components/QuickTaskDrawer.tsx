@@ -14,6 +14,7 @@ import {
 } from "../data/types";
 import { actionsOfPoint } from "../data/deviceMaster";
 import { Modal, Field, Btn, Badge } from "./UI";
+import { Pager } from "./Business";
 
 export function QuickTaskDrawer({
   robotId = "",
@@ -32,10 +33,21 @@ export function QuickTaskDrawer({
     [rid, R] = useState(robotId),
     [points, P] = useState<string[]>(pointIds || []),
     [priority, PR] = useState("普通");
+  /** 巡检点列表：搜索 / 筛选 / 分页 */
+  const [q, Q] = useState(""),
+    [mapF, MF] = useState("全部"),
+    [pn, PN] = useState(1);
   const robot = s.robots.find((r) => r.id === rid);
   const available = s.points.filter(
     (p) => p.state === "已启用" && (!robot || p.mapId === robot.mapId),
   );
+  const SIZE = 6;
+  const filtered = available.filter(
+    (p) =>
+      (p.id + p.name + p.device).includes(q.trim()) &&
+      (mapF === "全部" || p.mapId === mapF),
+  );
+  const rows = filtered.slice((pn - 1) * SIZE, pn * SIZE);
   /** 已勾选的巡检点 */
   const picked = points
     .map((pid) => s.points.find((p) => p.id === pid))
@@ -92,8 +104,37 @@ export function QuickTaskDrawer({
           临时任务以<b>巡检点</b>为最小单位：勾选巡检点即可，
           机器人到点后按各巡检项的机器操作内容（原子动作 / 云台视角）逐项执行。
         </p>
+        <div className="filter-bar">
+          <input
+            aria-label="巡检点搜索"
+            placeholder="搜索巡检点 / 编码 / 设备"
+            value={q}
+            onChange={(e) => {
+              Q(e.target.value);
+              PN(1);
+            }}
+          />
+          <select
+            aria-label="按地图筛选"
+            value={mapF}
+            onChange={(e) => {
+              MF(e.target.value);
+              PN(1);
+            }}
+          >
+            <option value="全部">全部地图</option>
+            {s.maps.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <span>
+            共 {filtered.length} 个 · 已选 {points.length} 个
+          </span>
+        </div>
         <div className="quick-point-list">
-          {available.map((p) => {
+          {rows.map((p) => {
             const m = s.maps.find((x) => x.id === p.mapId);
             const mp = m?.targets.find((t) => t.id === p.targetId);
             const specs = p.inspectItems || [];
@@ -122,6 +163,7 @@ export function QuickTaskDrawer({
             );
           })}
         </div>
+        <Pager page={pn} count={filtered.length} onChange={PN} />
         {/* 指令集只读展示：原子动作来自巡检点，不需要手工勾选 */}
         <section className="atomic-action-section">
           <div className="split">

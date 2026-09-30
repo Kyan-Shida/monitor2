@@ -1,4 +1,4 @@
-import type { Point, State } from "./types";
+﻿import type { Point, State } from "./types";
 export interface AlarmRule {
   id: string;
   name: string;
@@ -10,7 +10,7 @@ export interface AlarmRule {
   expected: string;
   level: string;
   enabled: boolean;
-  /** 通知对象（来自业务巡检目标的告警设置），随告警记录带出 */
+  /** 通知对象（来自巡检目标台账的告警设置），随告警记录带出 */
   notify?: string[];
   version: number;
 }
@@ -28,7 +28,7 @@ const DEFAULT_RANGE: Record<string, { min: number; max: number }> = {
 
 /**
  * 按单位取默认量程
- * @description 唯一口径：点位判定规则与业务巡检目标的默认阈值都调用它，避免两处量程不一致
+ * @description 唯一口径：点位判定规则与巡检目标台账的默认阈值都调用它，避免两处量程不一致
  * @param unit 单位（MPa / ℃ / %LEL / m …）
  * @returns 量程；无单位（无量纲项）返回 undefined
  */
@@ -36,10 +36,10 @@ export const defaultRangeOfUnit = (unit?: string) =>
   unit ? DEFAULT_RANGE[unit] || { min: 0, max: 1 } : undefined;
 
 /**
- * 巡检点绑定的业务巡检目标（取其第一个巡检项所绑的）
+ * 巡检点绑定的巡检目标台账（取其第一个巡检项所绑的）
  * @param s 全局状态
  * @param p 巡检点
- * @returns 业务巡检目标；无巡检项或目标已被删除时返回 undefined
+ * @returns 巡检目标台账；无巡检项或目标已被删除时返回 undefined
  */
 export const targetOfPoint = (s: State, p: Point) =>
   (p.inspectItems || [])
@@ -48,8 +48,8 @@ export const targetOfPoint = (s: State, p: Point) =>
 
 /**
  * 各点位的判定规则
- * @description **默认来源 = 该巡检点绑定的业务巡检目标**：判定方式 / 阈值 / 告警等级 /
- *              是否告警全部取自「业务巡检目标 › 配业务逻辑与算法」，这是平台唯一的告警配置入口
+ * @description **默认来源 = 该巡检点绑定的巡检目标台账**：判定方式 / 阈值 / 告警等级 /
+ *              是否告警全部取自「巡检目标台账 › 配业务逻辑与算法」，这是平台唯一的告警配置入口
  *              （巡检点、点位都不再提供告警配置）。
  *              已存规则（`s.alarmRules`，历史版本）优先于业务目标，保证"规则版本 + 结果快照"语义；
  *              两者都没有时按"检测项单位"生成兜底规则

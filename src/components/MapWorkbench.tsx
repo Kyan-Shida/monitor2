@@ -1,40 +1,129 @@
 /**
  * @file MapWorkbench.tsx
- * @description 地图工作台（地图管理内嵌抽屉）：面向「用户上传的、自带定位ID与轨迹的地图」，
- *              展示地图自带点位与轨迹，并允许**继续新增**（点位 / 轨迹采样点）。
- *              定位ID即地图点位（`MapAsset.targets`），轨迹为 `trackSamples`；
- *              后续"标注点位"由「巡检点管理 › 添加巡检点」完成，本工作台只负责"地图上有什么"。
+ * @description 地图工作台（地图管理内嵌抽屉）：用于管理单张地图的「巡航点」。
+ *              支持在底图上点击新增、在清单中编辑坐标/类型/定位号（人工新增点）、
+ *              删除人工新增点，以及保存后自动将地图置为草稿。
+ *              轨迹相关功能本期不涉及。
  * @interaction Maps.tsx → 地图详情 →「地图工作台」抽屉
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
+import type { Candidate } from "../data/types";
 import { Badge, Btn, Empty, Note, Panel, Table } from "./UI";
 import { MapBaseUpload } from "./MapBaseUpload";
 import { MapImageCanvas } from "./MapImageCanvas";
 
-/** 轨迹采样点类型（与 MapSurveyPanel / TrackSample.kind 同口径） */
-const TRACK_KINDS = ["停靠点", "转弯点", "充电桩", "待机点"];
+/** 巡航点可选类型 */
+const CRUISE_KINDS = ["可见光", "红外", "气体", "声音", "仪表", "阀门"];
+
+const newId = () =>
+  "O" + Date.now().toString(36).slice(-4) + Math.random().toString(36).slice(2, 5).toUpperCase();
 
 export function MapWorkbench({ mapId }: { mapId: string }) {
   const { s, act } = useStore();
   const m = s.maps.find((x) => x.id === mapId);
-  /** 图面点击的落点用途：新增点位 / 继续追加轨迹采样点 */
-  const [mode, MODE] = useState<"点位" | "轨迹">("点位");
-  const [trackKind, TK] = useState("停靠点");
+  /** 当前正在编辑的巡航点 ID（行内编辑） */
+  const [editingId, EDIT] = useState<string>("");
+  /** 编辑表单缓冲 */
+  const [form, FORM] = useState<Partial<Candidate>>({});
+  /** 本地草稿：复制当前地图的巡航点集合 */
+  const [draft, SETDRAFT] = useState<Candidate[]>(() =>
+    m ? structuredClone(m.targets) : [],
+  );
+  /** 地图上选中的标记 ID */
+  const [selected, SELECT] = useState<string>("");
+  /** 新增点位的默认类型 */
+  const [newKind, KIND] = useState("仪表");
   if (!m) return <Note>地图不存在。</Note>;
-  const targets = m.targets;
-  const imported = targets.filter((t) => t.source !== "平台新增");
-  const added = targets.filter((t) => t.source === "平台新增");
-  const track = (s.trackSamples || [])
-    .filter((x) => x.mapId === m.id)
-    .sort((a, b) => a.seq - b.seq);
-  const pointOf = (targetId: string) => s.points.find((p) => p.targetId === targetId);
+
+  /** 是否有未保存的本地修改（含行内编辑） */
+  const dirty =
+    editingId !== "" || JSON.stringify(draft) !== JSON.stringify(m.targets);
+
+  const startEdit = (t: Candidate) => {
+    EDIT(t.id);
+    FORM({
+      externalId: t.externalId || "",
+      kind: t.kind,
+      x: t.x,
+      y: t.y,
+    });
+  };
+
+  const applyForm = (id: string, draftList: Candidate[]): Candidate[] =>
+    draftList.map((t) => {
+      if (t.id !== id) return t;
+      const x = Number(form.x);
+      const y = Number(form.y);
+      return {
+        ...t,
+        externalId:
+          t.source === "平台新增"
+            ? String(form.externalId || "").trim() || t.id
+            : t.externalId,
+        kind: String(form.kind || t.kind),
+        x: Number.isFinite(x) ? Math.max(0, Math.min(100, x)) : t.x,
+        y: Number.isFinite(y) ? Math.max(0, Math.min(100, y)) : t.y,
+      };
+    });
+
+  const saveRow = (id: string) => {
+    SETDRAFT((prev) => applyForm(id, prev));
+    EDIT("");
+    FORM({});
+  };
+
+  const remove = (id: string) => {
+    const t = draft.find((x) => x.id === id);
+    if (!t || t.source === "地图导入") return;
+    if (t.pointId) {
+      alert("该巡航点已关联业务点位，请先解绑或删除业务点位后再删除。");
+      return;
+    }
+    SETDRAFT((prev) => prev.filter((x) => x.id !== id));
+    if (selected === id) SELECT("");
+  };
+
+  const addAt = (x: number, y: number) => {
+    const id = newId();
+    SETDRAFT((prev) => [
+      ...prev,
+      {
+        id,
+        source: "平台新增",
+        externalId: id,
+        kind: newKind,
+        x,
+        y,
+        state: "已确认",
+      },
+    ]);
+    SELECT(id);
+  };
+
+  const saveAll = () => {
+    const toSave = editingId ? applyForm(editingId, draft) : draft;
+    if (act({ type: "SAVE_MAP_TARGETS", mapId: m.id, targets: toSave })) {
+      EDIT("");
+      FORM({});
+      // 保存成功后刷新本地草稿，避免再次提示 dirty
+      SETDRAFT(structuredClone(toSave));
+    }
+  };
+
+  const reset = () => {
+    SETDRAFT(structuredClone(m.targets));
+    EDIT("");
+    FORM({});
+    SELECT("");
+  };
+
   return (
     <>
       <Note>
-        该地图随文件自带 <b>{imported.length}</b> 个定位ID 与 <b>{track.length}</b>{" "}
-        个轨迹采样点。带上来的定位ID保持原样，仍可在图上<b>继续新增</b>点位或轨迹点；
-        「检什么、怎么检」在「巡检点管理 › 添加/编辑巡检点」里完成。
+        该地图随文件自带 <b>{m.targets.filter((t) => t.source !== "平台新增").length}</b>{" "}
+        个定位ID（保留原样）。您可在此新增、编辑坐标、删除人工新增的巡航点；
+        保存后地图将变为<b>草稿</b>，需重新下发定版。
       </Note>
       <Panel title="底图" extra={<span>{m.image ? "已上传" : "未上传"}</span>}>
         <MapBaseUpload mapId={m.id} />
@@ -44,104 +133,129 @@ export function MapWorkbench({ mapId }: { mapId: string }) {
         extra={
           <div className="actions">
             <label className="inline-filter">
-              <span>图面点击用于：</span>
-              <select value={mode} onChange={(e) => MODE(e.target.value as "点位" | "轨迹")}>
-                <option>点位</option>
-                <option>轨迹</option>
+              <span>新增点位类型：</span>
+              <select value={newKind} onChange={(e) => KIND(e.target.value)}>
+                {CRUISE_KINDS.map((k) => (
+                  <option key={k}>{k}</option>
+                ))}
               </select>
             </label>
-            {mode === "轨迹" && (
-              <label className="inline-filter">
-                <span>轨迹点类型：</span>
-                <select value={trackKind} onChange={(e) => TK(e.target.value)}>
-                  {TRACK_KINDS.map((k) => (
-                    <option key={k}>{k}</option>
-                  ))}
-                </select>
-              </label>
-            )}
           </div>
         }
       >
         <MapImageCanvas
           image={m.image}
           height={380}
-          markers={targets
-            .filter((t) => t.state !== "已剔除")
-            .map((t) => ({
-              id: t.id,
-              x: t.x,
-              y: t.y,
-              label: t.externalId ? `${t.externalId} · ${t.kind}` : `${t.id} · ${t.kind}`,
-              kind: t.kind,
-              state: t.state,
-              source: t.source,
-            }))}
-          track={track.map((x) => ({ x: x.x, y: x.y }))}
-          onAdd={(x, y) =>
-            mode === "点位"
-              ? act({ type: "ADD_TARGET", mapId: m.id, x, y, kind: "仪表" })
-              : act({ type: "TRACK_RECORD", mapId: m.id, x, y, kind: trackKind })
-          }
+          selected={selected}
+          onSelect={(id) => SELECT(id)}
+          onAdd={addAt}
+          markers={draft.map((t) => ({
+            id: t.id,
+            x: t.x,
+            y: t.y,
+            label: t.externalId ? `${t.externalId} · ${t.kind}` : `${t.id} · ${t.kind}`,
+            kind: t.kind,
+            state: t.state,
+            source: t.source,
+          }))}
         />
-        <p className="muted">
-          {mode === "点位"
-            ? "在图面上点击即可新增一个地图点位（来源记为「平台新增」）。"
-            : "在图面上点击即可追加一个轨迹采样点，按顺序连线显示。"}
-        </p>
+        <p className="muted">在图面上点击即可新增一个巡航点（来源记为「平台新增」）。</p>
       </Panel>
-      <Panel title="地图自带定位ID" extra={<span>{imported.length} 个</span>}>
-        {imported.length ? (
+      <Panel
+        title="巡航点清单"
+        extra={
+          <div className="actions">
+            <Btn disabled={!dirty} onClick={reset}>
+              重置
+            </Btn>
+            <Btn primary disabled={!dirty} onClick={saveAll}>
+              保存
+            </Btn>
+          </div>
+        }
+      >
+        {draft.length ? (
           <Table
-            heads={["定位ID（外部）", "用途标记", "坐标", "关联业务点位", "状态"]}
-            rows={imported.map((t) => {
-              const p = pointOf(t.id);
-              return [
-                <b>{t.externalId || t.id}</b>,
-                t.kind,
-                `${t.x}% / ${t.y}%`,
-                p ? <span className="link">{p.name}</span> : <span className="muted">尚未标注</span>,
-                <Badge>{t.state}</Badge>,
-              ];
+            heads={["ID / 定位号", "类型", "坐标 (x,y)", "来源", "状态", "操作"]}
+            rows={draft.map((t) => {
+              const isEditing = editingId === t.id;
+              const label = t.externalId || t.id;
+              const bound = !!t.pointId;
+              return isEditing
+                ? [
+                    <input
+                      type="text"
+                      value={form.externalId}
+                      disabled={t.source === "地图导入"}
+                      title={
+                        t.source === "地图导入"
+                          ? "地图导入的定位号保持原样"
+                          : "人工新增点可修改定位号"
+                      }
+                      onChange={(e) =>
+                        FORM((f) => ({ ...f, externalId: e.target.value }))
+                      }
+                    />,
+                    <select
+                      value={form.kind}
+                      onChange={(e) => FORM((f) => ({ ...f, kind: e.target.value }))}
+                    >
+                      {CRUISE_KINDS.map((k) => (
+                        <option key={k}>{k}</option>
+                      ))}
+                    </select>,
+                    <div className="coords">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.1}
+                        value={form.x}
+                        onChange={(e) => FORM((f) => ({ ...f, x: +e.target.value }))}
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.1}
+                        value={form.y}
+                        onChange={(e) => FORM((f) => ({ ...f, y: +e.target.value }))}
+                      />
+                    </div>,
+                    t.source,
+                    <Badge>{t.state}</Badge>,
+                    <div className="actions">
+                      <Btn onClick={() => saveRow(t.id)}>保存</Btn>
+                      <Btn onClick={() => { EDIT(""); FORM({}); }}>取消</Btn>
+                    </div>,
+                  ]
+                : [
+                    <b>{label}</b>,
+                    t.kind,
+                    `(${t.x}, ${t.y})`,
+                    t.source,
+                    <Badge>{t.state}</Badge>,
+                    <div className="actions">
+                      <Btn onClick={() => startEdit(t)}>编辑</Btn>
+                      <Btn
+                        disabled={t.source === "地图导入" || bound}
+                        title={
+                          t.source === "地图导入"
+                            ? "地图导入点保持原样，不可删除"
+                            : bound
+                              ? "已关联业务点位，请先解绑"
+                              : "删除该巡航点"
+                        }
+                        onClick={() => remove(t.id)}
+                      >
+                        删除
+                      </Btn>
+                    </div>,
+                  ];
             })}
           />
         ) : (
-          <Empty>该地图未自带定位ID，可在地图上继续新增。</Empty>
-        )}
-      </Panel>
-      <Panel title="平台新增点位" extra={<span>{added.length} 个</span>}>
-        {added.length ? (
-          <Table
-            heads={["点位ID（内部）", "用途标记", "坐标", "关联业务点位", "操作"]}
-            rows={added.map((t) => {
-              const p = pointOf(t.id);
-              return [
-                t.id,
-                t.kind,
-                `${t.x}% / ${t.y}%`,
-                p ? <span className="link">{p.name}</span> : <span className="muted">尚未标注</span>,
-                <Btn
-                  disabled={!!p || t.state === "已剔除"}
-                  title={p ? "已关联业务点位，请先维护点位" : "标记为不用于巡检"}
-                  onClick={() => act({ type: "DISCARD_TARGET", mapId: m.id, targetId: t.id })}
-                >
-                  剔除
-                </Btn>,
-              ];
-            })}
-          />
-        ) : (
-          <Empty>还没有平台新增的点位。切换到「图面点击用于：点位」后在地图上点击即可新增。</Empty>
-        )}
-      </Panel>
-      <Panel title="轨迹" extra={<span>{track.length} 个采样点</span>}>
-        {track.length ? (
-          <Table
-            heads={["顺序", "类型", "坐标"]}
-            rows={track.map((x) => [x.seq, <Badge>{x.kind}</Badge>, `${x.x}% / ${x.y}%`])}
-          />
-        ) : (
-          <Empty>该地图暂无轨迹。切换到「图面点击用于：轨迹」后在地图上点击即可追加。</Empty>
+          <Empty>该地图暂无巡航点，在底图上点击即可新增。</Empty>
         )}
       </Panel>
     </>

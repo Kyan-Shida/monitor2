@@ -28,6 +28,7 @@ import {
   SAMPLE_MAP_TARGETS,
   SAMPLE_MAP_TRACK,
 } from "../data/sampleMap";
+import { MAP_IMAGE_MAX_SIZE } from "../data/types";
 
 /**
  * 旧深链保留分支（不在工具栏暴露，仅由 URL `?tab=` 进入）
@@ -87,8 +88,10 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     if (!file) return;
     if (!file.type.startsWith("image/"))
       return ER("请选择图片文件（JPG / PNG / WebP）。");
-    if (file.size > 2 * 1024 * 1024)
-      return ER("图片过大（建议 2 MB 以内），请压缩后再上传。");
+    if (file.size > MAP_IMAGE_MAX_SIZE)
+      return ER(
+        `图片过大（建议 ${MAP_IMAGE_MAX_SIZE / 1024 / 1024} MB 以内），请压缩后再上传。`,
+      );
     try {
       const dataUrl = await new Promise<string>((res, rej) => {
         const r = new FileReader();

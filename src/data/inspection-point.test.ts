@@ -1,4 +1,4 @@
-import { test } from "node:test";
+﻿import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run } from "./engine";
@@ -16,7 +16,7 @@ function freeTarget(s: State, id: string, externalId: string) {
     state: "待确认",
   });
 }
-/** 一个巡检项：巡检项名称 + 业务巡检目标 + 机器操作内容 */
+/** 一个巡检项：巡检项名称 + 巡检目标台账 + 机器操作内容 */
 const spec = (
   name: string,
   targetId: string,

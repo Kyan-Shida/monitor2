@@ -5,5 +5,5 @@ import react from "@vitejs/plugin-react";
 // @description Vite 配置，启用 React 插件
 export default defineConfig({
   plugins: [react()],
-  server: { host: true, port: 5173 },
+  server: { host: true, port: 5175 },
 });

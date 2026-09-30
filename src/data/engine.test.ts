@@ -21,10 +21,11 @@ function dispatch(s: State, id: string) {
   s = run(s, { type: "RECEIPT", id });
   return run(s, { type: "START", id });
 }
-// 2026-09-30：下线「路线管理」目录（路线随地图带入）→ 39 → 38
-test("38 unique phase-one pages", () => {
-  assert.equal(pages.length, 38);
-  assert.equal(new Set(pages.map((p) => p.id)).size, 38);
+// 2026-09-30：下线「路线管理」目录（路线随地图带入）→ 39 → 38；
+// 同日合并「能力与健康 / 地图与版本 / 机型专项」三页为「机器人能力」并新增「新增机器人」页 → 37
+test("37 unique phase-one pages", () => {
+  assert.equal(pages.length, 37);
+  assert.equal(new Set(pages.map((p) => p.id)).size, 37);
 });
 test("map import → annotation → sync → validation → publication", () => {
   let s = seed();

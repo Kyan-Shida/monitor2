@@ -1,4 +1,4 @@
-import { test } from "node:test";
+﻿import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run, constraints } from "./engine";
@@ -154,7 +154,7 @@ test("point rules treat inclusive bounds as normal; empty/missing rules require 
   // 未绑定业务目标的巡检点 = 未配置告警：不判定、进复核
   s.points.push({ ...s.points[0], id: "P-new", inspectItems: [] });
   assert.equal(rulesOf(s).find((r) => r.pointId === "P-new")?.enabled, false);
-  // 告警设置来自业务巡检目标：绑定了"已开启告警"的目标即视为已配置
+  // 告警设置来自巡检目标台账：绑定了"已开启告警"的目标即视为已配置
   s.points.push({ ...s.points[0], id: "P-bind" });
   const bound = rulesOf(s).find((r) => r.pointId === "P-bind")!;
   assert.equal(bound.enabled, true);

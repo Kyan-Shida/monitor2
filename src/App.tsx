@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file App.tsx
  * @description 应用外壳：按角色过滤的侧边栏、角色切换器、路由分发与权限守卫
  * @interaction 消费 data/navigation.ts（菜单与路由）、data/store.tsx（状态）、data/roles.ts（权限）
@@ -91,6 +91,7 @@ import {
 import { ObjectDetails } from "./pages/ObjectDetails";
 import { DeviceArchive } from "./pages/DeviceArchive";
 import { DeviceMaster } from "./pages/DeviceMaster";
+import { RobotNew } from "./pages/RobotNew";
 import { MonitorCockpit } from "./pages/MonitorCockpit";
 import { DispatchCockpit } from "./pages/DispatchCockpit";
 import { CockpitScreen } from "./pages/CockpitScreen";
@@ -126,6 +127,7 @@ const pageIcons: Record<string, LucideIcon> = {
   report: FileText,
   robots: Bot,
   robot: Bot,
+  "robot-new": Bot,
   health: Activity,
   "robot-map": MapPinned,
   manual: Terminal,
@@ -272,7 +274,7 @@ export default function App() {
     ].includes(page)
   )
     body = <Operations page={page} id={id} tab={tab} />;
-  // 业务巡检目标：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准（巡检项从这里选"检什么、怎么判"）
+  // 巡检目标台账：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准（巡检项从这里选"检什么、怎么判"）
   else if (page === "points") body = <BusinessTargets />;
   // 巡检点管理：已配置巡检点列表 +「添加巡检点」；id 传入时按该地图预筛
   else if (page === "annotation") body = <InspectionPoints id={id} />;
@@ -286,6 +288,8 @@ export default function App() {
   else if (page === "map-detail") body = <MapDetail id={id} tab={tab} />;
   // 设备主数据（阶段③）：清单导入 / 审核 / 启停 / 是否巡检的后台，沿用 equipment 路由
   else if (page === "equipment") body = <DeviceMaster />;
+  // 新增机器人（内置表单页）：编码 / 机型 / 能力 / 约束，提交即接入台账
+  else if (page === "robot-new") body = <RobotNew />;
   else if (
     ["point", "task-detail", "replay-detail", "result-view"].includes(page)
   )
