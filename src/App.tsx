@@ -12,7 +12,6 @@ import {
   BarChart3,
   Settings,
   ScanEye,
-  Bell,
   Search,
   RotateCcw,
   ShieldCheck,
@@ -76,18 +75,14 @@ import { Planning } from "./pages/Planning";
 import { AlarmConfiguration } from "./pages/AlarmConfiguration";
 import { DispatchDesk } from "./pages/DispatchDesk";
 import { Scheduling } from "./pages/Scheduling";
-import { Execution } from "./pages/Execution";
+import { Execution, ExecutionMonitor } from "./pages/Execution";
 import { Results, Alarms } from "./pages/Results";
 import { Operations } from "./pages/Operations";
 import { Supporting } from "./pages/Supporting";
 import { Btn, Modal, Note } from "./components/UI";
 import { FeedbackReview } from "./components/FeedbackReview";
 import { PageTabs } from "./components/PageTabs";
-import {
-  NotificationCenter,
-  noticeMessages,
-  splitUnreadCount,
-} from "./components/NotificationCenter";
+import { AlarmCenter } from "./components/AlarmCenter";
 import { ObjectDetails } from "./pages/ObjectDetails";
 import { DeviceArchive } from "./pages/DeviceArchive";
 import { DeviceMaster } from "./pages/DeviceMaster";
@@ -134,6 +129,7 @@ const pageIcons: Record<string, LucideIcon> = {
   device: SlidersHorizontal,
   equipment: Boxes,
   points: MapPin,
+  "points-space": MapPinned,
   annotation: Pencil,
   templates: FileStack,
   calendar: CalendarDays,
@@ -180,8 +176,6 @@ export default function App() {
     [expanded, SETE] = useState<Set<string>>(() => new Set()),
     /** 收起的二级 sub 分组：空表示全部展开 */
     [collapsedSubs, SETS] = useState<Set<string>>(() => new Set()),
-    /** 消息中心弹窗：顶栏铃铛点击打开 */
-    [noticeOpen, SETNOTICE] = useState(false),
     /** 顶栏用户下拉菜单：替代原生角色切换器 */
     [userMenu, SETUSER] = useState(false),
     /** 退出登录演示弹窗 */
@@ -206,8 +200,6 @@ export default function App() {
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
   }, [userMenu]);
-  /** 消息中心未读数拆分：红色为告警未读（需立即处理），蓝色为其他未读。告警单独提级，入口即可见。 */
-  const noticeSplit = splitUnreadCount(noticeMessages(s));
   // 当前页面所在一级组自动展开（首次进入时）
   useEffect(() => {
     const m = routeMeta.find((p) => p.id === route.page);
@@ -276,15 +268,17 @@ export default function App() {
     body = <Operations page={page} id={id} tab={tab} />;
   // 巡检目标台账：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准（巡检项从这里选"检什么、怎么判"）
   else if (page === "points") body = <BusinessTargets />;
+  // 空间 / 区域（非装置）类目标：复用目标台账页，预置为空间与区域视图
+  else if (page === "points-space") body = <BusinessTargets tab="space" />;
   // 巡检点管理：已配置巡检点列表 +「添加巡检点」；id 传入时按该地图预筛
   else if (page === "annotation") body = <InspectionPoints id={id} />;
-  // 添加 / 编辑巡检点（内置页）：名称 + 地图 + 地图点位 + 多个巡检项
+  // 添加 / 编辑巡检点（内置页）：名称 + 地图 + 标定点 + 多个巡检项
   else if (page === "point-edit")
     body = <PointEdit id={id === "new" ? undefined : id} />;
   // 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证
   else if (page === "point-annotate") body = <Annotation id={id} />;
   else if (page === "maps") body = <Maps id={id} tab={tab} />;
-  // 地图详情内置页：列表「详情」进入，内部两个抽屉（地图工作台 / 地图下发）
+  // 地图详情内置页：列表「详情」进入，内部抽屉（地图下发）
   else if (page === "map-detail") body = <MapDetail id={id} tab={tab} />;
   // 设备主数据（阶段③）：清单导入 / 审核 / 启停 / 是否巡检的后台，沿用 equipment 路由
   else if (page === "equipment") body = <DeviceMaster />;
@@ -303,7 +297,10 @@ export default function App() {
   // 旧深链 `rules`：规则配置挂在点位上，故落到巡检点列表（Supporting 的 points 视图）
   else if (page === "rules") body = <Supporting page="points" />;
   else if (page === "report") body = <InspectionReport />;
-  else if (page === "execution") body = <Execution id={id} />;
+  else if (page === "execution") body = <Execution />;
+  // 单任务现场态势（内置页）：执行总览行内「监控」进入
+  else if (page === "execution-monitor")
+    body = <ExecutionMonitor id={id} />;
   else if (["results", "review", "result-detail"].includes(page))
     body = <Results page={page} id={id} />;
   else if (["alarms", "alarm", "alarm-detail"].includes(page))
@@ -582,24 +579,8 @@ export default function App() {
             <button title="重置演示" onClick={() => R(true)}>
               <RotateCcw size={17} />
             </button>
-            {/* 消息中心入口：点击弹出消息中心弹窗（不再直接跳转告警页）。
-              角标拆分：红色圆点告警未读（需立即处理）· 蓝色角标其他未读，
-              让告警在入口层面即见，不再埋在 Tab 里 */}
-            <button
-              className={"bell-btn" + (noticeSplit.alarm > 0 ? " has-alarm" : "")}
-              title={noticeSplit.alarm > 0 ? `有 ${noticeSplit.alarm} 条未处理告警` : "消息中心"}
-              onClick={() => SETNOTICE(true)}
-            >
-              <Bell size={18} />
-              {noticeSplit.alarm > 0 && (
-                <i className="bell-dot" />
-              )}
-              {noticeSplit.other > 0 && (
-                <i className="bell-badge">
-                  {noticeSplit.other > 99 ? "99+" : noticeSplit.other}
-                </i>
-              )}
-            </button>
+            {/* 告警入口：原消息铃铛位置，点击打开告警弹窗（可拖动悬浮、可最小化） */}
+            <AlarmCenter />
             {/* 用户下拉菜单：头像 + 姓名角色，点击展开角色切换与退出登录（原型阶段代替真实登录） */}
             <div className="user-menu-wrap" ref={userRef}>
               <button
@@ -680,7 +661,6 @@ export default function App() {
           {message}
         </div>
       )}
-      {noticeOpen && <NotificationCenter onClose={() => SETNOTICE(false)} />}
       {logoutOpen && (
         <Modal title="退出登录" onClose={() => SETLOGOUT(false)}>
           <Note>

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run, constraints } from "./engine";
 import { deviceStats } from "./deviceMaster";
+import { targetsOf } from "./mapCalibration";
 
 /** 快速下发参数（与 engine.test 中通过的那组保持一致，便于对照） */
 const quick = (points: string[], name = "临时复核") => ({
@@ -240,7 +241,7 @@ test("标注页「＋快速新建」的设备直接生效，建完即可标注�
   s = run(s, {
     type: "ANNOTATE",
     mapId: s.maps[0].id,
-    targetId: s.maps[0].targets[0].id,
+    targetId: targetsOf(s, s.maps[0].id)[0].id,
     name: "V010 液位点",
     device: "V010",
     objects: ["液位计"],
@@ -255,7 +256,7 @@ test("标注页「＋快速新建」的设备直接生效，建完即可标注�
 test("一次停靠可覆盖多个检测目标：逻辑点由系统派生且不暴露给用户", () => {
   let s = seed();
   const m = s.maps[0];
-  const targetId = m.targets[0].id;
+  const targetId = targetsOf(s, m.id)[0].id;
   s = run(s, {
     type: "ANNOTATE",
     mapId: m.id,

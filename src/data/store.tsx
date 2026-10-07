@@ -67,10 +67,16 @@ function withSeedDefaults(s: State): State {
    * 看不出分级与闭环推进（只为演示可读性，不影响任何业务逻辑）
    */
   const needAlarms = !s.alarms?.length;
-  if (!needMapImage && !needDevices && !needNormalize && !needAlarms) return s;
+  // 巡检点标定数据是独立模块：老缓存里没有该集合时从 seed 回填（地图上不再挂点位）
+  const needCalibrations = !s.mapCalibrations?.length;
+  if (!needMapImage && !needDevices && !needNormalize && !needAlarms && !needCalibrations)
+    return s;
   const base = seed();
   return {
     ...s,
+    mapCalibrations: needCalibrations
+      ? base.mapCalibrations
+      : s.mapCalibrations,
     maps: s.maps.map((m) => ({
       ...m,
       ...(needMapImage && m.image === undefined

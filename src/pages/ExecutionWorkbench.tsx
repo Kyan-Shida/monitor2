@@ -17,27 +17,168 @@ import {
 import { ObjectLink, Kpis, EventTimeline } from "../components/Business";
 import { MapCanvas } from "../components/MapCanvas";
 import { Video } from "../components/Video";
-export function Execution({ id }: { id?: string }) {
+export function Execution() {
   const { s } = useStore();
-  const linkedTask = s.tasks.find(task => task.id === id);
-  const [robotId, setRobotId] = useState(linkedTask?.robotId || s.robots.find(robot => robot.current)?.id || s.robots[0]?.id || "");
-  const robot = s.robots.find(item => item.id === robotId);
-  const liveTasks = s.tasks.filter(task => task.robotId === robotId && ["执行中", "暂停"].includes(task.state));
-  const task = liveTasks.find(item => item.id === id) || liveTasks.find(item => item.id === robot?.current) || liveTasks[0];
-  return <>
-    <div className="live-robot-selector">
-      <label><span>监控机器人</span><select aria-label="监控机器人" value={robotId} onChange={event => setRobotId(event.target.value)}>
-        {s.robots.map(item => <option key={item.id} value={item.id}>{item.name} · {item.id} · {item.state}</option>)}
-      </select></label>
-      {robot && <><Badge>{robot.state}</Badge><span>{robot.region} · 电量 {robot.battery}%</span><ObjectLink type="robot" id={robot.id}>机器人详情</ObjectLink></>}
-    </div>
-    {task ? <LiveTaskMonitor key={task.id} id={task.id} /> : <Panel title="当前任务"><div className="live-idle-state"><b>暂无执行任务</b><p>{robot ? `${robot.name}当前没有执行中或暂停的任务。` : "暂无可监控的机器人。"}</p><p className="muted">任务开始执行后将自动显示该机器人的地图、视频与检测项进度。</p><div className="actions"><Btn primary onClick={() => go("dispatch")}>前往调度中心</Btn>{robot && <Btn onClick={() => go("manual", robot.id)}>人工操作与遥控</Btn>}</div></div></Panel>}
-  </>;
+  /**
+   * EXE-02（P0-阻断）：执行监控首页为「任务维度总览」——以任务为中心（不再先选机器人），
+   * 异常项优先置顶；点「监控」进入**内置页**（`execution-monitor`）看单任务现场态势。
+   */
+  const ACTIVE = ["待调度", "已分配", "下发中", "待执行", "执行中", "已被接管", "暂停"];
+  const overview = s.tasks
+    .filter((t) => !terminal.includes(t.state))
+    .map((t) => {
+      const res = s.results.filter((r) => r.taskId === t.id);
+      return {
+        t,
+        robot: s.robots.find((x) => x.id === t.robotId),
+        abn: res.filter((r) => r.abnormal).length,
+        pend: res.filter((r) => r.status === "待复核").length,
+        done: res.filter((r) => r.status !== "待复核").length,
+      };
+    })
+    .sort((a, b) => {
+      const rank = (x: typeof overview[number]) =>
+        (x.abn > 0 ? 0 : 1) * 10 +
+        (x.t.state === "已被接管"
+          ? 0
+          : x.t.state === "执行中"
+            ? 1
+            : x.t.state === "暂停"
+              ? 2
+              : 3);
+      return rank(a) - rank(b);
+    });
+  return (
+    <Panel
+      title={`执行总览 · 任务维度（${overview.length}）`}
+      extra={<span className="muted">异常优先 · 点「监控」进入单任务现场态势</span>}
+    >
+      {overview.length ? (
+        <Table
+          heads={["机器人", "当前任务", "状态", "检测 / 异常 / 待复核", "操作"]}
+          rows={overview.map(({ t, robot: rb, abn, pend, done }) => [
+            rb ? (
+              <ObjectLink type="robot" id={rb.id}>
+                {rb.name}
+              </ObjectLink>
+            ) : (
+              t.robotId || "未分配"
+            ),
+            <ObjectLink type="task-detail" id={t.id}>
+              {t.name}
+            </ObjectLink>,
+            <Badge>{t.state}</Badge>,
+            <span className={abn ? "rd-bad" : undefined}>
+              {done} / {abn} / {pend}
+            </span>,
+            ACTIVE.includes(t.state) ? (
+              <Btn primary onClick={() => go("execution-monitor", t.id)}>
+                监控
+              </Btn>
+            ) : (
+              <ObjectLink type="task-detail" id={t.id}>
+                查看
+              </ObjectLink>
+            ),
+          ])}
+        />
+      ) : (
+        <Note>当前没有进行中的任务。</Note>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * 单任务现场态势（内置页 `execution-monitor`）：地图 + 现场视频 + 任务进度与控制
+ * @param id 任务 id；缺省取所选机器人的当前任务
+ */
+export function ExecutionMonitor({ id }: { id?: string }) {
+  const { s } = useStore();
+  const linkedTask = s.tasks.find((task) => task.id === id);
+  const [robotId, setRobotId] = useState(
+    linkedTask?.robotId ||
+      s.robots.find((robot) => robot.current)?.id ||
+      s.robots[0]?.id ||
+      "",
+  );
+  const robot = s.robots.find((item) => item.id === robotId);
+  const liveTasks = s.tasks.filter(
+    (task) =>
+      task.robotId === robotId &&
+      ["执行中", "已被接管", "暂停"].includes(task.state),
+  );
+  const task =
+    liveTasks.find((item) => item.id === id) ||
+    liveTasks.find((item) => item.id === robot?.current) ||
+    liveTasks[0];
+  return (
+    <>
+      <div className="live-robot-selector">
+        <label>
+          <span>单机视角 · 监控机器人</span>
+          <select
+            aria-label="监控机器人"
+            value={robotId}
+            onChange={(event) => setRobotId(event.target.value)}
+          >
+            {s.robots.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} · {item.id} · {item.state}
+              </option>
+            ))}
+          </select>
+        </label>
+        {robot && (
+          <>
+            <Badge>{robot.state}</Badge>
+            <span>
+              {robot.region} · 电量 {robot.battery}%
+            </span>
+            <ObjectLink type="robot" id={robot.id}>
+              机器人详情
+            </ObjectLink>
+            {/* EXE-03：人工接管与遥控已降为内置页，从现场态势进入 */}
+            <Btn onClick={() => go("manual", robot.id)}>人工操作与遥控</Btn>
+          </>
+        )}
+      </div>
+      {task ? (
+        <LiveTaskMonitor key={task.id} id={task.id} />
+      ) : (
+        <Panel title="当前任务">
+          <div className="live-idle-state">
+            <b>暂无执行任务</b>
+            <p>
+              {robot
+                ? `${robot.name}当前没有执行中或暂停的任务。`
+                : "暂无可监控的机器人。"}
+            </p>
+            <p className="muted">
+              任务开始执行后将自动显示该机器人的地图、视频与检测项进度。
+            </p>
+            <div className="actions">
+              <Btn primary onClick={() => go("dispatch")}>
+                前往调度中心
+              </Btn>
+              {robot && (
+                <Btn onClick={() => go("manual", robot.id)}>
+                  人工操作与遥控
+                </Btn>
+              )}
+            </div>
+          </div>
+        </Panel>
+      )}
+    </>
+  );
 }
 function LiveTaskMonitor({ id }: { id: string }) {
   const { s, act } = useStore();
-  // 执行监控只展示进行中的任务（执行中 + 暂停：暂停属于执行途中，仍需可监控/恢复/接管）
-  const liveStates = ["执行中", "暂停"];
+  // 执行监控只展示进行中的任务（执行中 / 已被接管 / 暂停：均属执行途中，仍需可监控/恢复/接管）
+  // EXE-01：第一阶段颗粒度放粗 —— 只保留位置、当前任务/巡检点、相机画面与最终结果，
+  // 不呈现「聚焦中 / 快聚焦到」等高频过程态（本体多数无法实时反馈，接口负担也大）。
+  const liveStates = ["执行中", "已被接管", "暂停"];
   const t = s.tasks.find(task => task.id === id)!;
   const liveTasks = s.tasks.filter(task => task.robotId === t.robotId && liveStates.includes(task.state));
   const r = s.robots.find((r) => r.id === t.robotId),
@@ -56,7 +197,7 @@ function LiveTaskMonitor({ id }: { id: string }) {
           <select
             aria-label="监控任务"
             value={t.id}
-            onChange={(e) => go("execution", e.target.value)}
+            onChange={(e) => go("execution-monitor", e.target.value)}
           >
             {liveTasks.map((t) => (
               <option key={t.id} value={t.id}>
@@ -81,7 +222,7 @@ function LiveTaskMonitor({ id }: { id: string }) {
             <i>→</i> {timeAt(minutesLeft(t))}
           </span>
           <span>
-            <small>版本</small>m{t.mapVersion} / p{t.pointSet}
+            <small>版本</small>m{t.mapVersion} / c{t.calibrationVersion}
           </span>
           <span>
             <small>任务类型</small>
@@ -169,6 +310,11 @@ function LiveTaskMonitor({ id }: { id: string }) {
         </Panel>
           <details className="live-history"><summary>任务事件时间轴</summary>
         <Panel title="任务事件时间轴">
+          {/* EXE-01：第一阶段颗粒度放粗，事件轴只记录关键节点，不追聚焦等高频过程态 */}
+          <Note>
+            第一阶段颗粒度放粗：事件轴只记录关键节点（到点 / 采集完成 / 异常），
+            不呈现「聚焦中 / 快聚焦到」等本体无法稳定实时反馈的过程态。
+          </Note>
           <EventTimeline taskId={t.id} />
         </Panel>
           </details>

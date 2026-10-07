@@ -20,6 +20,7 @@ import type {
 } from "../data/types";
 import { defaultRangeOfUnit } from "../data/alarmRules";
 import { defaultRequirementOfInstrument } from "../data/deviceMaster";
+import { targetsOf } from "../data/mapCalibration";
 
 export function PointEdit({ id }: { id?: string }) {
   const { s, act } = useStore();
@@ -27,6 +28,15 @@ export function PointEdit({ id }: { id?: string }) {
   const [name, NAME] = useState(editing?.name || "");
   const [mapId, MAP] = useState(editing?.mapId || s.maps[0]?.id || "");
   const [targetId, TGT] = useState(editing?.targetId || "");
+  /**
+   * PT-02：标定用机器人（选在**巡检点层面**，不是每个巡检项里选）。
+   * 数据流是「机器人 → 平台」上行：点「从机器人获取」实时抓取当前位姿，抓取后可手工微调。
+   */
+  const [bindRobot, BINDROBOT] = useState(editing?.calibrateRobot || "");
+  /** 抓取到 / 手工微调后的停靠位姿（粗参考，本体到场后由本地算法微调） */
+  const [pose, POSE] = useState<{ x: number; y: number; yaw: number } | undefined>(
+    editing?.pose,
+  );
   /** 已保存的巡检项（多个巡检项组成一个巡检点） */
   const [items, ITEMS] = useState<InspectSpec[]>(editing?.inspectItems || []);
   /** 正在编辑的巡检项草稿；null 表示不在编辑态 */
@@ -48,10 +58,15 @@ export function PointEdit({ id }: { id?: string }) {
 
   const bts = s.businessTargets || [];
   const m = s.maps.find((x) => x.id === mapId);
-  /** 「地图中带有定位ID的点」：只有随地图文件带入定位ID的点才能绑巡检点 */
-  const targets = (m?.targets || []).filter((t) => t.externalId);
-  const noIdCount = (m?.targets || []).filter((t) => !t.externalId).length;
-  const target = m?.targets.find((t) => t.id === targetId);
+  /**
+   * 该地图的巡检点（**来源绑定键**：来自采集时产出的「巡检点标定文件」，
+   * 独立存放于 data/mapCalibration.ts，不在地图上）
+   */
+  const mapTargets = targetsOf(s, mapId || "");
+  /** 「带定位ID的点」：只有标定文件里带定位ID的点才能绑巡检点 */
+  const targets = mapTargets.filter((t) => t.externalId);
+  const noIdCount = mapTargets.filter((t) => !t.externalId).length;
+  const target = mapTargets.find((t) => t.id === targetId);
   const btOf = (bid: string) => bts.find((b) => b.id === bid);
   const insOf = (bid: string) => {
     const bid2 = btOf(bid)?.instrumentId;
@@ -65,9 +80,9 @@ export function PointEdit({ id }: { id?: string }) {
     const req = (s.requirements || []).find((r) => r.id === b?.requirementId);
     return `${dev?.region || "—"} › ${dev?.name || "—"} › ${ins?.name || "—"} · ${req?.name || ""}`;
   };
-  /** 地图点位是否已被其它巡检点占用（一对一：一个定位ID点只绑一个巡检点） */
+  /** 巡检点是否已被其它巡检点占用（一对一：一个定位ID点只绑一个巡检点） */
   const ownerOf = (tid: string) => {
-    const t = m?.targets.find((x) => x.id === tid);
+    const t = mapTargets.find((x) => x.id === tid);
     if (!t?.pointId || t.pointId === editing?.id) return undefined;
     return s.points.find((p) => p.id === t.pointId);
   };
@@ -88,10 +103,6 @@ export function PointEdit({ id }: { id?: string }) {
 
   const upd = (patch: Partial<InspectSpec>) =>
     DRAFT((d) => (d ? { ...d, ...patch } : d));
-
-  /** 当前地图的现场踩点记录 / 试采回执：作为 Excel / 操控台的参考数据来源 */
-  const surveys = (s.siteSurveys || []).filter((x) => x.mapId === mapId);
-  const trials = (s.trialReceipts || []).filter((x) => x.pointId === targetId);
 
   /** 新开一条巡检项草稿（默认带一个原子动作，参数取保守值） */
   function newItem() {
@@ -143,6 +154,9 @@ export function PointEdit({ id }: { id?: string }) {
       targetId,
       name,
       inspectItems: items,
+      // PT-02：标定机器人与抓取到的位姿（粗参考）随巡检点保存
+      calibrateRobot: bindRobot || undefined,
+      pose,
     });
     if (ok) go("annotation");
   }
@@ -213,7 +227,10 @@ export function PointEdit({ id }: { id?: string }) {
       <div className="context-bar">
         <b>{editing ? `编辑巡检点 · ${editing.name}` : "添加巡检点"}</b>
         <span>
-          巡检点 = 名称 + 地图 + 地图点位（带定位ID）+ 多个巡检项；巡检项 = 名称 + 业务目标 + 机器操作内容
+          {/* PT-01（V1.3 修订）：取消中间术语层，统一为「标定点 / 巡检点」两级口径 */}
+          <b>标定点</b> = 地图位置 + 定位ID（仅时空信息，无业务）；
+          <b>巡检点</b> = 名称 + 标定点 + 多个巡检项（空间信息 + 业务信息）；
+          巡检项 = 名称 + 业务目标 + 机器操作内容
         </span>
         <div className="actions">
           <Btn primary disabled={!!draft} onClick={savePoint}>
@@ -250,6 +267,60 @@ export function PointEdit({ id }: { id?: string }) {
               ))}
             </select>
           </Field>
+          <div className="point-section-h">标定与停靠位姿</div>
+          {/* PT-02：标定机器人选在巡检点层面；「获取」从机器人上行抓取当前位姿，抓取后可手动微调 */}
+          <Field label="标定机器人（用于抓取位姿 / 云台参数）">
+            <select
+              value={bindRobot}
+              onChange={(e) => BINDROBOT(e.target.value)}
+            >
+              <option value="">请选择机器人</option>
+              {s.robots.map((rb) => (
+                <option key={rb.id} value={rb.id}>
+                  {rb.id} · {rb.name} · {rb.state}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="actions">
+            <Btn
+              disabled={!bindRobot}
+              title="从机器人获取当前位姿与上装参数（机器人 → 平台上行）"
+              onClick={() => {
+                const rb = s.robots.find((x) => x.id === bindRobot);
+                if (!rb) return;
+                // 演示：抓取机器人当前位置作为停靠位姿（粗参考），抓取后可在下方手工微调
+                POSE({
+                  x: Math.round(rb.x),
+                  y: Math.round(rb.y),
+                  yaw: 0,
+                });
+                ERR("");
+              }}
+            >
+              从机器人获取位姿
+            </Btn>
+            {pose && (
+              <span className="muted">
+                已获取：X {pose.x} / Y {pose.y} / Yaw {pose.yaw}°（粗参考，可微调）
+              </span>
+            )}
+          </div>
+          {pose && (
+            <div className="actions">
+              <label className="inline-filter">
+                <span>Yaw°</span>
+                <input
+                  type="number"
+                  value={pose.yaw}
+                  onChange={(e) =>
+                    POSE({ ...pose, yaw: Number(e.target.value) })
+                  }
+                />
+              </label>
+            </div>
+          )}
+          <div className="point-section-h">绑定定位点</div>
           <Field label="选择地图中带有定位ID的点">
             <select value={targetId} onChange={(e) => TGT(e.target.value)}>
               <option value="">请选择定位ID点</option>
@@ -267,27 +338,22 @@ export function PointEdit({ id }: { id?: string }) {
           </Field>
           {!targets.length && (
             <Note>
-              该地图还没有<b>带定位ID的点位</b>：先到「地图管理 › 地图工作台」导入地图或补录定位ID，
+              该地图还没有<b>带定位ID的标定点</b>：先到「巡检点管理 › 巡检点导入」导入标定文件，
               再回来绑定。{noIdCount > 0 && `（当前有 ${noIdCount} 个平台新增点缺少定位ID）`}
             </Note>
           )}
           {target && (
             <p className="muted">
-              已绑定：<b>{target.externalId}</b> · 来源 {target.source || "—"} · 图上坐标{" "}
+              已绑定标定点：<b>{target.externalId}</b> · 来源 {target.source || "—"} · 底图投影{" "}
               {target.x}, {target.y}
+              {editing?.world && (
+                <>
+                  {" "}
+                  · 统一坐标 XYZ（{editing.world.x}, {editing.world.y}, {editing.world.z}）米
+                </>
+              )}
             </p>
           )}
-          <MapImageCanvas
-            image={m?.image}
-            markers={markers}
-            selected={targetId}
-            onSelect={(tid) => !ownerOf(tid) && TGT(tid)}
-            height={260}
-            showIds
-          />
-          <small className="muted">
-            点击图上的定位ID点即可选中；已被其它巡检点占用的点不可选。
-          </small>
         </Panel>
 
         <Panel
@@ -343,6 +409,38 @@ export function PointEdit({ id }: { id?: string }) {
         </Panel>
       </div>
 
+      <Panel
+        title="③ 地图选点（点击定位ID点完成绑定）"
+        className="point-edit-map"
+      >
+        <MapImageCanvas
+          image={m?.image}
+          markers={markers}
+          selected={targetId}
+          onSelect={(tid) => !ownerOf(tid) && TGT(tid)}
+          height={340}
+          showIds
+        />
+        <small className="muted">
+          点击图上的定位ID点即可选中；已被其它巡检点占用的点不可选。
+        </small>
+      </Panel>
+
+      <details className="point-footnote">
+        <summary>说明：定位ID 与标定参数口径</summary>
+        <Note>
+          定位 ID 来源：随<b>巡检点标定文件</b>导入（采集时与点云地图<b>同批产出、分开上传</b>）。
+          它只是<b>来源绑定键</b>——用来把标定点挂到地图位置上，<b>不是本巡检点的业务主键</b>：
+          平台巡检点主键另行生成、稳定不变；跨地图 / 跨版本的真正定位依据是
+          <b>统一坐标 XYZ + 姿态 + 上装参数</b>。地图重传 / 更新后按定位 ID 自动匹配，
+          匹配不上则按坐标辅助 + 人工确认重绑。
+        </Note>
+        <Note>
+          位姿 / 云台 / 上装（焦距、光圈、升降、补光）参数均为<b>粗参考</b>：本体到场后由机器人本地算法微调对准，
+          不保证填了即百分百对准。
+        </Note>
+      </details>
+
       {draft && (
         <InspectItemDrawer
           draft={draft}
@@ -355,8 +453,6 @@ export function PointEdit({ id }: { id?: string }) {
           businessTargets={bts}
           labelOfBt={labelOfBt}
           onOpenBt={openBt}
-          surveys={surveys}
-          trials={trials}
         />
       )}
 

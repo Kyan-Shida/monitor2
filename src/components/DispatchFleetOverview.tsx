@@ -78,7 +78,7 @@ export function DispatchFleetOverview({
                 <Badge>{r.state}</Badge>
               </div>
               <div className="fleet-card-meta">
-                {r.region} · 电量 {r.battery}% · m{r.mapVersion}/p{r.pointSet}
+                {r.region} · 电量 {r.battery}% · m{r.mapVersion}/c{r.calibrationVersion}
               </div>
               <div className="fleet-card-task">
                 {current ? (

@@ -1,10 +1,13 @@
 /**
  * @file Maps.tsx
- * @description 地图管理：**只保留三件事** ——
- *              ① 地图列表（筛选 / 搜索 / 分页，展示版本、区域、状态、内容与下发情况）
- *              ② 地图工作台（抽屉，见 components/MapWorkbench.tsx）
+ * @description 地图管理（第一个模块）：**只管理纯点云地图文件**
+ *              ——MAP-02 口径：**采集一趟、产出两件；存储两份、上传两处；模块两个、ID 一绑**。
+ *              本模块负责其中的 ① <b>点云地图文件</b>：
+ *              ① 地图列表（筛选 / 搜索 / 分页，展示空间版本、区域、状态、底图与下发情况）
+ *              ② 「＋ 导入地图」：上传纯点云地图（**不含任何定位ID与巡检点**）
  *              ③ 地图下发与机器同步（抽屉，见 components/MapDispatch.tsx）
- *              点「详情」进入内置页 pages/MapDetail.tsx（`#/robots/maps/detail/:id`）。
+ *              另一件产出（**巡检点标定文件**）归第二个模块：「巡检点管理」
+ *              （见 components/PointCalibration.tsx），两者按**定位 ID**绑定。
  * @interaction 详情页由 App.tsx 按路由 `map-detail` 渲染；本文件仅负责列表与旧深链兼容分支
  */
 import { useState } from "react";
@@ -22,12 +25,8 @@ import {
 import { Pager } from "../components/Business";
 import { MapOnboarding } from "../components/MapOnboarding";
 import { MapSurveyPanel } from "../components/MapSurveyPanel";
-import {
-  SAMPLE_MAP_FILE,
-  SAMPLE_MAP_IMAGE,
-  SAMPLE_MAP_TARGETS,
-  SAMPLE_MAP_TRACK,
-} from "../data/sampleMap";
+import { SAMPLE_MAP_FILE, SAMPLE_MAP_IMAGE } from "../data/sampleMap";
+import { calibrationVersionOf } from "../data/mapCalibration";
 import { MAP_IMAGE_MAX_SIZE } from "../data/types";
 
 /**
@@ -49,19 +48,13 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const m = s.maps.find((x) => x.id === id) || s.maps[0];
   const [modal, M] = useState(""),
     [name, N] = useState("罐区补充采集地图"),
+    /** MAP-02：点云来源（机器人实采 / 背包 SLAM / 手持云台 / 客户既有点云文件） */
+    [source, SRC] = useState("机器人实采"),
     [file, F] = useState(""),
     [cloud, C] = useState(""),
     [video, V] = useState(""),
     /** 底图（data URL） */
     [image, IMG] = useState(""),
-    /** 随文件带入的定位ID点 */
-    [targets, TG] = useState<{ id: string; x: number; y: number; kind: string }[]>(
-      [],
-    ),
-    /** 随文件带入的轨迹采样点 */
-    [track, TK] = useState<{ x: number; y: number; kind: string; seq: number }[]>(
-      [],
-    ),
     [importErr, ER] = useState(""),
     [note, NO] = useState(""),
     [kind, K] = useState("仅业务属性变更"),
@@ -71,18 +64,16 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     [stateF, SF] = useViewState("maps.filter.state", "全部"),
     [pager, PG] = useViewState("maps.page", 1);
 
-  /** 使用示例地图：一键填好底图 + 定位ID + 轨迹 + 原始资料 */
+  /** 使用示例点云地图：一键填好底图与原始资料（**不含任何点位信息**） */
   function useSample() {
     ER("");
     if (!name.trim()) N("二期装置区示例地图");
     F(SAMPLE_MAP_FILE);
     IMG(SAMPLE_MAP_IMAGE);
-    TG(SAMPLE_MAP_TARGETS);
-    TK(SAMPLE_MAP_TRACK);
     C("sample-multimodal.pcd");
     V("sample-video.mp4");
   }
-  /** 选择本地地图图片：读为底图，并（原型里）随文件补入示例定位ID与轨迹 */
+  /** 选择本地地图图片：读为底图（地图是纯点云，上传不携带任何点位 / 业务信息） */
   async function pickImage(file?: File) {
     ER("");
     if (!file) return;
@@ -102,9 +93,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
       IMG(dataUrl);
       F(file.name);
       if (!name.trim()) N(file.name.replace(/\.[^.]+$/, ""));
-      // 原型无法从图片里解析定位ID/轨迹：按示例点位自动补齐（可在「地图工作台」继续新增 / 删除）
-      TG(SAMPLE_MAP_TARGETS);
-      TK(SAMPLE_MAP_TRACK);
     } catch {
       ER("图片无法读取，请换一张有效图片后重试。");
     }
@@ -260,8 +248,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             ER("");
             IMG("");
             F("");
-            TG([]);
-            TK([]);
           }}
         >
           ＋ 导入地图
@@ -272,8 +258,19 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         extra={<span>{list.length} 张</span>}
       >
         <p className="muted">
-          地图随文件自带定位ID与轨迹；平台可在「地图工作台」继续新增。发布后进入「地图下发」同步给设备。
+          地图就是<b>纯点云</b>：只记录"机器人能走哪"，<b>不含任何定位ID与巡检点</b>。
+          <br />
+          现场<b>一趟采集、产出两件</b>：① 点云地图文件（本页导入）② <b>巡检点标定文件</b>
+          （到「巡检点管理 › 巡检点导入」导入）。两件<b>存储两份、上传两处</b>，
+          平台侧<b>两个模块</b>通过地图上的<b>定位 ID</b>绑定。
+          发布后进入「地图下发」同步给设备。
         </p>
+        {/* SYS-01：地图更新策略（方案，先登记；自动化对比后置） */}
+        <Note>
+          <b>地图更新策略（SYS-01）</b>：临时性变化（人员 / 杂物等噪声）不更新地图；
+          <b>永久性变化</b>（工艺 / 仪表变更、通行路径变化）由<b>厂商介入</b>重新采集并版本化 + 登记变更记录；
+          自动对比更新为低频事件，<b>后置</b>，本轮只做版本与变更登记。
+        </Note>
         <Table
           heads={[
             "地图 / 区域",
@@ -284,15 +281,12 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             "操作",
           ]}
           rows={rows.map((x) => {
-            const pts = s.points.filter((p) => p.mapId === x.id);
-            const added = x.targets.filter((t) => t.source === "平台新增").length;
-            const track = (s.trackSamples || []).filter((t) => t.mapId === x.id)
-              .length;
+            // 版本一致性只看"地图空间版本 + 独立标定数据版本"（地图上已无标定数据版本）
             const aligned = s.robots.filter(
               (r) =>
                 r.mapId === x.id &&
                 r.mapVersion === x.version &&
-                r.pointSet === x.pointSet,
+                r.calibrationVersion === calibrationVersionOf(s, x.id),
             ).length;
             return [
               <b>
@@ -302,17 +296,17 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                 </small>
               </b>,
               <>
-                m{x.version} / p{x.pointSet}
+                m{x.version}
                 <small>更新 {x.history[0] || "—"}</small>
               </>,
               <>
-                定位ID {x.targets.length - added} · 新增 {added}
+                {x.image ? "点云底图已上传" : "点云底图缺失"}
                 <small>
-                  轨迹 {track} · 业务点位 {pts.length}
+                  {x.cloud || "原始点云未提供"} · {x.video || "原始视频未提供"}
                 </small>
               </>,
               <>
-                {aligned} / {s.robots.length} 台版本一致
+                {aligned} / {s.robots.length} 台地图与标定一致
                 <small>
                   {x.state === "草稿" ? "内容未定版（下发时自动定版）" : "已定版，可下发"}
                 </small>
@@ -336,11 +330,29 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           drawerWidth={780}
           onClose={() => M("")}
         >
+          {/* MAP-02：采集一趟、产出两件；本向导只导入其中的「点云地图文件」 */}
           <Note>
-            上传一张<b>地图图片</b>即可完成导入：图片随文件带出的<b>定位ID</b>与
-            <b>轨迹</b>会一并带入，导入后可在「地图工作台」查看与继续新增，再到
-            「巡检点管理」绑定巡检点。
+            <b>这一步只导入「① 点云地图文件」</b>——机器人能走哪、需要巡检哪就扫哪；
+            上传后地图<b>不含任何定位ID、巡检点与业务信息</b>。
+            <br />
+            上传一张<b>地图图片（底图）</b>即可完成导入。
+            <br />
+            同一次采集还产出<b>② 巡检点标定文件</b>（点位坐标 / 定位 ID / 姿态 / 上装参数，
+            不含业务目标与告警阈值），请到「<b>巡检点管理 › 巡检点导入</b>」导入，
+            两件按<b>定位 ID</b>绑定。<b>现场只需采集一趟</b>，只是两件产出分开上传。
+            <br />
+            点云来源不限于现场机器人实采：背包 SLAM、手持云台、<b>工厂现有的点云数据</b>均可导入；
+            建图不必全量，<b>按机器人可达范围分区建图</b>（"二楼不巡检就不扫二楼"），多张分区图属正常形态。
           </Note>
+          <Field label="点云来源（MAP-02）">
+            <select value={source} onChange={(e) => SRC(e.target.value)}>
+              {["机器人实采", "背包 SLAM", "手持云台", "工厂既有点云数据"].map(
+                (x) => (
+                  <option key={x}>{x}</option>
+                ),
+              )}
+            </select>
+          </Field>
           <Field label="地图名称">
             <input
               value={name}
@@ -364,15 +376,13 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           </Field>
           <div className="actions">
             <Btn primary onClick={useSample}>
-              使用示例地图（含定位ID与轨迹）
+              使用示例点云地图
             </Btn>
             {image && (
               <Btn
                 onClick={() => {
                   IMG("");
                   F("");
-                  TG([]);
-                  TK([]);
                 }}
               >
                 清除
@@ -392,13 +402,13 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                 alt="地图底图预览"
               />
               <p className="muted">
-                已就绪：<b>{targets.length}</b> 个定位ID · <b>{track.length}</b>{" "}
-                个轨迹采样点 · 底图已上传
+                底图已上传 —— 地图<b>不含任何定位ID与巡检点</b>；
+                同批采集的<b>巡检点标定文件</b>请到「巡检点管理」导入，并按定位 ID 绑定。
               </p>
             </>
           ) : (
             <p className="muted">
-              {file || "尚未选择图片"} —— 选择图片或点「使用示例地图」。
+              {file || "尚未选择图片"} —— 选择图片或点「使用示例点云地图」。
             </p>
           )}
           <details className="map-import-extra">
@@ -423,8 +433,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                     name,
                     file: file || "map-" + Date.now().toString(36) + ".map",
                     image,
-                    targets,
-                    track,
                     cloud,
                     video,
                   })

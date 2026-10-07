@@ -1,11 +1,34 @@
 /**
  * @file DispatchCockpit.tsx
- * @description 调度指挥驾驶舱：深色大屏形态（顶部菜单条 + 居中标题 + 左中右三栏 + 双导航控制盘 + 底部指挥操作区），
- *              提供手动导航、任务导航、多层地图、告警去重合并与分级抑制、SLA 倒计时与超时升级、一键派单
+ * @description 调度指挥驾驶舱（V2 版式重构）：**中央地图最大化 + 左 300 / 右 350 固定栏 + 悬浮式操作台**。
+ *   ① 顶栏与「管理驾驶舱」共用同一个 ScreenTopBar（卡片底 · 左品牌与两舱 Tab · 居中发光标题 ·
+ *      调度中心 / 全屏 / 紧急停止 · 时钟），两舱样式完全一致；
+ *   ② 左栏 300px：设备状态紧凑列表（状态灯 + 电量进度条）→ 选中设备后就地展开「当前设备」折叠面板（Accordion）；
+ *   ③ 中栏 flex-1：地图舞台自适应铺满中央栏（不用绝对定位），左上角图层与图例、右下角缩放控件，
+ *      底部为半透明毛玻璃悬浮操作台（导航 / 任务 / 云台 / 声光语音 四组，点开就地展开，不常驻占地图高度）；
+ *   ④ 右栏 350px：单一枢纽卡片，三大 Tabs —— [告警与SLA] 红 · [视频信息] 青 · [巡检日志] 橙。
+ *   配色口径（等价 Tailwind 语义，两舱统一）：底 `bg-slate-950 #020617` / 卡片 `slate-900 #0f172a` /
+ *      边框 `slate-800 #1e293b` / 强调 `cyan-500 #06b6d4` + `red-500 #ef4444`。
  * @interaction 由 App.tsx 在 page === "screen" 时渲染；指标取自 data/metrics.ts，动作经 data/engine.ts
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CameraOff, Maximize, Minimize } from "lucide-react";
+import {
+  BellRing,
+  Camera,
+  CameraOff,
+  ChevronDown,
+  Compass,
+  ListChecks,
+  Maximize,
+  Minimize,
+  RotateCcw,
+  Route,
+  TriangleAlert,
+  Video as VideoIcon,
+  Volume2,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Can } from "../components/Can";
@@ -17,7 +40,6 @@ import { TakeoverDialog } from "../components/TakeoverDialog";
 import { Video } from "../components/Video";
 import { AutoScrollList } from "../components/AutoScrollList";
 import { ControlPad, type MoveCommand } from "../components/ControlPad";
-import { Sparkline } from "../components/Sparkline";
 import { metricValue, scopedState } from "../data/metrics";
 import { deviceProfile, deviceTypes } from "../data/deviceProfile";
 import { currentTask, queueFor, robotColors, stageOf } from "../data/selectors";
@@ -39,6 +61,11 @@ const PRESETS = [
 /** 告警级别权重：用于分级抑制判断 */
 const levelRank = (l: string) => (l === "紧急" ? 3 : l === "重要" ? 2 : 1);
 
+/** 悬浮操作台的分组：四组控制按需展开 */
+type PadKey = "nav" | "task" | "cam" | "av";
+/** 右栏枢纽的两个 Tab（巡检日志已按需求移除） */
+type HubKey = "alarm" | "video";
+
 export function DispatchCockpit({
   onSwitch,
 }: {
@@ -54,7 +81,6 @@ export function DispatchCockpit({
   const [selected, SEL] = useState<string>();
   /** 设备池「全选」：一次性选中当前筛选的全部机器（地图全部高亮、明细/告警按全部机器展示） */
   const [allSel, SETALL] = useState(false);
-  const [now, NOW] = useState(() => new Date());
   const [fs, FS] = useState(false);
   /** 全屏失败提示：部分预览环境禁用浏览器全屏 API */
   const [fsError, FSE] = useState("");
@@ -67,6 +93,14 @@ export function DispatchCockpit({
   /** 底部控制带第 4 块所选的预录播报内容 */
   const [clip, C] = useState(PRESETS[0]);
   const [counterSign, CS] = useState("李主管");
+  /** 悬浮操作台当前展开的分组：默认全部收起，保证地图主视野不被遮挡，点按钮才就地展开 */
+  const [pad, PAD] = useState<PadKey | null>(null);
+  /** 右栏枢纽 Tab */
+  const [hub, HUB] = useState<HubKey>("alarm");
+  /** 左栏「当前设备」折叠面板：默认展开，可手动收起 */
+  const [devOpen, DEVO] = useState(true);
+  /** 地图缩放倍率：仅作用于地图舞台内的图形层，配合右下角缩放控件 */
+  const [zoom, ZOOM] = useState(1);
 
   useEffect(() => {
     const onFs = () => FS(!!document.fullscreenElement);
@@ -167,24 +201,6 @@ export function DispatchCockpit({
     { n: mv("fieldPending"), label: "现场待处理（项）" },
   ];
 
-  /** 巡检明细：选中机器时展示该机器任务的巡检数据，未选中 / 全选时展示全部机器（仅自动滚动播放，不可点击） */
-  const detailResults = useMemo(() => {
-    const scope = activeId
-      ? s.results.filter(
-          (r) => s.tasks.find((t) => t.id === r.taskId)?.robotId === activeId,
-        )
-      : s.results;
-    return scope.slice(0, 20);
-  }, [s.results, s.tasks, activeId]);
-  /** 采集数据流：取最近可解析为数值的检测结果，用于波形（无数据时不绘制） */
-  const wave = s.results
-    .filter((r) => Number.isFinite(Number(r.final)))
-    .slice(0, 14)
-    .reverse()
-    .map((r, i) => ({ d: String(i + 1), v: Number(r.final) }));
-  const pointName = (pid: string) =>
-    s.points.find((p) => p.id === pid)?.name || pid;
-
   /**
    * 切换全屏展示：以驾驶舱根节点为目标请求全屏（与管理驾驶舱一致），整屏只显示驾驶舱；
    * 部分预览环境会拒绝该请求，此时给出明确提示，不静默失败
@@ -237,16 +253,18 @@ export function DispatchCockpit({
   const talkUp = () => sendField("talk", false);
 
   return (
-    <div className="cockpit-screen ds-root" ref={shellRef}>
+    <div className="cockpit-screen ds-root ds-v2" ref={shellRef}>
       {/* 大屏全局导航栏：品牌 + 导航 Tab + 发光标题 + 本舱控件 + 时间
-          （原「驾驶舱工具条」独立一行已取消：调度中心属导航、全屏属显示控制、紧急停止为全局动作，
-            三者归顶栏；现场音视频控制归入右侧「视频信息」卡头，与它控制的画面同域） */}
+          （调度中心属导航、全屏属显示控制、紧急停止为全局动作，三者归顶栏） */}
       <ScreenTopBar
         current="screen"
         onSwitch={onSwitch}
         extra={
           <>
-            <Btn onClick={() => go("dispatch", robot?.id)}>调度中心</Btn>
+            <Btn onClick={() => go("dispatch", robot?.id)}>
+              <Route size={13} />
+              调度中心
+            </Btn>
             <button
               className="cs-nav-icon"
               title="驾驶舱独占整屏展示"
@@ -257,14 +275,14 @@ export function DispatchCockpit({
             </button>
             <Can perm={PERMS.紧急停止}>
               <button className="screen-estop" onClick={() => ES(true)}>
+                <TriangleAlert size={13} />
                 紧急停止
               </button>
             </Can>
           </>
         }
       />
-      {/* 指挥 KPI 数字条：与管理驾驶舱完全同款（8 格），均为当前待处置量 */}
-      {/* KPI 数字条：只读展示，不做下钻跳转 */}
+      {/* 指挥 KPI 数字条：8 格待处置量，只读展示，不下钻跳转 */}
       <div className="cs-kpi-strip">
         {strip.map((x) => (
           <div key={x.label} className="cs-kpi">
@@ -275,28 +293,27 @@ export function DispatchCockpit({
       </div>
       {fsError && <Note>{fsError}</Note>}
 
-      <div className="cs-body ds-body">
-        {/* 左：设备状态 + 数据采集 + 巡检明细 */}
-        <aside className="cs-left">
-          {/* grow：撑满列高，与中/右两栏底边对齐 */}
-          <section className="cs-card grow">
-            <h3>
-              设备状态
-              <small>在线 {mv("onlineCount")}/{mv("devices")}</small>
-              {/* 全选：一次选中当前筛选的全部机器（地图全部高亮；操控仍需点选单台） */}
-              <span className="cs-range">
-                <button
-                  className={allSel ? "active" : ""}
-                  title="一次选中当前筛选的全部机器"
-                  onClick={() => {
-                    SETALL(!allSel);
-                    SEL(undefined);
-                  }}
-                >
-                  {allSel ? "取消全选" : "全选"}
-                </button>
-              </span>
-            </h3>
+      <div className="ds-grid">
+        {/* ══ 左栏（300px）：设备与状态收纳 ══ */}
+        <aside className="ds-col ds-col-l">
+          {/* 设备状态 + 当前设备：合并为一张卡片并撑满左栏（「历史与实时数据」块已按需求移除） */}
+          <section className="ds-card ds-fleet grow">
+            <header className="ds-head">
+              <h3>设备状态</h3>
+              <small>
+                在线 {mv("onlineCount")}/{mv("devices")}
+              </small>
+              <button
+                className={"ds-chip" + (allSel ? " active" : "")}
+                title="一次选中当前筛选的全部机器"
+                onClick={() => {
+                  SETALL(!allSel);
+                  SEL(undefined);
+                }}
+              >
+                {allSel ? "取消全选" : "全选"}
+              </button>
+            </header>
             <div className="ds-selects">
               <select aria-label="厂区" value={region} onChange={(e) => SETR(e.target.value)}>
                 {["全部区域", ...new Set(s.robots.map((r) => r.region))].map((x) => (
@@ -314,172 +331,168 @@ export function DispatchCockpit({
                 ))}
               </select>
             </div>
-            <div className="cs-list">
+            <div className="ds-fleet-list">
               {robots.map((r) => (
                 <button
                   key={r.id}
-                  className={allSel || r.id === selected ? "active" : ""}
+                  className={"ds-fleet-row" + (allSel || r.id === selected ? " active" : "")}
                   title="点击选中该机器后可执行导航 / 任务 / 云台操作；再次点击取消选择"
                   onClick={() => {
                     SETALL(false);
                     SEL(r.id === selected ? undefined : r.id);
+                    DEVO(true);
                   }}
                 >
+                  {/* 状态灯色值取自状态机配色，外发光与圆点同色 */}
                   <i
-                    className="cs-dot"
-                    style={{ background: robotColors[r.state] }}
+                    className="ds-led"
+                    style={{
+                      background: robotColors[r.state],
+                      boxShadow: `0 0 8px ${robotColors[r.state]}`,
+                    }}
                   />
-                  <div>
+                  <div className="ds-fleet-main">
                     <b>
                       {r.id}
                       <em>{r.deviceType}</em>
+                      <em className="ds-st">{r.state}</em>
                     </b>
-                    <small>{r.state}</small>
+                    <span className="ds-progress">
+                      <i style={{ width: `${r.battery}%` }} />
+                    </span>
                   </div>
-                  <span className="cs-bar">
-                    <i style={{ width: `${r.battery}%` }} />
-                  </span>
-                  <em className="cs-battery">{r.battery}%</em>
+                  <em className="ds-battery">{r.battery}%</em>
                 </button>
               ))}
               {!robots.length && <Note>当前筛选条件下无设备。</Note>}
             </div>
-          </section>
-
-          <section className="cs-card">
-            <h3>
-              当前设备
-              <small>{robot ? robot.id : "未选择"}</small>
-            </h3>
-            <div className="cs-kv">
-              <span>
-                机型<b>{robot?.deviceType || "—"}</b>
-              </span>
-              <span>
-                区域<b>{robot?.region || "—"}</b>
-              </span>
-              <span>
-                电量<b>{robot ? `${robot.battery}%` : "—"}</b>
-              </span>
-              <span>
-                通信
-                <b>{robot ? (robot.state === "离线" ? "离线" : "在线") : "—"}</b>
-              </span>
-              <span>
-                巡检进度<b>{robot ? stageOf(task) : "—"}</b>
-              </span>
-              <span>
-                接管会话<b>{robot ? (session ? session.id : "未接管") : "—"}</b>
-              </span>
-            </div>
-            {/* 操控入口：未选中机器时一律不可用；接管就地开抽屉，不跳「人工操作与遥控」页 */}
-            <div className="actions">
-              <Can perm={PERMS.远程接管}>
-                <Btn
-                  primary
-                  disabled={!robot}
-                  onClick={() => TAKEOVER(true)}
-                >
-                  {session ? "接管会话" : "申请接管"}
-                </Btn>
-              </Can>
-              <Can perm={PERMS.一键返航充电}>
-                <Btn disabled={!robot} onClick={() => HOME(true)}>一键返航</Btn>
-                {robot?.state === "返航中" && <Btn onClick={() => act({ type: "RETURN_ARRIVED", robotId: robot.id })}>模拟到位回报</Btn>}
-              </Can>
-            </div>
-            {/* 声光 / 语音不在本卡：统一放在中栏底部控制带的第 4 块「声光 · 语音」，避免同一能力两处入口 */}
-            <small className="cs-hint">
-              {robot
-                ? session
-                  ? `会话已生效，可下发导航 / 云台 / 镜头 / 声光语音指令 · 关机重点：${deviceProfile[robot.deviceType].focusItems.join(" / ")}`
-                  : `点「申请接管」就地建立会话后，导航 / 云台 / 镜头 / 声光语音才可用 · 关机重点：${deviceProfile[robot.deviceType].focusItems.join(" / ")}`
-                : pickHint}
-            </small>
-          </section>
-
-          <section className="cs-card">
-            <h3>
-              采集数据流
-              <small>{wave.length} 个观测点</small>
-            </h3>
-            {wave.length >= 2 ? (
-              <Sparkline list={wave} ok />
-            ) : (
-              <small className="cs-hint">
-                观测点不足 2 个，不绘制波形（不插值补造）
-              </small>
-            )}
-            <small className="cs-hint">
-              来自巡检结果的实际读数序列，非信号仿真。
-            </small>
-          </section>
-
-          <section className="cs-card">
-            <h3>
-              巡检明细
-              <small>
-                {activeId ? `${activeId} · 自动播放` : "全部机器 · 自动播放"}
-              </small>
-            </h3>
-            {/* 自动上下滚动播放：纯展示，不提供点击与手动上下拉动 */}
-            <AutoScrollList listClass="cs-work-list readonly">
-              {!detailResults.length && <Note>暂无巡检结果。</Note>}
-              {detailResults.map((r) => (
-                <button key={r.id}>
-                  <div>
-                    <b>{pointName(r.pointId)}</b>
-                    <small>
-                      {r.item} · {r.time}
-                    </small>
+            {/* 当前设备：与设备列表同属一张卡、可就地折叠的 Accordion（不再拆成第二个独立卡片） */}
+            <div className={"ds-dev" + (devOpen && robot ? " open" : "")}>
+              <button
+                className="ds-dev-head"
+                onClick={() => DEVO((v) => !v)}
+                disabled={!robot}
+                aria-expanded={devOpen && !!robot}
+              >
+                <h4>当前设备</h4>
+                <small>{robot ? robot.id : "未选择"}</small>
+                <ChevronDown size={14} className="ds-chev" />
+              </button>
+              {devOpen && robot ? (
+                <div className="ds-dev-body">
+                  <div className="cs-kv">
+                    <span>
+                      机型<b>{robot.deviceType}</b>
+                    </span>
+                    <span>
+                      区域<b>{robot.region}</b>
+                    </span>
+                    <span>
+                      电量<b>{robot.battery}%</b>
+                    </span>
+                    <span>
+                      通信<b>{robot.state === "离线" ? "离线" : "在线"}</b>
+                    </span>
+                    <span>
+                      巡检进度<b>{stageOf(task)}</b>
+                    </span>
+                    <span>
+                      接管会话<b>{session ? session.id : "未接管"}</b>
+                    </span>
                   </div>
-                  <em>
-                    {r.final} {r.unit}
-                  </em>
-                  <Badge>{r.status}</Badge>
-                </button>
-              ))}
-            </AutoScrollList>
+                  <div className="ds-actions">
+                    <Can perm={PERMS.远程接管}>
+                      <Btn primary disabled={!robot} onClick={() => TAKEOVER(true)}>
+                        {session ? "接管会话" : "申请接管"}
+                      </Btn>
+                    </Can>
+                    <Can perm={PERMS.一键返航充电}>
+                      <Btn disabled={!robot} onClick={() => HOME(true)}>
+                        一键返航
+                      </Btn>
+                      {robot.state === "返航中" && (
+                        <Btn onClick={() => act({ type: "RETURN_ARRIVED", robotId: robot.id })}>
+                          模拟到位回报
+                        </Btn>
+                      )}
+                    </Can>
+                  </div>
+                  <small className="ds-hint">
+                    {session
+                      ? `会话已生效 · 关机重点：${deviceProfile[robot.deviceType].focusItems.join(" / ")}`
+                      : `接管后导航 / 云台 / 声光语音才可用 · 关机重点：${deviceProfile[robot.deviceType].focusItems.join(" / ")}`}
+                  </small>
+                </div>
+              ) : (
+                <small className="ds-hint">{robot ? "已收起详情" : pickHint}</small>
+              )}
+            </div>
           </section>
+
         </aside>
 
-        {/* 中：地图 + 双导航控制盘 */}
-        <main className="cs-center">
-          <section className="cs-card cs-map-card grow">
-            <h3>
-              机器人位置
-              <small>
-                {robot
-                  ? `${robot.id} · 坐标 (${robot.x}, ${robot.y})`
-                  : allSel
-                    ? `已全选 ${robots.length} 台 · 点选单台查看坐标`
-                    : "未选择设备 · 点选左侧列表或地图上的机器"}
-              </small>
-            </h3>
-            <div className="ds-layers">
-              {(
-                [
-                  ["points", "点位图层"],
-                  ["chargers", "充电桩"],
-                  ["rails", "轨道区段"],
-                ] as const
-              ).map(([k, n]) => (
-                <button
-                  key={k}
-                  className={layers[k] ? "active" : ""}
-                  onClick={() => LAY({ ...layers, [k]: !layers[k] })}
-                >
-                  {n}
+        {/* ══ 中栏（flex-1）：地图最大化 + 悬浮操作台 ══ */}
+        <main className="ds-col ds-col-c">
+          <div className="ds-stage">
+            {/* 图层与图例：左上角，不占地图版面 */}
+            <div className="ds-overlay ds-overlay-tl">
+              <div className="ds-layers">
+                {(
+                  [
+                    ["points", "点位"],
+                    ["chargers", "充电桩"],
+                    ["rails", "轨道"],
+                  ] as const
+                ).map(([k, n]) => (
+                  <button
+                    key={k}
+                    className={layers[k] ? "active" : ""}
+                    onClick={() => LAY({ ...layers, [k]: !layers[k] })}
+                  >
+                    {n}
+                  </button>
+                ))}
+                <button title="BIM / 室内楼层待数据源接入" onClick={() => undefined}>
+                  BIM
                 </button>
-              ))}
-              <button
-                title="BIM / 室内楼层待数据源接入"
-                onClick={() => undefined}
-              >
-                BIM 视图
-              </button>
+              </div>
+              <div className="ds-legend">
+                {deviceTypes.map((d) => (
+                  <span key={d}>
+                    <i /> {d}
+                  </span>
+                ))}
+                <span>
+                  <i /> 充电桩
+                </span>
+                <span>
+                  <i /> 轨道区段
+                </span>
+              </div>
             </div>
-            <div className="cs-map">
+
+            {/* 缩放控件：右下角 */}
+            <div className="ds-zoom">
+              <button
+                title="放大"
+                onClick={() => ZOOM((z) => Math.min(2.4, +(z + 0.2).toFixed(2)))}
+              >
+                <ZoomIn size={14} />
+              </button>
+              <button
+                title="缩小"
+                onClick={() => ZOOM((z) => Math.max(0.6, +(z - 0.2).toFixed(2)))}
+              >
+                <ZoomOut size={14} />
+              </button>
+              <button title="复位缩放" onClick={() => ZOOM(1)}>
+                <RotateCcw size={13} />
+              </button>
+              <span>{Math.round(zoom * 100)}%</span>
+            </div>
+
+            {/* 地图本体：图形层按缩放倍率变换，点击选机器仍然生效 */}
+            <div className="ds-stage-map" style={{ transform: `scale(${zoom})` }}>
               <MapCanvas
                 points={layers.points ? sc.points : []}
                 robots={robots}
@@ -491,358 +504,373 @@ export function DispatchCockpit({
                 onRobot={(rid) => {
                   SETALL(false);
                   SEL(rid === selected ? undefined : rid);
+                  DEVO(true);
                 }}
               />
             </div>
-            <div className="cs-map-legend">
-              {deviceTypes.map((d) => (
-                <span key={d}>
-                  <i /> {d}
-                </span>
-              ))}
-              <span>
-                <i /> 充电桩
-              </span>
-              <span>
-                <i /> 轨道区段
-              </span>
-            </div>
-          </section>
 
-          <div className="ds-pads">
-            <section className="cs-card">
-              <h3>
-                机器人导航
-                <small>手动</small>
-              </h3>
-              <ControlPad
-                onCommand={sendMove}
-                disabled={!session || !robot || robot.state === "离线"}
-                speed={speed}
-                onSpeed={SPEED}
-                hint={
-                  session
-                    ? `会话 ${session.id} · 已接管，指令即时生效`
-                    : robot
-                      ? "点「申请接管」就地建立会话后，此处才可操控"
-                      : pickHint
-                }
-              />
-            </section>
+            {/* 悬浮操作台（半透明毛玻璃）：导航 / 任务 / 云台 / 声光语音，点开就地展开，不常驻占地图高度 */}
+            <div className="ds-fab">
+              {pad && (
+                <div className="ds-fab-panel">
+                  <header className="ds-fab-head">
+                    <b>
+                      {pad === "nav"
+                        ? "机器人导航"
+                        : pad === "task"
+                          ? "任务导航"
+                          : pad === "cam"
+                            ? "云台 · 镜头"
+                            : "声光 · 语音"}
+                    </b>
+                    <small>
+                      {pad === "task"
+                        ? robot
+                          ? task
+                            ? task.id
+                            : "无执行中任务"
+                          : "未选择设备"
+                        : robot
+                          ? session
+                            ? session.id
+                            : "需先接管"
+                          : "未选择设备"}
+                    </small>
+                    <button className="ds-fab-close" onClick={() => PAD(null)} title="收起">
+                      <ChevronDown size={13} />
+                    </button>
+                  </header>
 
-            <section className="cs-card">
-              <h3>
-                任务导航
-                <small>
-                  {robot ? (task ? task.id : "无执行中任务") : "未选择设备"}
-                </small>
-              </h3>
-              <div className="cs-kv">
-                <span>
-                  当前任务<b>{task?.name || "—"}</b>
-                </span>
-                <span>
-                  当前点位
-                  <b>
-                    {task?.items[Math.min(task.index, task.items.length - 1)]?.name ||
-                      "—"}
-                  </b>
-                </span>
-                <span>
-                  待执行队列<b>{robot ? `${queue.length} 项` : "—"}</b>
-                </span>
-                <span>
-                  机型约束
-                  <b>
-                    {robot
-                      ? deviceProfile[robot.deviceType].taskConstraints.join(" / ")
-                      : "—"}
-                  </b>
-                </span>
-              </div>
-              {/* 任务操作：仅选中机器且存在执行中 / 暂停任务时可用 */}
-              {task && ["执行中", "暂停"].includes(task.state) && (
-                <div className="actions">
-                  <Can perm={PERMS.调度下发}>
-                    <Btn
-                      primary
-                      onClick={() =>
-                        task.state === "执行中"
-                          ? act({ type: "PAUSE", id: task.id })
-                          : act({ type: "START", id: task.id })
+                  {pad === "nav" && (
+                    <ControlPad
+                      onCommand={sendMove}
+                      disabled={!session || !robot || robot.state === "离线"}
+                      speed={speed}
+                      onSpeed={SPEED}
+                      hint={
+                        session
+                          ? `会话 ${session.id} · 已接管，指令即时生效`
+                          : robot
+                            ? "点「申请接管」就地建立会话后，此处才可操控"
+                            : pickHint
                       }
-                    >
-                      {task.state === "执行中" ? "暂停任务" : "继续任务"}
-                    </Btn>
-                  </Can>
+                    />
+                  )}
+
+                  {pad === "task" && (
+                    <>
+                      <div className="ds-fab-kv">
+                        <span>
+                          当前任务<b>{task?.name || "—"}</b>
+                        </span>
+                        <span>
+                          当前点位
+                          <b>
+                            {task?.items[Math.min(task.index, task.items.length - 1)]?.name || "—"}
+                          </b>
+                        </span>
+                        <span>
+                          待执行队列<b>{robot ? `${queue.length} 项` : "—"}</b>
+                        </span>
+                        <span>
+                          机型约束
+                          <b>{robot ? deviceProfile[robot.deviceType].taskConstraints.join(" / ") : "—"}</b>
+                        </span>
+                      </div>
+                      {task && ["执行中", "暂停"].includes(task.state) && (
+                        <div className="ds-cam">
+                          <Can perm={PERMS.调度下发}>
+                            <Btn
+                              primary
+                              onClick={() =>
+                                task.state === "执行中"
+                                  ? act({ type: "PAUSE", id: task.id })
+                                  : act({ type: "START", id: task.id })
+                              }
+                            >
+                              {task.state === "执行中" ? "暂停任务" : "继续任务"}
+                            </Btn>
+                          </Can>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {pad === "cam" && (
+                    <>
+                      <div className="ds-cam">
+                        <Btn disabled={!session || !robot} onClick={() => sendCmd("云台左转")}>
+                          云台左
+                        </Btn>
+                        <Btn disabled={!session || !robot} onClick={() => sendCmd("云台右转")}>
+                          云台右
+                        </Btn>
+                        <Btn disabled={!session || !robot} onClick={() => sendCmd("云台抬头")}>
+                          抬头
+                        </Btn>
+                        <Can perm={PERMS.远程接管}>
+                          <Btn
+                            primary
+                            disabled={!session || !robot}
+                            onClick={() => sendCmd("采集照片")}
+                          >
+                            采集照片
+                          </Btn>
+                        </Can>
+                      </div>
+                      <div className="ds-lens">
+                        <span className="ds-lens-readout">
+                          倍率 <b>{field.zoom}×</b> · {field.focusMode}聚焦 {field.focus} · 补光
+                          {field.light ? "开" : "关"}
+                        </span>
+                        <div className="ds-cam">
+                          <Btn
+                            disabled={!fieldOn("zoom") || field.zoom <= 1}
+                            onClick={() => sendField("zoom", field.zoom - 1)}
+                          >
+                            变倍 −
+                          </Btn>
+                          <Btn
+                            disabled={!fieldOn("zoom") || field.zoom >= 20}
+                            onClick={() => sendField("zoom", field.zoom + 1)}
+                          >
+                            变倍 ＋
+                          </Btn>
+                          <Btn
+                            disabled={!fieldOn("focusMode")}
+                            onClick={() =>
+                              sendField("focusMode", field.focusMode === "自动" ? "手动" : "自动")
+                            }
+                          >
+                            {field.focusMode === "自动" ? "手动聚焦" : "自动聚焦"}
+                          </Btn>
+                          <Btn
+                            disabled={!fieldOn("focus") || field.focusMode !== "手动"}
+                            onClick={() => sendField("focus", field.focus - 5)}
+                          >
+                            近焦
+                          </Btn>
+                          <Btn
+                            disabled={!fieldOn("focus") || field.focusMode !== "手动"}
+                            onClick={() => sendField("focus", field.focus + 5)}
+                          >
+                            远焦
+                          </Btn>
+                          <Btn disabled={!fieldOn("light")} onClick={() => sendField("light", !field.light)}>
+                            补光{field.light ? "关" : "开"}
+                          </Btn>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {pad === "av" && (
+                    <>
+                      <div className="ds-cam">
+                        <Btn disabled={!fieldOn("sound")} onClick={() => sendField("sound", !field.sound)}>
+                          警笛{field.sound ? "关" : "开"}
+                        </Btn>
+                        <Btn disabled={!fieldOn("beacon")} onClick={() => sendField("beacon", !field.beacon)}>
+                          警灯{field.beacon ? "关" : "开"}
+                        </Btn>
+                        <Btn disabled={!fieldOn("listen")} onClick={() => sendField("listen", !field.listening)}>
+                          {field.listening ? "关闭拾音" : "连接拾音"}
+                        </Btn>
+                        <Btn
+                          disabled={!fieldOn("talk")}
+                          onPointerDown={talkDown}
+                          onPointerUp={talkUp}
+                          onPointerCancel={talkUp}
+                          onBlur={talkUp}
+                        >
+                          按住讲话
+                        </Btn>
+                      </div>
+                      <div className="ds-cam">
+                        <select
+                          className="ds-fab-select"
+                          aria-label="预录播报内容"
+                          value={clip}
+                          onChange={(e) => C(e.target.value)}
+                          disabled={!fieldOn("broadcast")}
+                        >
+                          {PRESETS.map((c) => (
+                            <option key={c}>{c}</option>
+                          ))}
+                        </select>
+                        <Btn disabled={!fieldOn("broadcast")} onClick={() => sendField("broadcast", clip)}>
+                          播放预录
+                        </Btn>
+                        <Btn onClick={() => sendField("stop")}>停止输出</Btn>
+                      </div>
+                      <small className="ds-hint">
+                        对讲与播报互斥；{field.broadcast ? `正在播报：${field.broadcast}` : "当前无播报"}
+                        ，告警不会自动启动声光。
+                      </small>
+                    </>
+                  )}
                 </div>
               )}
-              <small className="cs-hint">
-                {robot
-                  ? "自动巡航由任务引擎按点位顺序执行；手动导航仅用于特殊情况接管。"
-                  : pickHint}
-              </small>
-            </section>
 
-            <section className="cs-card">
-              <h3>
-                云台控制
-                <small>相机</small>
-              </h3>
-              <div className="ds-cam">
-                <Btn
-                  disabled={!session || !robot}
-                  onClick={() => sendCmd("云台左转")}
-                >
-                  云台左
-                </Btn>
-                <Btn
-                  disabled={!session || !robot}
-                  onClick={() => sendCmd("云台右转")}
-                >
-                  云台右
-                </Btn>
-                <Btn
-                  disabled={!session || !robot}
-                  onClick={() => sendCmd("云台抬头")}
-                >
-                  抬头
-                </Btn>
-                <Can perm={PERMS.远程接管}>
-                  <Btn
-                    primary
-                    disabled={!session || !robot}
-                    onClick={() => sendCmd("采集照片")}
-                  >
-                    采集照片
-                  </Btn>
-                </Can>
-              </div>
-              {/* 镜头调控：变倍 / 聚焦 / 补光。与「现场控制」弹窗同源（都走 FIELD_COMMAND），
-                  故可用性口径一致：需已接管 + 该机型支持 + 在线 */}
-              <div className="ds-lens">
-                <span className="ds-lens-readout">
-                  倍率 <b>{field.zoom}×</b> · {field.focusMode}聚焦 {field.focus} ·
-                  补光{field.light ? "开" : "关"}
+              <div className="ds-fab-bar">
+                <button className={pad === "nav" ? "active" : ""} onClick={() => PAD(pad === "nav" ? null : "nav")}>
+                  <Compass size={13} />
+                  导航
+                </button>
+                <button className={pad === "task" ? "active" : ""} onClick={() => PAD(pad === "task" ? null : "task")}>
+                  <ListChecks size={13} />
+                  任务
+                </button>
+                <button className={pad === "cam" ? "active" : ""} onClick={() => PAD(pad === "cam" ? null : "cam")}>
+                  <Camera size={13} />
+                  云台
+                </button>
+                <button className={pad === "av" ? "active" : ""} onClick={() => PAD(pad === "av" ? null : "av")}>
+                  <Volume2 size={13} />
+                  声光语音
+                </button>
+                <span className="ds-fab-info">
+                  {robot
+                    ? `${robot.id} · ${robot.state} · 电量 ${robot.battery}%${
+                        task ? ` · ${task.name}` : ""
+                      }`
+                    : pickHint}
                 </span>
-                <div className="ds-cam">
-                  <Btn
-                    disabled={!fieldOn("zoom") || field.zoom <= 1}
-                    onClick={() => sendField("zoom", field.zoom - 1)}
-                  >
-                    变倍 −
-                  </Btn>
-                  <Btn
-                    disabled={!fieldOn("zoom") || field.zoom >= 20}
-                    onClick={() => sendField("zoom", field.zoom + 1)}
-                  >
-                    变倍 ＋
-                  </Btn>
-                  <Btn
-                    disabled={!fieldOn("focusMode")}
-                    onClick={() =>
-                      sendField(
-                        "focusMode",
-                        field.focusMode === "自动" ? "手动" : "自动",
-                      )
-                    }
-                  >
-                    {field.focusMode === "自动" ? "手动聚焦" : "自动聚焦"}
-                  </Btn>
-                  <Btn
-                    disabled={!fieldOn("focus") || field.focusMode !== "手动"}
-                    onClick={() => sendField("focus", field.focus - 5)}
-                  >
-                    近焦
-                  </Btn>
-                  <Btn
-                    disabled={!fieldOn("focus") || field.focusMode !== "手动"}
-                    onClick={() => sendField("focus", field.focus + 5)}
-                  >
-                    远焦
-                  </Btn>
-                  <Btn
-                    disabled={!fieldOn("light")}
-                    onClick={() => sendField("light", !field.light)}
-                  >
-                    补光{field.light ? "关" : "开"}
-                  </Btn>
-                </div>
               </div>
-              <small className="cs-hint">
-                {robot
-                  ? "接管后可调整云台与镜头并抓拍留档；声光与对讲在右侧「声光 · 语音」卡。"
-                  : pickHint}
-              </small>
-            </section>
-
-            {/* 第 4 块：声光 / 对讲 / 播报——现场操作类集中在这一条控制带，不再开弹窗 */}
-            <section className="cs-card">
-              <h3>
-                声光 · 语音
-                <small>
-                  {robot ? (session ? "接管中" : "需先接管") : "未选择设备"}
-                </small>
-              </h3>
-              <div className="ds-cam">
-                <Btn
-                  disabled={!fieldOn("sound")}
-                  onClick={() => sendField("sound", !field.sound)}
-                >
-                  警笛{field.sound ? "关" : "开"}
-                </Btn>
-                <Btn
-                  disabled={!fieldOn("beacon")}
-                  onClick={() => sendField("beacon", !field.beacon)}
-                >
-                  警灯{field.beacon ? "关" : "开"}
-                </Btn>
-                <Btn
-                  disabled={!fieldOn("listen")}
-                  onClick={() => sendField("listen", !field.listening)}
-                >
-                  {field.listening ? "关闭拾音" : "连接拾音"}
-                </Btn>
-                <Btn
-                  disabled={!fieldOn("talk")}
-                  onPointerDown={talkDown}
-                  onPointerUp={talkUp}
-                  onPointerCancel={talkUp}
-                  onBlur={talkUp}
-                >
-                  按住讲话
-                </Btn>
-              </div>
-              <select
-                aria-label="预录播报内容"
-                value={clip}
-                onChange={(e) => C(e.target.value)}
-                disabled={!fieldOn("broadcast")}
-              >
-                {PRESETS.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-              <div className="ds-cam">
-                <Btn
-                  disabled={!fieldOn("broadcast")}
-                  onClick={() => sendField("broadcast", clip)}
-                >
-                  播放预录
-                </Btn>
-                <Btn onClick={() => sendField("stop")}>停止输出</Btn>
-              </div>
-              <small className="cs-hint">
-                {robot
-                  ? `对讲与播报互斥；${field.broadcast ? `正在播报：${field.broadcast}` : "当前无播报"}，告警不会自动启动声光。`
-                  : pickHint}
-              </small>
-            </section>
+            </div>
           </div>
         </main>
 
-        {/* 右：告警与 SLA + 视频信息 */}
-        <aside className="cs-right">
-          <section className="cs-card grow">
-            <h3>
-              告警 · 去重合并
-              <small>
-                分级抑制 · {activeId ? `${activeId} · ` : "全部机器 · "}
-                {alarmGroups.length} 组 · 自动播放
-              </small>
-              {/* 唯一入口按钮：进入告警事件页；列表本身不逐条加按钮 */}
-              <span className="cs-range">
-                <button onClick={() => go("alarms")}>告警事件 ›</button>
-              </span>
-            </h3>
-            {/* 自动上下滚动播放：纯展示，不提供点击与手动上下拉动 */}
-            <AutoScrollList listClass="cs-work-list readonly">
-              {!alarmGroups.length && <Note>当前无未关闭告警。</Note>}
-              {alarmGroups.map((g) => (
-                <button key={g.key}>
-                  <i
-                    className={
-                      "severity " + (g.head.level === "重要" ? "red" : "amber")
-                    }
-                  />
-                  <div>
-                    <b>{g.head.name}</b>
-                    <small>
-                      {g.head.pointId
-                        ? g.head.pointId
-                        : `${g.head.category}${g.head.robotId ? " " + g.head.robotId : ""}`}{" "}
-                      · {g.head.state}
-                      {g.items.length > 1 ? ` · 合并 ${g.items.length} 条` : ""}
-                      {g.suppressed ? " · 已抑制（同锚点存在更高级别）" : ""}
-                    </small>
-                  </div>
-                  <Badge>{g.head.level}</Badge>
-                </button>
-              ))}
-            </AutoScrollList>
-          </section>
+        {/* ══ 右栏（350px）：告警 · 视频 · 日志 三 Tab 枢纽 ══ */}
+        <aside className="ds-col ds-col-r">
+          <section className="ds-card ds-hub grow">
+            <div className="ds-hub-tabs">
+              <button
+                className={"ds-hub-tab t-alarm" + (hub === "alarm" ? " active" : "")}
+                onClick={() => HUB("alarm")}
+              >
+                <BellRing size={13} />
+                告警与SLA
+                <b>{alarmGroups.length}</b>
+              </button>
+              <button
+                className={"ds-hub-tab t-video" + (hub === "video" ? " active" : "")}
+                onClick={() => HUB("video")}
+              >
+                <VideoIcon size={13} />
+                视频信息
+              </button>
+            </div>
 
-          <section className="cs-card">
-            <h3>
-              SLA 倒计时
-              {/* 不受机器选择影响：恒为全部未闭环工单 */}
-              <small>{openWos.length} 单未闭环 · 自动播放</small>
-            </h3>
-            {/* 自动上下滚动播放：纯展示，不提供点击与手动上下拉动 */}
-            <AutoScrollList listClass="cs-work-list readonly">
-              {!openWos.length && <Note>当前无未闭环工单。</Note>}
-              {openWos.map((w) => (
-                <button key={w.id}>
-                  <i
-                    className={
-                      "severity " +
-                      (w.slaState === "已升级"
-                        ? "red"
-                        : w.slaState === "预警"
-                          ? "amber"
-                          : "teal")
-                    }
-                  />
-                  <div>
-                    <b>{w.title}</b>
+            {hub === "alarm" && (
+              <div className="ds-hub-body">
+                <section className="ds-sub">
+                  <header>
+                    <h4>告警 · 去重合并</h4>
                     <small>
-                      {w.level}级 · {w.assignee || "待派单"} ·{" "}
-                      {w.slaLeft > 0
-                        ? `剩余 ${w.slaLeft} 分钟`
-                        : `已超时 ${-w.slaLeft} 分钟`}
-                      {w.slaState !== "正常" ? ` · ${w.slaState}` : ""}
+                      分级抑制 · {activeId ? `${activeId} · ` : "全部机器 · "}
+                      {alarmGroups.length} 组
                     </small>
-                  </div>
-                  <Badge>{w.state}</Badge>
-                </button>
-              ))}
-            </AutoScrollList>
-          </section>
+                    <button className="ds-chip" onClick={() => go("alarms")}>
+                      告警事件 ›
+                    </button>
+                  </header>
+                  <AutoScrollList listClass="cs-work-list readonly">
+                    {!alarmGroups.length && <Note>当前无未关闭告警。</Note>}
+                    {alarmGroups.map((g) => (
+                      <button key={g.key}>
+                        <i className={"severity " + (g.head.level === "重要" ? "red" : "amber")} />
+                        <div>
+                          <b>{g.head.name}</b>
+                          <small>
+                            {g.head.pointId
+                              ? g.head.pointId
+                              : `${g.head.category}${g.head.robotId ? " " + g.head.robotId : ""}`}{" "}
+                            · {g.head.state}
+                            {g.items.length > 1 ? ` · 合并 ${g.items.length} 条` : ""}
+                            {g.suppressed ? " · 已抑制" : ""}
+                          </small>
+                        </div>
+                        <Badge>{g.head.level}</Badge>
+                      </button>
+                    ))}
+                  </AutoScrollList>
+                </section>
 
-          <section className="cs-card">
-            <h3>
-              视频信息
-              {robot && <small>{robot.id} 实时画面</small>}
-              {/* 对讲 / 声光 / 播报已全部内联到底部控制带（第 4 块「声光 · 语音」），此处不再放入口 */}
-            </h3>
-            {/* 仅在选中单台机器时展示该机器画面；未选中 / 全选时用空白占位（保持卡片布局稳定） */}
-            {robot ? (
-              <div className="cs-video-dual">
-                <Video live label="可见光主画面" robotId={robot.id} />
-                <Video live label="红外热像" robotId={robot.id} />
-              </div>
-            ) : (
-              <div className="cs-video-dual">
-                {["可见光主画面", "红外热像"].map((label) => (
-                  <div className="video-placeholder" key={label}>
-                    <CameraOff size={28} />
-                    <b>{label}</b>
-                    <small>未选择设备</small>
-                  </div>
-                ))}
+                <section className="ds-sub">
+                  <header>
+                    <h4>SLA 倒计时</h4>
+                    <small>{openWos.length} 单未闭环</small>
+                  </header>
+                  <AutoScrollList listClass="cs-work-list readonly">
+                    {!openWos.length && <Note>当前无未闭环工单。</Note>}
+                    {openWos.map((w) => (
+                      <button key={w.id}>
+                        <i
+                          className={
+                            "severity " +
+                            (w.slaState === "已升级" ? "red" : w.slaState === "预警" ? "amber" : "teal")
+                          }
+                        />
+                        <div>
+                          <b>{w.title}</b>
+                          <small>
+                            {w.level}级 · {w.assignee || "待派单"} ·{" "}
+                            {w.slaLeft > 0 ? `剩余 ${w.slaLeft} 分钟` : `已超时 ${-w.slaLeft} 分钟`}
+                            {w.slaState !== "正常" ? ` · ${w.slaState}` : ""}
+                          </small>
+                        </div>
+                        <Badge>{w.state}</Badge>
+                      </button>
+                    ))}
+                  </AutoScrollList>
+                </section>
               </div>
             )}
-            {!robot && <small className="cs-hint">{pickHint}</small>}
+
+            {hub === "video" && (
+              <div className="ds-hub-body ds-video-body">
+                {robot ? (
+                  <>
+                    <div className="cs-video-dual">
+                      <Video live label="可见光主画面" robotId={robot.id} />
+                      <Video live label="红外热像" robotId={robot.id} />
+                    </div>
+                    <div className="ds-fab-kv">
+                      <span>
+                        设备<b>{robot.id}</b>
+                      </span>
+                      <span>
+                        机型<b>{robot.deviceType}</b>
+                      </span>
+                      <span>
+                        区域<b>{robot.region}</b>
+                      </span>
+                      <span>
+                        通信<b>{robot.state === "离线" ? "离线" : "在线"}</b>
+                      </span>
+                    </div>
+                    <small className="ds-hint">
+                      对讲 / 声光 / 播报在中央地图底部的悬浮操作台「声光语音」组，与画面同域操作。
+                    </small>
+                  </>
+                ) : (
+                  <>
+                    <div className="cs-video-dual">
+                      {["可见光主画面", "红外热像"].map((label) => (
+                        <div className="video-placeholder" key={label}>
+                          <CameraOff size={28} />
+                          <b>{label}</b>
+                          <small>未选择设备</small>
+                        </div>
+                      ))}
+                    </div>
+                    <small className="ds-hint">{pickHint}</small>
+                  </>
+                )}
+              </div>
+            )}
+
           </section>
         </aside>
       </div>
@@ -895,7 +923,6 @@ export function DispatchCockpit({
           </Btn>
         </Modal>
       )}
-
     </div>
   );
 }

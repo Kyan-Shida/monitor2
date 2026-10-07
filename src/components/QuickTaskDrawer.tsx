@@ -13,7 +13,8 @@ import {
   type AtomicAction,
 } from "../data/types";
 import { actionsOfPoint } from "../data/deviceMaster";
-import { Modal, Field, Btn, Badge } from "./UI";
+import { targetsOf } from "../data/mapCalibration";
+import { Modal, Field, Btn, Badge, Note } from "./UI";
 import { Pager } from "./Business";
 
 export function QuickTaskDrawer({
@@ -81,7 +82,8 @@ export function QuickTaskDrawer({
               ))}
             </select>
           </Field>
-          <Field label="执行机器人">
+          {/* DSP-01：临时任务默认不预选机器人 → 进入待调度，由调度中心按空闲度人工分配 */}
+          <Field label="执行机器人（可选 · 默认稍后调度）">
             <select
               value={rid}
               onChange={(e) => {
@@ -90,7 +92,7 @@ export function QuickTaskDrawer({
                 P([]);
               }}
             >
-              <option value="">稍后调度</option>
+              <option value="">稍后调度（推荐 · 由调度中心分配）</option>
               {s.robots.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.id} · {r.name} · {r.state}
@@ -99,6 +101,10 @@ export function QuickTaskDrawer({
             </select>
           </Field>
         </div>
+        <Note>
+          临时任务<b>默认不预选机器人</b>：创建后进入「待调度」，由调度中心按机器人空闲度人工分配；
+          仅在现场已明确执行机时才预先指定。计划任务则不同，创建时即绑定机器人、按时自动执行。
+        </Note>
         <h4>巡检点</h4>
         <p className="muted">
           临时任务以<b>巡检点</b>为最小单位：勾选巡检点即可，
@@ -135,8 +141,7 @@ export function QuickTaskDrawer({
         </div>
         <div className="quick-point-list">
           {rows.map((p) => {
-            const m = s.maps.find((x) => x.id === p.mapId);
-            const mp = m?.targets.find((t) => t.id === p.targetId);
+            const mp = targetsOf(s, p.mapId).find((t) => t.id === p.targetId);
             const specs = p.inspectItems || [];
             return (
               <label key={p.id}>

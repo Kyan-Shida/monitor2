@@ -9,6 +9,7 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Badge, Btn, Field, Note, Panel } from "../components/UI";
 import { deviceTypes, profileOf } from "../data/deviceProfile";
+import { calibrationVersionOf } from "../data/mapCalibration";
 import { captureKinds } from "../data/types";
 import type { DeviceType, MobilityCapability } from "../data/types";
 
@@ -239,7 +240,7 @@ export function RobotNew() {
           </Note>
           {map && (
             <p className="muted">
-              将激活地图 <b>{map.name}</b>（m{map.version} / p{map.pointSet}），
+              将激活地图 <b>{map.name}</b>（m{map.version} / c{calibrationVersionOf(s, map.id)}），
               初始状态「空闲」、电量 100%。
             </p>
           )}

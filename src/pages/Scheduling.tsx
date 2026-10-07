@@ -5,6 +5,7 @@ import { go, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note, Modal, Field } from "../components/UI";
 import { ObjectLink, Kpis } from "../components/Business";
 import { ScheduleTimeline } from "../components/ScheduleTimeline";
+import { calibrationVersionOf } from "../data/mapCalibration";
 import {
   queueFor,
   currentTask,
@@ -115,7 +116,9 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
             value: s.robots.filter((r) => {
               const m = s.maps.find((m) => m.id === r.mapId);
               return (
-                m && (m.version !== r.mapVersion || m.pointSet !== r.pointSet)
+                m &&
+                (m.version !== r.mapVersion ||
+                  calibrationVersionOf(s, r.mapId) !== r.calibrationVersion)
               );
             }).length,
             group: "机器人",
@@ -153,7 +156,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
         <Btn
           primary
           disabled={
-            constraints(s, t, r).filter((x) => x !== "地图/点位版本待同步")
+            constraints(s, t, r).filter((x) => x !== "地图/标定版本待同步")
               .length > 0
           }
           onClick={dispatchTask}
@@ -332,7 +335,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
                           <dd>{t.expectedAt || "尽快 / 调度窗口内"}</dd>
                           <dt>版本</dt>
                           <dd>
-                            m{t.mapVersion} / p{t.pointSet}
+                            m{t.mapVersion} / c{t.calibrationVersion}
                           </dd>
                           <dt>原子动作</dt>
                           <dd>
@@ -419,7 +422,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
                         <dd>{queueFor(s, r.id).length} 个待执行</dd>
                         <dt>版本</dt>
                         <dd>
-                          m{r.mapVersion} / p{r.pointSet}
+                          m{r.mapVersion} / c{r.calibrationVersion}
                         </dd>
                         {reasons.length > 0 && (
                           <>
@@ -653,13 +656,13 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
           </p>
           <p>
             {summary.items.length} 检测项 · m{summary.mapVersion}/p
-            {summary.pointSet} · 预计{summary.duration}分钟
+            {summary.calibrationVersion} · 预计{summary.duration}分钟
           </p>
           <div className="actions">
             <Btn primary onClick={() => go("task-detail", summary.id)}>
               任务详情
             </Btn>
-            <Btn onClick={() => go("execution", summary.id)}>执行监控</Btn>
+            <Btn onClick={() => go("execution-monitor", summary.id)}>执行监控</Btn>
             <Btn onClick={() => SU(undefined)}>在工作台调整</Btn>
           </div>
         </Modal>

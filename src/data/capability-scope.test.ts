@@ -23,7 +23,7 @@ test("机器人能力只表达采集方式：业务类型（仪表 / 阀门）�
   assert.deepEqual(captureKindsOfPoint(s, gas), ["气体"]);
   assert.equal(robotCoversPoint(s, gas, r2), false);
   // 引擎约束与"调度校验清单"同源
-  const t = { ...s.tasks[0], items: [{ ...gas, mapVersion: 3, pointSet: 7 }] };
+  const t = { ...s.tasks[0], items: [{ ...gas, mapVersion: 3, calibrationVersion: 7 }] };
   assert.ok(constraints(s, t, r2).includes("检测能力不足"));
 });
 

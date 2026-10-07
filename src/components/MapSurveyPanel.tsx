@@ -11,6 +11,7 @@ import { go } from "../data/navigation";
 import { Badge, Btn, Empty, Field, Note, Panel, Table } from "./UI";
 import { MapImageCanvas } from "./MapImageCanvas";
 import { MapBaseUpload } from "./MapBaseUpload";
+import { targetsOf } from "../data/mapCalibration";
 
 /** 图层清单（与 types.ts 的 MapLayerFlags 对应） */
 const LAYERS = ["底图", "障碍物层", "点云层", "业务区域层", "巡检点层", "路线层"] as const;
@@ -97,7 +98,7 @@ export function MapSurveyPanel({ mapId }: { mapId: string }) {
         <MapBaseUpload mapId={m.id} />
         <MapImageCanvas
           image={m.image}
-          markers={m.targets
+          markers={targetsOf(s, m.id)
             .filter((t) => t.state !== "已剔除")
             .map((t) => ({ id: t.id, x: t.x, y: t.y, label: t.kind, kind: t.kind, state: t.state }))}
           onAdd={(x, y) => act({ type: "ADD_TARGET", mapId: m.id, x, y })}

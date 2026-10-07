@@ -59,7 +59,7 @@ export function ReplayDetail({
     SETOPEN((prev) =>
       prev.includes(pid) ? prev.filter((x) => x !== pid) : [...prev, pid],
     );
-  /** 地图点位着色：异常 / 失败 / 已完成 / 待执行 */
+  /** 标定点着色：异常 / 失败 / 已完成 / 待执行 */
   const pointStates = Object.fromEntries(
     rows.map((r) => [
       r.p.id,
@@ -103,8 +103,9 @@ export function ReplayDetail({
           <span>
             执行设备<b>{robot ? `${robot.name}（${robot.id}）` : "—"}</b>
           </span>
+          {/* RES-04：原「执行批次」无业务意义，改为任务编号；地图版本作为调试参考保留在诊断区 */}
           <span>
-            执行批次<b>{task.id} · m{task.mapVersion} / p{task.pointSet}</b>
+            任务编号<b>{task.id}</b>
           </span>
           <span>
             执行开始时间<b>{fmtTime(task.startedAt)}</b>

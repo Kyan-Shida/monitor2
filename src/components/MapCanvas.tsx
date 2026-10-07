@@ -200,12 +200,12 @@ export function MapCanvas({
   /** 坐标标定（阶段②）：坐标拾取换算世界坐标用；缺省按 0.05 米/像素估算 */
   frames,
   /**
-   * 巡航点模式（地图详情页专用）：只渲染地图携带的「巡航点」——带 ID 的定位标记，
+   * 巡检点模式（地图详情页专用）：只渲染地图携带的「巡检点」——带 ID 的定位标记，
    * 并支持悬浮查看坐标（x,y）；不渲染业务点位（业务在巡检目标台账 / 巡检点管理中配置）。
    */
   cruiseOnly = false,
   /**
-   * 巡检路线图层（地图百分比坐标）：按途经巡航点顺序连成虚线，
+   * 巡检路线图层（地图百分比坐标）：按途经巡检点顺序连成虚线，
    * 由调用方从 s.routes 的 nodeIds 换算成坐标序列后传入。
    */
   routePaths = [],
@@ -236,7 +236,7 @@ export function MapCanvas({
   pickCoords?: boolean;
   /** 坐标标定（阶段②） */
   frames?: MapFrames;
-  /** 巡航点模式：只展示地图携带的巡航点（带 ID），悬浮显示坐标 */
+  /** 巡检点模式：只展示地图携带的巡检点（带 ID），悬浮显示坐标 */
   cruiseOnly?: boolean;
   /** 巡检路线图层：途经点坐标序列（地图百分比坐标） */
   routePaths?: { id: string; name: string; pts: { x: number; y: number }[] }[];
@@ -254,7 +254,7 @@ export function MapCanvas({
   );
   /** 坐标拾取读数：鼠标位置的地图百分比坐标 */
   const [pick, SETPICK] = useState<{ x: number; y: number } | null>(null);
-  /** 巡航点模式下，悬浮高亮的巡航点 ID（用于显示坐标气泡） */
+  /** 巡检点模式下，悬浮高亮的巡检点 ID（用于显示坐标气泡） */
   const [hoverTid, SETHOVER] = useState<string | null>(null);
   /**
    * 屏幕坐标 → 地图百分比坐标（与双击加点同一套换算）
@@ -800,11 +800,11 @@ export function MapCanvas({
       <div className="map-legend">
         <span>
           <i className="dot blue" />
-          {cruiseOnly ? "巡航点（地图自带）" : "业务点位"}
+          {cruiseOnly ? "巡检点（地图自带）" : "业务点位"}
         </span>
         <span>
           <i className="dot amber" />
-          {cruiseOnly ? "待确认巡航点" : "待确认目标"}
+          {cruiseOnly ? "待确认巡检点" : "待确认目标"}
         </span>
         <span>
           <i className="dot teal" />

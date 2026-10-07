@@ -92,7 +92,17 @@ export function Supporting({ page }: { page: string }) {
       </div>,
     ]);
   // 角色权限矩阵：管理员 / 非管理员 × 权限五要素，替代原通用配置表
-  if (page === "roles") return <RoleMatrix />;
+  if (page === "roles")
+    return (
+      <>
+        {/* SYS-02：安全性列为长期规划项，本轮记录不占工期 */}
+        <Note>
+          <b>安全性（SYS-02，长期规划）</b>：认证 / 密钥管理 / 高权限接管收敛与攻击测试为长远规划项。
+          本轮<b>把接管权限收敛到高权限角色并全程留痕</b>，不占用本轮工期（当前主要矛盾是机器人稳定性与业务闭环）。
+        </Note>
+        <RoleMatrix />
+      </>
+    );
 
   if (["audit", "interface-log", "dispatch-log", "replay"].includes(page)) {
     const logs = s.logs.filter(
@@ -290,7 +300,40 @@ export function Supporting({ page }: { page: string }) {
               )}
             </pre>
             <p>提交 / 查询 / 取消任务 · 状态回传 · 结果回传</p>
-            <Badge>Mock 接入 · 不连接真实系统</Badge>
+            <Badge>演示占位 · 不连接真实系统</Badge>
+          </Panel>
+        </div>
+        <div className="grid two">
+          {/* ALM-04：处置结果推送第三方工单系统，平台不做工单闭环 */}
+          <Panel title="第三方工单推送（ALM-04）">
+            <Note>
+              平台只做到「处置意见 + 推送」：告警处置后可经中间件把有效告警与处置说明推送给工厂现成的
+              隐患治理 / 维修 / 作业票等工单系统。
+            </Note>
+            <Field label="目标工单系统">
+              <select defaultValue="隐患治理工单">
+                <option>隐患治理工单</option>
+                <option>检维修工单</option>
+                <option>作业票工单</option>
+              </select>
+            </Field>
+            <Field label="推送方式">
+              <input readOnly value="中间件（接口配置化，推送即结束）" />
+            </Field>
+            <p className="muted">
+              平台<b>不实现</b>工单流转与 SLA 闭环；后续业务流程交由第三方系统。
+            </p>
+          </Panel>
+          {/* INT-01：多厂商标准化接口约定（方案项，先行登记） */}
+          <Panel title="多厂商标准化接口（INT-01）">
+            <Note>
+              平台 → 机器人标准化指令集：地图下发 · 巡检点 / 业务数据下发 · 任务下发 · 状态回报 ·
+              接管与会话 · 结果回传。
+            </Note>
+            <p className="muted">
+              厂商差异（固件 / 云台参数 / 镜头能力 / 导航栈）用<b>适配层 + 能力声明</b>隔离，不写进业务表；
+              该约定反向约束巡检点与上装参数的数据结构（与 DATA-01 同批确定）。
+            </p>
           </Panel>
         </div>
         <Panel title="业务编号映射">
@@ -336,6 +379,13 @@ export function Supporting({ page }: { page: string }) {
     ];
     return (
       <>
+        {/* RPT-01/02：本页定性为「统计类报表」——只放聚合统计，不下钻明细行；明细统一在巡检结果查询 */}
+        <Note>
+          <b>报表定位（RPT-01）</b>：本页只放<b>聚合统计</b>（完成率、异常 / 报警走势、区域 / 设备分布），
+          <b>不下钻到明细行</b>；明细全部归「巡检结果查询」。
+          <b>报表节奏（RPT-02）</b>：先做 1 张总览报表（巡检完成情况 + 异常 / 报警走势），
+          后续按业务参考安全生产信息化平台的巡检 / 隐患治理报表逐步补充。
+        </Note>
         <div className="grid two">
           <Panel title="任务与巡检质量">
             {stats.map(([n, v]) => (

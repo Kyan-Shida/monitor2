@@ -2,11 +2,15 @@
 import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run } from "./engine";
+import { ensureCalibration, targetsOf } from "./mapCalibration";
 import type { InspectSpec, State } from "./types";
 
-/** 在示例地图上补一个"随地图文件带入定位ID"的空闲点位（供新建巡检点绑定） */
+/**
+ * 在示例地图的**独立标定数据**里补一个"随巡检点标定文件带入定位ID"的空闲点位
+ * @description 标定数据与地图分开放（data/mapCalibration.ts），地图本身不含任何点位
+ */
 function freeTarget(s: State, id: string, externalId: string) {
-  s.maps.find((m) => m.id === "MAP-A03")!.targets.push({
+  ensureCalibration(s, "MAP-A03").targets.push({
     id,
     externalId,
     source: "地图导入",
@@ -39,7 +43,7 @@ function enable(s: State, pointId: string) {
   s.maps.find((m) => m.id === "MAP-A03")!.state = "已发布";
 }
 
-test("添加巡检点：名称 + 地图 + 地图点位（带定位ID）+ 多个巡检项逐项保存", () => {
+test("添加巡检点：名称 + 地图 + 标定点（带定位ID）+ 多个巡检项逐项保存", () => {
   const s0 = seed();
   freeTarget(s0, "T-NEW", "EXT-9001");
   const s = run(s0, {
@@ -53,7 +57,7 @@ test("添加巡检点：名称 + 地图 + 地图点位（带定位ID）+ 多个�
     ],
   });
   const p = s.points.find((x) => x.name === "一期罐区 A 排巡检点")!;
-  assert.ok(p, "巡检点应写入点位集合（任务模板 / 临时任务据此下发）");
+  assert.ok(p, "巡检点应写入标定数据（任务模板 / 临时任务据此下发）");
   assert.equal(p.mapId, "MAP-A03");
   assert.equal(p.targetId, "T-NEW");
   assert.equal(p.state, "待验证");
@@ -64,11 +68,11 @@ test("添加巡检点：名称 + 地图 + 地图点位（带定位ID）+ 多个�
   // 派生视图取首个巡检项：设备 / 检测目标 / 单位仍与旧页面兼容
   assert.equal(p.device, "V001 原料储罐");
   assert.equal(p.unit, "MPa");
-  // 地图点位被占用（一对一），地图回到草稿、点位数 +1
-  const t = s.maps[0].targets.find((x) => x.id === "T-NEW")!;
+  // 标定点被占用（一对一）；标定数据与地图解耦，地图状态不受影响
+  const t = targetsOf(s, "MAP-A03").find((x) => x.id === "T-NEW")!;
   assert.equal(t.pointId, p.id);
   assert.equal(t.state, "已确认");
-  assert.equal(s.maps[0].state, "草稿");
+  assert.equal(s.maps[0].state, "已发布");
   // 多个巡检项 → 内部派生多条逻辑点（不暴露给用户）
   assert.equal(p.logicalIds!.length, 2);
   assert.equal(
@@ -80,10 +84,15 @@ test("添加巡检点：名称 + 地图 + 地图点位（带定位ID）+ 多个�
 test("巡检点校验：必须带定位ID的点、至少一个巡检项、每项要有名称 / 业务目标 / 原子动作", () => {
   const s0 = seed();
   freeTarget(s0, "T-NEW", "EXT-9001");
-  // 平台新增的点没有定位ID，不能绑巡检点
-  s0.maps
-    .find((m) => m.id === "MAP-A03")!
-    .targets.push({ id: "T-PLAT", source: "平台新增", kind: "可见光", x: 10, y: 10, state: "待确认" });
+  // 平台新增的标定点没有定位ID，不能绑巡检点
+  ensureCalibration(s0, "MAP-A03").targets.push({
+    id: "T-PLAT",
+    source: "平台新增",
+    kind: "可见光",
+    x: 10,
+    y: 10,
+    state: "待确认",
+  });
   const base = { type: "SAVE_POINT", mapId: "MAP-A03", targetId: "T-NEW" as string };
   assert.throws(
     () =>
@@ -138,10 +147,9 @@ test("一个定位ID点只绑一个巡检点：重复占用被拦截", () => {
   );
 });
 
-test("地图上 Mock 了一批空闲定位ID点，可直接被新巡检点绑定", () => {
+test("标定数据里 Mock 了一批空闲定位ID点，可直接被新巡检点绑定", () => {
   const s = seed();
-  const m = s.maps.find((x) => x.id === "MAP-A03")!;
-  const free = m.targets.filter((t) => t.externalId && !t.pointId);
+  const free = targetsOf(s, "MAP-A03").filter((t) => t.externalId && !t.pointId);
   assert.ok(free.length >= 10, `应有可绑定的空闲定位ID点，实际 ${free.length}`);
   const t = free[0];
   const next = run(s, {
@@ -154,7 +162,7 @@ test("地图上 Mock 了一批空闲定位ID点，可直接被新巡检点绑定
   const p = next.points.find((x) => x.name === "空闲点绑定的巡检点")!;
   assert.ok(p);
   assert.equal(
-    next.maps[0].targets.find((x) => x.id === t.id)!.pointId,
+    targetsOf(next, "MAP-A03").find((x) => x.id === t.id)!.pointId,
     p.id,
   );
 });

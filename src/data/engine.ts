@@ -16,6 +16,7 @@
   BusinessTarget,
   JudgeType,
   InspectSpec,
+  Session,
 } from "./types";
 import { stages, atomicActionCapability, captureKinds } from "./types";
 import {
@@ -25,6 +26,13 @@ import {
   type AlarmRule,
 } from "./alarmRules";
 import { fieldCommand, releaseOutputs } from "./fieldControl";
+import {
+  ensureCalibration,
+  targetsOf,
+  calibrationVersionOf,
+  mergeCalibrationPoints,
+  type ParsedCalibrationPoint,
+} from "./mapCalibration";
 import { bindingReasons } from "./planSchedule";
 import { hasMobility, profileOf } from "./deviceProfile";
 import {
@@ -106,7 +114,8 @@ function publishMap(s: State, m: MapAsset) {
     "至少需要一个已标注业务点位",
   );
   m.state = "已发布";
-  m.history.unshift(`m${m.version} / p${m.pointSet} 已发布`);
+  // 地图只有空间版本 m；巡检点标定数据带自己的版本 c，不写进地图历史
+  m.history.unshift(`m${m.version} 已发布（纯点云底图）`);
 }
 /**
  * 下发前确保已定版：内容还是草稿时，**随下发自动定版**
@@ -157,7 +166,7 @@ function pushSync(s: State, m: MapAsset, r: Robot) {
     mapId: m.id,
     robotId: r.id,
     mapVersion: m.version,
-    pointSet: m.pointSet,
+    calibrationVersion: calibrationVersionOf(s, m.id),
     state: "传输中",
   });
 }
@@ -215,8 +224,8 @@ export function constraints(
       : []),
     ...(r.mapId !== t.mapId ||
     r.mapVersion !== t.mapVersion ||
-    r.pointSet !== t.pointSet
-      ? ["地图/点位版本待同步"]
+    r.calibrationVersion !== t.calibrationVersion
+      ? ["地图/标定版本待同步"]
       : []),
     ...(start && t.notBefore && Date.parse(t.notBefore) > now
       ? ["尚未到计划执行时间"]
@@ -298,11 +307,11 @@ export function transition(state: State, a: Action): State {
       deadline: `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())} ${pad(due.getHours())}:${pad(due.getMinutes())}`,
       mapId: m.id,
       mapVersion: m.version,
-      pointSet: m.pointSet,
+      calibrationVersion: calibrationVersionOf(s, m.id),
       items: items.map((p) => ({
         ...p,
         mapVersion: m.version,
-        pointSet: m.pointSet,
+        calibrationVersion: calibrationVersionOf(s, m.id),
         // 到位动作快照：任务创建后即使设备主数据的采集方式被改，历史任务口径不变
         actions: actionsOfPoint(s, p),
       })),
@@ -362,21 +371,11 @@ export function transition(state: State, a: Action): State {
     }
     case "IMPORT": {
       must(a.name && a.file, "请填写地图名称并选择地图图片");
-      const targets = (a.targets || []).map((t: any) => ({
-        id: String(t.id),
-        externalId: String(t.id),
-        source: "地图导入" as const,
-        kind: t.kind || "可见光",
-        x: Number(t.x),
-        y: Number(t.y),
-        state: "待确认" as const,
-      }));
       const m = {
         id: id("MAP"),
         name: a.name,
         region: a.region || "一期罐区",
         version: 1,
-        pointSet: 1,
         state: "草稿" as const,
         source: a.source || "手持仪器",
         batch: id("B"),
@@ -386,26 +385,13 @@ export function transition(state: State, a: Action): State {
         checksum: "demo-sha256:93b8…",
         // 底图：上传的图片（示例地图 / 用户本地图片）
         image: a.image || undefined,
-        // 地图点位：随文件带入的定位ID（可直接绑定巡检点）
-        targets,
-        history: ["m1 / p1 导入草稿，待绑定巡检点"],
+        // 地图 = 纯点云：只登记建图产物，不带任何定位ID / 巡检点 / 业务信息；
+        // 巡检点由同批采集的「巡检点标定文件」写入独立标定数据（见 mapCalibration.ts）
+        history: ["m1 导入纯点云地图（不含点位，待现场标定）"],
       };
       s.maps.unshift(m);
-      // 轨迹采样点：随文件带入（在地图工作台按顺序连线）
-      if (a.track?.length)
-        s.trackSamples = [
-          ...(s.trackSamples || []),
-          ...a.track.map((t: any, i: number) => ({
-            id: id("TS"),
-            mapId: m.id,
-            x: Number(t.x),
-            y: Number(t.y),
-            kind: t.kind || "停靠点",
-            seq: i + 1,
-          })),
-        ];
       object = m.id;
-      detail = `已导入地图（定位ID ${targets.length} 个 · 轨迹 ${(a.track || []).length} 点）`;
+      detail = "已导入纯点云地图（不含巡检点与业务信息，请在巡检点管理中标定巡检点）";
       break;
     }
     case "ARCHIVE": {
@@ -592,12 +578,29 @@ export function transition(state: State, a: Action): State {
     }
     // ── 巡检目标台账：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 ──
     case "ADD_BUSINESS_TARGET": {
+      /**
+       * TGT-01：目标分两类 ——
+       * ① 仪表类（默认）：必须关联设备台账中的仪表；
+       * ② 环境 / 区域类：可不关联设备台账（如罐区气体、区域声纹、区域红外、AI 不安全行为）。
+       * 区域类目标必须提供参照物锚点（TGT-02），否则泄漏 / 异常无法归因。
+       */
+      const targetKind: "仪表" | "环境" | "区域" =
+        a.targetKind || (a.instrumentId ? "仪表" : "环境");
       const ins = s.instruments?.find((x) => x.id === a.instrumentId);
-      must(ins, "仪表不存在，请先在设备主数据中维护检测目标");
-      must(
-        ins!.state !== "停用",
-        `仪表「${ins!.name}」所属设备已停用，暂不能新增巡检目标台账`,
-      );
+      if (targetKind === "仪表") {
+        must(ins, "仪表不存在，请先在设备主数据中维护检测目标");
+        must(
+          ins!.state !== "停用",
+          `仪表「${ins!.name}」所属设备已停用，暂不能新增巡检目标台账`,
+        );
+      } else {
+        must(
+          String(a.goal || "").trim() || String(a.anchor || "").trim(),
+          "环境 / 区域类目标请填写目标或参照物锚点",
+        );
+        if (targetKind === "区域")
+          must(String(a.anchor || "").trim(), "区域类目标必须填写参照物锚点（TGT-02）");
+      }
       const req = s.requirements?.find((r) => r.id === a.requirementId);
       must(req, "巡检要求不存在");
       must(
@@ -614,16 +617,20 @@ export function transition(state: State, a: Action): State {
         must(String(a.expected || "").trim(), "期望状态判定需要填写期望值");
       const rec: BusinessTarget = {
         id: id("BT"),
-        instrumentId: ins!.id,
+        targetKind,
+        instrumentId: ins?.id,
+        anchor: String(a.anchor || "").trim() || undefined,
         requirementId: req!.id,
-        // 业务目标与业务要求：留空时按"仪表 + 判定方式"和巡检要求说明自动生成
+        // 业务目标与业务要求：留空时按"仪表 / 区域 + 判定方式"和巡检要求说明自动生成
         goal:
           String(a.goal || "").trim() ||
-          `确认${ins!.name}${judge === "期望状态" ? "状态符合要求" : "读数在正常范围内"}`,
+          (ins
+            ? `确认${ins.name}${judge === "期望状态" ? "状态符合要求" : "读数在正常范围内"}`
+            : `${a.anchor ? a.anchor + " " : ""}${req!.name}`),
         require: String(a.require || "").trim() || req!.description,
         algorithm: String(a.algorithm).trim(),
         judge,
-        unit: judge === "数值范围" ? a.unit || ins!.unit : undefined,
+        unit: judge === "数值范围" ? a.unit || ins?.unit : undefined,
         min: judge === "数值范围" ? Number(a.min) : undefined,
         max: judge === "数值范围" ? Number(a.max) : undefined,
         expected: judge === "期望状态" ? String(a.expected).trim() : undefined,
@@ -644,9 +651,11 @@ export function transition(state: State, a: Action): State {
         createdAt: new Date().toLocaleString("zh-CN"),
       };
       s.businessTargets = [rec, ...(s.businessTargets || [])];
-      syncInspectFlag(s, ins!.id);
+      if (ins) syncInspectFlag(s, ins.id);
       object = rec.id;
-      detail = `已为「${s.devices?.find((d) => d.id === ins!.deviceId)?.name || ins!.deviceId} · ${ins!.name}」新增巡检目标台账：${req!.name}（${rec.algorithm}）`;
+      detail = ins
+        ? `已为「${s.devices?.find((d) => d.id === ins.deviceId)?.name || ins.deviceId} · ${ins.name}」新增巡检目标台账：${req!.name}（${rec.algorithm}）`
+        : `已新增${targetKind}类巡检目标台账：${rec.goal}（${rec.algorithm}）`;
       break;
     }
     case "UPDATE_BUSINESS_TARGET": {
@@ -688,15 +697,17 @@ export function transition(state: State, a: Action): State {
       detail = `巡检目标台账已更新（是否巡检：${b!.inspect ? "开" : "关"}）`;
       break;
     }
-    // ── 巡检点管理：巡检点 = 名称 + 地图 + 地图点位 + 多个巡检项 ──
+    // ── 巡检点管理：巡检点 = 名称 + 地图 + 标定点 + 多个巡检项 ──
     case "SAVE_POINT": {
       const m = map();
       must(String(a.name || "").trim(), "请填写巡检点名称");
-      const target = m.targets.find((t) => t.id === a.targetId);
-      must(target, "请选择地图上带定位ID的点");
+      // 巡检点来自**独立标定数据**（与地图分开放），不在 MapAsset 上
+      const cal = ensureCalibration(s, m.id);
+      const target = cal.targets.find((t) => t.id === a.targetId);
+      must(target, "请选择已标定的巡检点（定位ID）");
       must(
         target!.externalId,
-        "所选点不是地图自带的定位ID点；请先在地图工作台补录定位ID",
+        "所选巡检点缺少定位ID；请先到「巡检点标定」补录定位ID",
       );
       const specs = (a.inspectItems || []) as InspectSpec[];
       must(specs.length, "请至少添加一个巡检项（名称 + 业务目标 + 机器操作内容）");
@@ -726,12 +737,12 @@ export function transition(state: State, a: Action): State {
       if (target!.pointId && target!.pointId !== old?.id) {
         const owner = s.points.find((p) => p.id === target!.pointId);
         throw Error(
-          `该地图点位已被巡检点「${owner?.name || target!.pointId}」占用，请另选定位ID点`,
+          `该标定点已被巡检点「${owner?.name || target!.pointId}」占用，请另选定位ID点`,
         );
       }
-      // 改绑地图点位时释放旧点位占用，避免一个定位ID挂两个巡检点
+      // 改绑巡检点时释放旧点位占用，避免一个定位ID挂两个巡检点
       if (old && old.targetId !== target!.id) {
-        const prev = m.targets.find((t) => t.id === old.targetId);
+        const prev = cal.targets.find((t) => t.id === old.targetId);
         if (prev && prev.pointId === old.id) {
           prev.pointId = undefined;
           prev.state = "待确认";
@@ -777,7 +788,11 @@ export function transition(state: State, a: Action): State {
         state: old ? "待重新验证" : "待验证",
         x: target!.x,
         y: target!.y,
-        pose: old?.pose || { x: target!.x, y: target!.y, yaw: 0 },
+        // DATA-01：统一坐标系权威定位（保留原值，首次创建时按地图相对坐标初始化，后续由标定更新）
+        world: old?.world || { x: target!.x, y: target!.y, z: 0 },
+        // PT-02：位姿可由「从机器人获取」上行抓取并微调后传入；未传时沿用旧值 / 按地图坐标初始化
+        pose: a.pose || old?.pose || { x: target!.x, y: target!.y, yaw: 0 },
+        calibrateRobot: a.calibrateRobot ?? old?.calibrateRobot,
         actionPlan: normalized[0].pose,
         inspectItems: normalized,
         logicalIds: created.map((x) => x.id),
@@ -787,8 +802,9 @@ export function transition(state: State, a: Action): State {
       else s.points.push(p);
       target!.state = "已确认";
       target!.pointId = p.id;
-      m.pointSet++;
-      m.state = "草稿";
+      // 标定数据版本自增：点位与地图解耦，不改变地图空间版本
+      cal.version++;
+      cal.updatedAt = new Date().toLocaleString("zh-CN");
       object = p.id;
       detail = `已保存巡检点（${normalized.length} 个巡检项 · 覆盖 ${new Set(created.map((c) => c.deviceId)).size} 台设备）`;
       break;
@@ -865,8 +881,10 @@ export function transition(state: State, a: Action): State {
         `请至少选择一个检测对象（来自设备「${dev!.name}」的清单）`,
       );
       const old = s.points.find((p) => p.id === a.pointId);
-      const target = m.targets.find((t) => t.id === a.targetId);
-      must(target, "请选择候选目标或人工新增目标");
+      // 巡检点来自独立标定数据（与地图分开放）
+      const cal = ensureCalibration(s, m.id);
+      const target = cal.targets.find((t) => t.id === a.targetId);
+      must(target, "请选择已标定的巡检点或人工新增巡检点");
       const pid = old?.id || id("P");
       // 逻辑点（阶段④）：不暴露给用户，按「一次停靠覆盖 N 个检测对象」自动派生；
       // 重建前先清掉本点位旧记录，保证重复标注幂等
@@ -909,16 +927,17 @@ export function transition(state: State, a: Action): State {
       else s.points.push(p);
       target!.state = "已确认";
       target!.pointId = p.id;
-      m.pointSet++;
-      m.state = "草稿";
+      cal.version++;
+      cal.updatedAt = new Date().toLocaleString("zh-CN");
       object = p.id;
       detail = `已标注点位（一次停靠覆盖 ${created.length} 个检测对象）`;
       break;
     }
     case "ADD_TARGET": {
       const m = map();
-      // 平台新增的地图点位：来源标记为"平台新增"，与随地图导入的定位ID区分开
-      m.targets.push({
+      const cal = ensureCalibration(s, m.id);
+      // 现场新增的巡检点：来源标记为"平台新增"，与随地图文件带入的定位ID区分开
+      cal.targets.push({
         id: id("O"),
         source: "平台新增",
         externalId: a.externalId,
@@ -927,18 +946,24 @@ export function transition(state: State, a: Action): State {
         y: a.y || 48,
         state: "待确认",
       });
-      // 地图内容变了就打回草稿：否则"已发布"名不副实，下发给机器人的点位集与现实不符
-      m.state = "草稿";
-      m.history.unshift("新增地图点位，待重新发布");
+      // 标定数据版本自增：地图空间版本不受影响（点位与地图解耦）
+      cal.version++;
+      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      object = cal.id;
+      detail = `已新增巡检点，标定数据更新为 c${cal.version}`;
       break;
     }
     case "UPLOAD_REFERENCE": {
       const m = map();
-      const target = m.targets.find(t => t.id === a.targetId);
+      const target = targetsOf(s, m.id).find((t) => t.id === a.targetId);
       must(target && target.state !== "已剔除", "请先选择有效目标");
       must(typeof a.dataUrl === "string" && /^data:image\/(png|jpeg|webp);base64,/.test(a.dataUrl), "请选择 PNG、JPG 或 WebP 图片");
       must(a.dataUrl.length <= 700000, "图片过大，请选择 500 KB 以内的图片");
-      const used = s.maps.flatMap(m => m.targets).filter(t => t !== target).reduce((total,t) => total + (t.referenceImage?.dataUrl.length || 0), 0);
+      // 参考图像存储占用按**全部标定数据**统计（参考图挂在标定点上，不在地图上）
+      const used = (s.mapCalibrations || [])
+        .flatMap((c) => c.targets)
+        .filter((t) => t !== target)
+        .reduce((total, t) => total + (t.referenceImage?.dataUrl.length || 0), 0);
       must(used + a.dataUrl.length <= 2000000, "演示环境图片存储空间不足，请压缩图片后再上传");
       target!.referenceImage = { name: a.name, dataUrl: a.dataUrl, uploadedAt: new Date().toISOString() };
       object = target!.id;
@@ -947,38 +972,100 @@ export function transition(state: State, a: Action): State {
     }
     case "DISCARD_TARGET": {
       const m = map();
-      const t = m.targets.find((t) => t.id === a.targetId)!;
-      must(!t.pointId, "已关联业务点位的目标请先维护点位");
+      const cal = ensureCalibration(s, m.id);
+      const t = cal.targets.find((t) => t.id === a.targetId)!;
+      must(t, "巡检点不存在");
+      must(!t.pointId, "已关联业务点位的巡检点请先维护点位");
       t.state = "已剔除";
-      // 点位集变化同样打回草稿
-      m.state = "草稿";
-      m.history.unshift("剔除地图点位，待重新发布");
+      cal.version++;
+      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      object = cal.id;
+      detail = `已剔除巡检点，标定数据更新为 c${cal.version}`;
       break;
     }
     /**
-     * 地图工作台保存：整表替换当前地图的巡航点集合，并自动把坐标变更同步到已绑定业务点位。
-     * 保存后地图变为草稿，需要重新下发定版。
+     * 巡检点标定保存（**独立标定模块**，与地图分开放）：
+     * 整表替换该地图的巡检点集合、标定数据版本自增，并把坐标变更同步到已绑定业务点位。
+     * @description 不改变地图空间版本、也不把地图打回草稿——点位与地图解耦。
      */
-    case "SAVE_MAP_TARGETS": {
+    case "SAVE_MAP_CALIBRATION": {
       const m = map();
-      must(Array.isArray(a.targets), "巡航点数据格式错误");
-      m.targets = a.targets;
+      must(Array.isArray(a.targets), "巡检点标定数据格式错误");
+      const cal = ensureCalibration(s, m.id);
+      cal.targets = a.targets;
+      cal.version++;
+      cal.updatedAt = new Date().toLocaleString("zh-CN");
       s.points
         .filter((p) => p.mapId === m.id)
         .forEach((p) => {
-          const t = m.targets.find((t) => t.id === p.targetId);
+          const t = cal.targets.find((t) => t.id === p.targetId);
           if (t) {
             p.x = t.x;
             p.y = t.y;
           }
         });
-      m.pointSet++;
-      m.state = "草稿";
-      m.history.unshift(
-        `m${m.version} / p${m.pointSet} 编辑巡航点，待重新发布`,
-      );
-      object = m.id;
-      detail = `已保存 ${m.targets.length} 个巡航点，当前为草稿，请下发定版`;
+      object = cal.id;
+      detail = `已保存 ${cal.targets.length} 个巡检点（标定数据 c${cal.version}，与地图分开存储）`;
+      break;
+    }
+    /**
+     * 导入「巡检点标定文件」（同一次现场采集产出的第二件）：
+     * 解析出的定位点按**定位 ID** 合并进目标地图的标定数据；
+     * 地图尚未就绪时可**暂存**，待地图上传后再绑定（MAP-02 修改要点 4）。
+     */
+    case "IMPORT_POINT_CALIBRATION": {
+      const rows = (a.points || []) as ParsedCalibrationPoint[];
+      must(rows.length, "标定文件里没有解析到定位点");
+      const at = new Date().toLocaleString("zh-CN");
+      if (!a.mapId || a.pending) {
+        s.pendingCalibration = {
+          file: a.file || "巡检点标定文件",
+          // 来源机器人（机器狗）：上传前必填，仅作数据归属记录
+          robotId: a.robotId || undefined,
+          points: rows,
+          at,
+        };
+        object = a.file || "待绑定标定文件";
+        detail = `标定文件已暂存（${rows.length} 个定位点），待点云地图就绪后再绑定`;
+        break;
+      }
+      const m = map();
+      const cal = ensureCalibration(s, m.id);
+      const { added, rebound } = mergeCalibrationPoints(cal, rows);
+      cal.file = a.file || cal.file;
+      // 来源机器人只作归属记录，不改变标定数据的定位语义
+      cal.robotId = a.robotId || cal.robotId;
+      cal.importedAt = at;
+      cal.version++;
+      cal.updatedAt = at;
+      object = cal.id;
+      detail = `已导入巡检点标定文件（新增 ${added} · 按定位ID重绑 ${rebound}），与地图分开存储`;
+      break;
+    }
+    /** 把暂存的标定文件绑定到某张已上传的点云地图 */
+    case "BIND_PENDING_CALIBRATION": {
+      const pending = s.pendingCalibration;
+      must(pending && pending.points.length, "没有待绑定的标定文件");
+      const m = map();
+      const cal = ensureCalibration(s, m.id);
+      const { added, rebound } = mergeCalibrationPoints(cal, pending.points);
+      cal.file = pending.file;
+      // 绑定暂存文件时，把来源机器人一并落到标定数据上
+      cal.robotId = pending.robotId ?? cal.robotId;
+      cal.importedAt = pending.at;
+      cal.version++;
+      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      s.pendingCalibration = undefined;
+      object = cal.id;
+      detail = `标定文件已绑定到「${m.name}」（新增 ${added} · 按定位ID重绑 ${rebound}）`;
+      break;
+    }
+    /** 放弃暂存的标定文件 */
+    case "DISCARD_PENDING_CALIBRATION": {
+      must(s.pendingCalibration, "没有待绑定的标定文件");
+      s.pendingCalibration = undefined;
+      object = "待绑定标定文件";
+      detail = "已放弃待绑定的标定文件";
       break;
     }
     case "PUBLISH": {
@@ -993,7 +1080,7 @@ export function transition(state: State, a: Action): State {
       const m = map();
       const published = ensurePublished(s, m);
       pushSync(s, m, robot());
-      detail = `已下发 m${m.version} / p${m.pointSet}${published ? "（内容同时定版为已发布）" : ""}`;
+      detail = `已下发 m${m.version} / c${calibrationVersionOf(s, m.id)}${published ? "（内容同时定版为已发布）" : ""}`;
       break;
     }
     case "SYNC_BATCH": {
@@ -1010,7 +1097,7 @@ export function transition(state: State, a: Action): State {
       const published = ensurePublished(s, m);
       targets.forEach((r) => pushSync(s, m, r));
       object = m.id;
-      detail = `已向 ${targets.length} 台设备下发 m${m.version} / p${m.pointSet}${published ? "（内容同时定版为已发布）" : ""}`;
+      detail = `已向 ${targets.length} 台设备下发 m${m.version} / c${calibrationVersionOf(s, m.id)}${published ? "（内容同时定版为已发布）" : ""}`;
       break;
     }
     case "SYNC_STEP": {
@@ -1040,7 +1127,7 @@ export function transition(state: State, a: Action): State {
         sy.state = "已同步";
         r.mapId = sy.mapId;
         r.mapVersion = sy.mapVersion;
-        r.pointSet = sy.pointSet;
+        r.calibrationVersion = sy.calibrationVersion;
       }
       break;
     }
@@ -1052,8 +1139,8 @@ export function transition(state: State, a: Action): State {
       must(
         r.mapId === m.id &&
           r.mapVersion === m.version &&
-          r.pointSet === m.pointSet,
-        "请先将当前试验版本同步并激活",
+          r.calibrationVersion === calibrationVersionOf(s, m.id),
+        "请先将当前地图与标定数据同步并激活",
       );
       const need = captureKindsOfPoint(s, p);
       must(
@@ -1063,7 +1150,7 @@ export function transition(state: State, a: Action): State {
       if (a.fail) {
         p.state = "待重新验证";
         p.validated = undefined;
-        p.validationFailure = `${r.id} / m${m.version} / p${m.pointSet}：目标身份未确认（模拟失败），请修正标注后重新验证`;
+        p.validationFailure = `${r.id} / m${m.version} / c${calibrationVersionOf(s, m.id)}：目标身份未确认（模拟失败），请修正标注后重新验证`;
         break;
       }
       p.validationFailure = undefined;
@@ -1096,12 +1183,11 @@ export function transition(state: State, a: Action): State {
       must(a.file || c.type === "仅业务属性变更", "空间变化须导入修订地图文件");
       const m = s.maps.find((m) => m.id === c.mapId)!;
       m.version++;
-      m.pointSet++;
       m.state = "草稿";
       if (a.file) m.file = a.file;
       m.history.unshift(`m${m.version} 修订来源：${c.id}，原始资料保持归档`);
       c.version = m.version;
-      c.pointSet = m.pointSet;
+      c.calibrationVersion = calibrationVersionOf(s, m.id);
       c.state = "待同步";
       break;
     }
@@ -1119,7 +1205,7 @@ export function transition(state: State, a: Action): State {
             (r) =>
               r.mapId === m.id &&
               r.mapVersion === m.version &&
-              r.pointSet === m.pointSet,
+              r.calibrationVersion === calibrationVersionOf(s, m.id),
           ),
         "区域内机器人尚未全部同步",
       );
@@ -1298,7 +1384,7 @@ export function transition(state: State, a: Action): State {
         "已接收任务须先确认撤回后再改派",
       );
       const reasons = constraints(s, t, r).filter(
-        (x) => x !== "地图/点位版本待同步",
+        (x) => x !== "地图/标定版本待同步",
       );
       must(!reasons.length, reasons.join("；"));
       t.robotId = r.id;
@@ -1400,7 +1486,7 @@ export function transition(state: State, a: Action): State {
       );
       must(a.confirmed, "须先确认撤回");
       const reasons = constraints(s, t, r).filter(
-        (x) => x !== "地图/点位版本待同步",
+        (x) => x !== "地图/标定版本待同步",
       );
       must(!reasons.length, reasons.join("；"));
       detail = `${t.robotId} 撤回已确认，改派至 ${r.id}`;
@@ -1446,13 +1532,17 @@ export function transition(state: State, a: Action): State {
     case "START": {
       const t = task(),
         r = robot(t.robotId);
-      must(["待执行", "暂停"].includes(t.state), "任务尚未接收");
+      // TKO-04：被接管的任务需显式「恢复任务」回到执行中
+      must(
+        ["待执行", "暂停", "已被接管"].includes(t.state),
+        "任务尚未接收或不在可恢复状态",
+      );
       must(
         !constraints(s, t, r, true, a.now ?? Date.now()).length,
         constraints(s, t, r, true, a.now ?? Date.now()).join("；"),
       );
       const releasedSession = s.sessions.find(x => x.taskId === t.id && x.robotId === r.id);
-      if (t.state === "暂停" && releasedSession?.state === "已释放" && !releasedSession.resumedAt)
+      if (["暂停", "已被接管"].includes(t.state) && releasedSession?.state === "已释放" && !releasedSession.resumedAt)
         releasedSession.resumedAt = new Date(a.now ?? Date.now()).toISOString();
       t.state = "执行中";
       t.startedAt ||= new Date(a.now ?? Date.now()).toISOString();
@@ -1649,9 +1739,50 @@ export function transition(state: State, a: Action): State {
       must(x.state === "待暂停确认", "会话状态不符");
       const r = robot(x.robotId);
       const t = s.tasks.find((t) => t.id === x.taskId);
-      if (t) t.state = "暂停";
+      // TKO-03/04：接管＝借调，原任务进入「已被接管」，释放后需显式恢复
+      if (t) t.state = "已被接管";
       r.state = "人工接管";
       x.state = "已接管";
+      break;
+    }
+    /**
+     * TKO-01：机器人「申请人工接管」。
+     * 机器人拍到 / 定位不到、自主处理超时后，可主动申请人来接管（或默认跳过该动作继续巡检）。
+     * 本动作建立一条 origin="机器人申请" 的待暂停确认会话，由人从异常入口进入接管，而非人主动切入。
+     */
+    case "ROBOT_TAKEOVER_REQ": {
+      const r = robot(a.robotId);
+      must(r.state !== "离线", "机器人离线，无法申请接管");
+      must(
+        !s.sessions.some(
+          (x) =>
+            x.robotId === r.id && !["已释放", "已超时"].includes(x.state),
+        ),
+        "该机器人已有进行中的接管会话",
+      );
+      const t = s.tasks.find((x) => x.id === r.current);
+      s.sessions.unshift({
+        id: id("S"),
+        robotId: r.id,
+        taskId: t?.id,
+        origin: "机器人申请",
+        state: "待暂停确认",
+        startedAt: new Date().toISOString(),
+        expires: Date.now() + 300000,
+        seq: 1,
+        pan: 0,
+        tilt: 0,
+      } as Session);
+      detail = `${r.id} 申请人工接管（等待时间窗 5 分钟，可跳过）`;
+      break;
+    }
+    /** TKO-01：机器人「跳过」当前动作，不打断任务状态机，继续自主巡检 */
+    case "ROBOT_TAKEOVER_SKIP": {
+      const r = robot(a.robotId);
+      s.sessions = s.sessions.filter(
+        (x) => !(x.robotId === r.id && x.origin === "机器人申请"),
+      );
+      detail = `${r.id} 已跳过该动作，继续自主巡检`;
       break;
     }
     case "CONTROL": {
@@ -1782,10 +1913,38 @@ export function transition(state: State, a: Action): State {
       al.state = "待复查";
       break;
     }
+    /**
+     * 告警处置（ALM-02 / ALM-03）：「消警」即终态，处理意见 + 文本即可关闭；
+     * 不强制复查任务 / 恢复确认环节。可在 待确认 / 处理中 任意阶段直接消警。
+     */
+    case "ALARM_RESOLVE": {
+      const al = s.alarms.find((x) => x.id === a.id)!;
+      must(
+        ["待确认", "处理中", "待复查", "已恢复"].includes(al.state),
+        "告警已关闭，无需重复处置",
+      );
+      must(a.reason, "请填写处理意见 / 消警依据");
+      al.state = "已关闭";
+      // ALM-05：可选标注「有效 / 无效」，用于统计报警准确率 / 误报率
+      if (a.validity === "有效" || a.validity === "无效") {
+        al.validity = a.validity;
+        al.notes.push("标注：" + a.validity + "告警");
+      }
+      al.notes.push("处理并消警：" + a.reason);
+      break;
+    }
     case "ALARM_CLOSE": {
       const al = s.alarms.find((x) => x.id === a.id)!;
-      must(al.state === "已恢复" && a.reason, "需有效复查恢复结果和关闭依据");
+      // ALM-03：复查为可选，未建复查任务不再阻断关闭；处理中 / 已恢复 均可直接关闭
+      must(
+        ["处理中", "已恢复"].includes(al.state) && a.reason,
+        "需先确认告警并填写关闭依据",
+      );
       al.state = "已关闭";
+      if (a.validity === "有效" || a.validity === "无效") {
+        al.validity = a.validity;
+        al.notes.push("标注：" + a.validity + "告警");
+      }
       al.notes.push("关闭依据：" + a.reason);
       break;
     }
@@ -2074,7 +2233,7 @@ export function transition(state: State, a: Action): State {
         state: "空闲",
         mapId: map!.id,
         mapVersion: map!.version,
-        pointSet: map!.pointSet,
+        calibrationVersion: calibrationVersionOf(s, map!.id),
         x: 50,
         y: 50,
         deviceType,

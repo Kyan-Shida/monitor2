@@ -274,8 +274,8 @@ const task = (
   robotId,
   mapId: "MAP-A03",
   mapVersion: 3,
-  pointSet: 7,
-  items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, pointSet: 7 })),
+  calibrationVersion: 7,
+  items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, calibrationVersion: 7 })),
   stage: 0,
   index: 0,
   done: [],
@@ -893,6 +893,14 @@ export function seed(): State {
   // 逻辑点由「设备主数据 + 点位」派生，避免两处手工维护导致口径漂移；
   // 并把派生结果回写到点位 logicalIds（一物理点可承载多条逻辑点）
   const pts = structuredClone(points);
+  /**
+   * DATA-01：为每个巡检点补「统一坐标系」权威定位 world（全厂 XYZ，米）。
+   * 演示环境按底图 1:1（100m×62m）投影，z 取 0；真实项目由地图标定 / 定位系统换算。
+   * 权威定位以 world 为准，`x/y`（百分比）仅作底图投影展示，地图删改不影响本坐标。
+   */
+  pts.forEach((p) => {
+    p.world = { x: p.x, y: p.y, z: 0 };
+  });
   const lps = deriveLogicalPoints(pts);
   lps.forEach((lp) => {
     const p = pts.find((x) => x.id === lp.physicalPointId);
@@ -909,6 +917,64 @@ export function seed(): State {
    */
   const ins = deriveInstruments(devs.filter((d) => d.reviewState === "已通过"));
   const biz = deriveBusinessTargets(ins, devs);
+  /**
+   * TGT-01：空间 / 区域（非装置）类目标示例 —— **不关联设备台账**，
+   * 以参照物锚点圈定范围（气体 / 区域红外），供「空间与区域目标」页演示。
+   */
+  biz.push(
+    {
+      id: "BT-ENV-GAS",
+      targetKind: "区域",
+      anchor: "3# 罐区北侧立柱",
+      requirementId: "REQ-GAS",
+      goal: "确认 3# 罐区可燃气体浓度在安全范围内",
+      require: "沿罐区北侧立柱 3 米高度泵吸采样，读数超上限即异常",
+      algorithm: "气体浓度判读 v1.1",
+      judge: "数值范围",
+      unit: "ppm",
+      min: 0,
+      max: 50,
+      criteria: "取泵吸稳定后 10 秒均值，超过 50 ppm 判异常",
+      alarm: {
+        on: true,
+        level: "紧急",
+        trigger: "单次超限即告警（一期不支持连续多次）",
+        notify: ["设备岗", "值班长"],
+      },
+      needPhoto: false,
+      needVideo: false,
+      needReview: false,
+      cycle: "每日",
+      priority: "高",
+      inspect: true,
+    },
+    {
+      id: "BT-ENV-IR",
+      targetKind: "区域",
+      anchor: "管廊 A 段起点",
+      requirementId: "REQ-HOT",
+      goal: "确认管廊 A 段区域温度无异常热点",
+      require: "对管廊 A 段整体热成像扫描，定位最高温点",
+      algorithm: "红外热像区域测温",
+      judge: "数值范围",
+      unit: "℃",
+      min: 0,
+      max: 120,
+      criteria: "以区域最高温为准，超过 120 ℃ 判异常",
+      alarm: {
+        on: true,
+        level: "重要",
+        trigger: "单次超限即告警（一期不支持连续多次）",
+        notify: ["设备岗"],
+      },
+      needPhoto: false,
+      needVideo: false,
+      needReview: false,
+      cycle: "每日",
+      priority: "普通",
+      inspect: true,
+    },
+  );
   /**
    * 巡检项：为已有点位派生「巡检项名称 + 业务目标 + 机器操作内容」，
    * 使「巡检点管理」一打开就有已配置的巡检点可维护（真实项目里由用户逐项添加）
@@ -943,7 +1009,6 @@ export function seed(): State {
         name: "一期罐区巡检地图",
         region: "一期罐区",
         version: 3,
-        pointSet: 7,
         state: "已发布",
         source: "机器人首次走行",
         batch: "B001",
@@ -953,7 +1018,40 @@ export function seed(): State {
         checksum: "sha256:8e93a17c…",
         // 示例底图：打开地图即可在图上标注点位（可随时替换/清除）
         image: SAMPLE_MAP_IMAGE,
-        // 地图点位：随地图文件自带的外部定位ID（source = 地图导入）
+        // 地图是**纯点云**：不含任何定位ID、巡检点与业务信息
+        history: [
+          "m1 首次建图（点云）",
+          "m2 补充设备区域点云",
+          "m3 已发布 · 原始资料完整",
+        ],
+        frames: {
+          resolution: 0.05,
+          origin: { x: 0, y: 0, yaw: 0 },
+          rotateDeg: 0,
+          calibState: "已标定",
+        },
+        layers: {
+          底图: true,
+          障碍物层: true,
+          点云层: true,
+          业务区域层: true,
+          巡检点层: true,
+          路线层: true,
+        },
+        deviceListVersion: 1,
+      },
+    ],
+    /**
+     * 巡检点标定数据（**独立模块，与地图分开放**）
+     * @description 地图是纯点云、不含任何点位；采集时产出的「巡检点标定文件」解析后全部落在这里，
+     *              按 mapId 关联地图、自带版本 c{n}，与地图空间版本 m{n} 解耦。
+     */
+    mapCalibrations: [
+      {
+        id: "CAL-MAP-A03",
+        mapId: "MAP-A03",
+        version: 7,
+        updatedAt: "2026-09-20 10:30",
         targets: [
           // 已被现有巡检点绑定（一对一占用）
           ...points.map((p) => ({
@@ -977,26 +1075,6 @@ export function seed(): State {
             state: "待确认" as const,
           })),
         ],
-        history: [
-          "m1 / p1 首次建图",
-          "m2 / p6 补充阀门目标",
-          "m3 / p7 已发布 · 原始资料完整",
-        ],
-        frames: {
-          resolution: 0.05,
-          origin: { x: 0, y: 0, yaw: 0 },
-          rotateDeg: 0,
-          calibState: "已标定",
-        },
-        layers: {
-          底图: true,
-          障碍物层: true,
-          点云层: true,
-          业务区域层: true,
-          巡检点层: true,
-          路线层: true,
-        },
-        deviceListVersion: 1,
       },
     ],
     robots: [
@@ -1010,7 +1088,7 @@ export function seed(): State {
         state: "执行中",
         mapId: "MAP-A03",
         mapVersion: 3,
-        pointSet: 7,
+        calibrationVersion: 7,
         current: "T009",
         x: 27,
         y: 55,
@@ -1030,7 +1108,7 @@ export function seed(): State {
         state: "空闲",
         mapId: "MAP-A03",
         mapVersion: 2,
-        pointSet: 6,
+        calibrationVersion: 6,
         x: 18,
         y: 72,
         deviceType: "四轮车",
@@ -1048,7 +1126,7 @@ export function seed(): State {
         state: "充电",
         mapId: "MAP-B01",
         mapVersion: 1,
-        pointSet: 1,
+        calibrationVersion: 1,
         x: 87,
         y: 73,
         deviceType: "挂轨",
@@ -1104,7 +1182,7 @@ export function seed(): State {
         created: dueIn(-118),
         startedAt: dueIn(-110),
         finishedAt: dueIn(-88),
-        items: [{ ...points[0], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[0], mapVersion: 3, calibrationVersion: 7 }],
         done: ["P001"],
         index: 1,
       },
@@ -1120,7 +1198,7 @@ export function seed(): State {
         ...task("T020", "罐区早班综合巡检", "完成", "R01"),
         startedAt: dueIn(-180),
         finishedAt: dueIn(-150),
-        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, pointSet: 7 })),
+        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, calibrationVersion: 7 })),
         done: points.slice(0, 3).map((p) => p.id),
         index: 3,
       },
@@ -1128,7 +1206,7 @@ export function seed(): State {
         ...task("T021", "V001 例行压力检测", "部分完成", "R01"),
         startedAt: dueIn(-160),
         finishedAt: dueIn(-140),
-        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, pointSet: 7 })),
+        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, calibrationVersion: 7 })),
         done: ["P001"],
         skipped: ["P002"],
         index: 2,
@@ -1138,7 +1216,7 @@ export function seed(): State {
         ...task("T022", "装置区红外测温巡检", "失败", "R02"),
         startedAt: dueIn(-200),
         finishedAt: dueIn(-170),
-        items: [{ ...points[2], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[2], mapVersion: 3, calibrationVersion: 7 }],
         skipped: ["P003"],
         index: 1,
         failure: "红外传感器异常",
@@ -1147,13 +1225,13 @@ export function seed(): State {
         ...task("T023", "罐区阀门紧急复核", "取消", "R01"),
         startedAt: dueIn(-90),
         finishedAt: dueIn(-80),
-        items: [{ ...points[1], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[1], mapVersion: 3, calibrationVersion: 7 }],
         index: 1,
       },
       {
         ...task("T024", "罐区夜间补充巡检", "超期", "R02"),
         deadline: dueIn(-30),
-        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, pointSet: 7 })),
+        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, calibrationVersion: 7 })),
         index: 0,
       },
       // ── 演示用：已完成任务（每个任务均有对应巡检结果，供「巡检结果」按任务维度分组展示）──
@@ -1186,7 +1264,7 @@ export function seed(): State {
         created: dueIn(-705),
         startedAt: dueIn(-675),
         finishedAt: dueIn(-650),
-        items: [{ ...points[0], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[0], mapVersion: 3, calibrationVersion: 7 }],
         done: ["P001"],
         index: 1,
       },
@@ -1203,7 +1281,7 @@ export function seed(): State {
         created: dueIn(-490),
         startedAt: dueIn(-460),
         finishedAt: dueIn(-430),
-        items: [{ ...points[1], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[1], mapVersion: 3, calibrationVersion: 7 }],
         done: ["P002"],
         index: 1,
       },
@@ -1220,7 +1298,7 @@ export function seed(): State {
         created: dueIn(-300),
         startedAt: dueIn(-270),
         finishedAt: dueIn(-240),
-        items: [{ ...points[0], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[0], mapVersion: 3, calibrationVersion: 7 }],
         done: ["P001"],
         index: 1,
       },
@@ -1229,7 +1307,7 @@ export function seed(): State {
         created: dueIn(-210),
         startedAt: dueIn(-180),
         finishedAt: dueIn(-150),
-        items: [{ ...points[2], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[2], mapVersion: 3, calibrationVersion: 7 }],
         done: ["P003"],
         index: 1,
       },
@@ -1244,7 +1322,7 @@ export function seed(): State {
       // ── 演示用：扩充点位对应的已完成任务（供告警 / 结果 / 排行取数）──
       {
         ...task("T040", "罐区夜间综合巡检", "完成", "R01"),
-        items: points.filter(p => !["P007", "P010"].includes(p.id)).map(p => ({...p, mapVersion:3, pointSet:7})),
+        items: points.filter(p => !["P007", "P010"].includes(p.id)).map(p => ({...p, mapVersion:3, calibrationVersion:7})),
         created: dueIn(-140),
         startedAt: dueIn(-120),
         finishedAt: dueIn(-70),
@@ -1266,7 +1344,7 @@ export function seed(): State {
         created: dueIn(-190),
         startedAt: dueIn(-170),
         finishedAt: dueIn(-148),
-        items: [{ ...points[5], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[5], mapVersion: 3, calibrationVersion: 7 }],
         done: ["P006"],
         index: 1,
       },
@@ -1276,8 +1354,8 @@ export function seed(): State {
         startedAt: dueIn(-45),
         finishedAt: dueIn(-24),
         items: [
-          { ...points[6], mapVersion: 1, pointSet: 1 },
-          { ...points[9], mapVersion: 1, pointSet: 1 },
+          { ...points[6], mapVersion: 1, calibrationVersion: 1 },
+          { ...points[9], mapVersion: 1, calibrationVersion: 1 },
         ],
         done: ["P007", "P010"],
         index: 2,
@@ -1287,7 +1365,7 @@ export function seed(): State {
         created: dueIn(-11100),
         startedAt: dueIn(-11080),
         finishedAt: dueIn(-11040),
-        items: [{ ...points[8], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[8], mapVersion: 3, calibrationVersion: 7 }],
         done: ["P009"],
         index: 1,
       },
@@ -1296,7 +1374,7 @@ export function seed(): State {
         created: dueIn(-15100),
         startedAt: dueIn(-15080),
         finishedAt: dueIn(-15040),
-        items: [{ ...points[0], mapVersion: 3, pointSet: 7 }],
+        items: [{ ...points[0], mapVersion: 3, calibrationVersion: 7 }],
         done: ["P001"],
         index: 1,
       },

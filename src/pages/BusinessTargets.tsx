@@ -26,6 +26,25 @@ const ALARM_LEVELS = ["一般", "重要", "紧急"];
 const NOTIFY_ROLES = ["设备岗", "巡检调度岗", "结果复核岗", "值班长"];
 /** 告警触发条件默认说明（一期只支持单次判定） */
 const ALARM_TRIGGER = "单次超限即告警（一期不支持连续多次）";
+/**
+ * TGT-01：环境 / 区域类目标候选 —— **不关联设备台账**。
+ * 这些是"针对环境 / 区域"的业务目标，不是针对某台设备的（气体、声纹、区域红外、AI 不安全行为、环境拍照）。
+ * 区域类目标需填写参照物锚点（TGT-02）。
+ */
+const ENV_KINDS: {
+  name: string;
+  kind: "环境" | "区域";
+  algorithm: string;
+  judge: JudgeType;
+  unit: string;
+  expected?: string;
+}[] = [
+  { name: "环境气体", kind: "区域", algorithm: "气体浓度阈值判定（泵吸式）", judge: "数值范围", unit: "ppm" },
+  { name: "区域声纹", kind: "区域", algorithm: "声纹异常检测", judge: "期望状态", unit: "", expected: "无异常噪声" },
+  { name: "区域红外", kind: "区域", algorithm: "红外热像区域测温", judge: "数值范围", unit: "℃" },
+  { name: "AI 不安全行为分析", kind: "区域", algorithm: "AI 不安全行为识别", judge: "有无目标", unit: "" },
+  { name: "环境拍照", kind: "环境", algorithm: "可见光图像比对", judge: "期望状态", unit: "", expected: "无异常" },
+];
 /** 列表每页条数 */
 const PAGE_SIZE = 10;
 
@@ -43,11 +62,23 @@ function judgeText(b: {
   return "按等级评分，低分需复核";
 }
 
-export function BusinessTargets() {
+/**
+ * 巡检目标台账
+ * @param tab 传 "space" 时预置为「空间与区域（非装置）」视图（侧边栏独立入口进入）
+ */
+export function BusinessTargets({ tab }: { tab?: string } = {}) {
   const { s, act } = useStore();
   const [kw, KW] = useViewState("bt.q", ""),
     [areaF, AF] = useViewState("bt.area", "全部"),
     [devF, DF] = useViewState("bt.device", "全部"),
+    /**
+     * 目标类型归类：装置＝关联设备台账（仪表 / 阀门）；空间与区域＝非装置（气体 / 声纹 / 红外 / AI / 环境拍照）。
+     * tab 为 "space" 时从「空间与区域」独立入口进入，默认只看非装置类。
+     */
+    [kindF, KF] = useViewState(
+      "bt.kind",
+      tab === "space" ? "空间与区域" : "全部",
+    ),
     [inspectF, IF] = useViewState("bt.inspect", "全部"),
     [pager, PG] = useViewState("bt.page", 1);
   const [open, OPEN] = useState(false);
@@ -57,6 +88,10 @@ export function BusinessTargets() {
   /** 抽屉第一步选中的仪表 id */
   const [pick, PICK] = useState("");
   const [form, FORM] = useState({
+    /** TGT-01：目标类型（仪表类挂设备；环境 / 区域类不关联设备） */
+    targetKind: "仪表" as "仪表" | "环境" | "区域",
+    /** TGT-02：区域 / 空间目标的参照物锚点 */
+    anchor: "",
     goal: "",
     require: "",
     requirementId: "",
@@ -132,6 +167,8 @@ export function BusinessTargets() {
     PICK("");
     STEP(0);
     FORM({
+      targetKind: "仪表",
+      anchor: "",
       goal: "",
       require: "",
       requirementId: "",
@@ -160,8 +197,10 @@ export function BusinessTargets() {
   /** 打开编辑抽屉：直接进第二步，仪表只读 */
   function openEdit(b: BusinessTarget) {
     EDIT(b.id);
-    PICK(b.instrumentId);
+    PICK(b.instrumentId || "");
     FORM({
+      targetKind: b.targetKind || "仪表",
+      anchor: b.anchor || "",
       goal: b.goal || "",
       require: b.require || "",
       requirementId: b.requirementId,
@@ -189,6 +228,9 @@ export function BusinessTargets() {
   /** 保存：新增走 ADD，编辑走 UPDATE */
   function save() {
     const payload = {
+      // TGT-01/02：目标类型 + 区域锚点（环境 / 区域类不关联设备）
+      targetKind: form.targetKind,
+      anchor: form.anchor,
       goal: form.goal,
       require: form.require,
       requirementId: form.requirementId,
@@ -229,9 +271,14 @@ export function BusinessTargets() {
     ),
   ];
   const keyword = kw.trim();
+  /** 空间 / 区域（非装置）判定：不关联设备台账 或 目标类型非「仪表」 */
+  const isSpaceTarget = (b: BusinessTarget) =>
+    !b.instrumentId || (b.targetKind && b.targetKind !== "仪表");
   const list = targets.filter((b) => {
     const c = crumb(b.instrumentId);
     const req = requirements.find((r) => r.id === b.requirementId);
+    if (kindF === "装置" && isSpaceTarget(b)) return false;
+    if (kindF === "空间与区域" && !isSpaceTarget(b)) return false;
     if (areaF !== "全部" && c.area !== areaF) return false;
     if (devF !== "全部" && c.device !== devF) return false;
     if (inspectF !== "全部" && (b.inspect ? "参与巡检" : "已关闭") !== inspectF)
@@ -277,6 +324,21 @@ export function BusinessTargets() {
       </div>
       <div className="toolbar">
         <div className="actions">
+          {/* 目标类型归类：装置（关联设备台账） vs 空间与区域（非装置）—— 便于单独查看非装置类目标 */}
+          <div className="segmented">
+            {(["全部", "装置", "空间与区域"] as const).map((x) => (
+              <button
+                key={x}
+                className={kindF === x ? "active" : ""}
+                onClick={() => {
+                  KF(x);
+                  PG(1);
+                }}
+              >
+                {x}
+              </button>
+            ))}
+          </div>
           <label className="inline-filter">
             <span>区域：</span>
             <select value={areaF} onChange={(e) => AF(e.target.value)}>
@@ -318,10 +380,13 @@ export function BusinessTargets() {
         <p className="muted">
           仪表本身只是资产、<b>不能直接巡检</b>；叠加巡检要求（看什么）+ 算法（AI
           表达方式）+ 阈值 + 判断标准后，才是可执行的巡检目标台账。
+          台账分为两类：<b>装置</b>（关联设备台账的仪表 / 阀门）与<b>空间与区域（非装置）</b>
+          （气体 / 红外 / 声纹 / AI 不安全行为 / 环境拍照，<b>可不关联设备</b>，以参照物锚点圈定范围）；
+          用上方类型开关单独查看非装置类目标。
         </p>
         <Table
           heads={[
-            "仪表（区域 › 设备 › 仪表）",
+            "目标（类型 › 区域 › 设备 / 锚点）",
             "巡检要求 / 算法",
             "判断标准",
             "采集与复核",
@@ -330,12 +395,21 @@ export function BusinessTargets() {
             "操作",
           ]}
           rows={rows.map((b) => {
-            const c = crumb(b.instrumentId);
+            const c = b.instrumentId
+              ? crumb(b.instrumentId)
+              : {
+                  area: "—",
+                  device: b.anchor || "—",
+                  instrument: `（${b.targetKind || "环境"}类目标）`,
+                };
             const req = requirements.find((r) => r.id === b.requirementId);
             return [
               <>
                 <b>{c.instrument}</b>
                 <small>
+                  {b.targetKind && b.targetKind !== "仪表"
+                    ? `${b.targetKind}类目标 · `
+                    : ""}
                   {c.area} › {c.device} · {b.id}
                 </small>
               </>,
@@ -430,6 +504,34 @@ export function BusinessTargets() {
                 从<b>设备主数据</b>的检测目标里选一台仪表。选中即确定它在工厂树上的归属：
                 区域 → 设备 → 仪表。
               </Note>
+              {/* TGT-01：环境 / 区域类目标 —— 不关联设备台账，直接进入配置 */}
+              <Note>
+                <b>环境 / 区域类目标</b>（不关联设备台账）：罐区气体、区域声纹、区域红外、AI 不安全行为分析、环境拍照。
+                直接选一种进入下一步配置算法与告警；<b>区域类目标需填写参照物锚点</b>（一片罐区 / 一段管道）。
+                <div className="actions">
+                  {ENV_KINDS.map((k) => (
+                    <Btn
+                      key={k.name}
+                      onClick={() => {
+                        PICK("");
+                        FORM((old) => ({
+                          ...old,
+                          targetKind: k.kind,
+                          algorithm: k.algorithm,
+                          judge: k.judge,
+                          unit: k.unit,
+                          expected: k.expected || "",
+                          criteria: k.name + "：以参照物锚点圈定区域，按算法判定是否异常。",
+                          goal: "",
+                        }));
+                        STEP(1);
+                      }}
+                    >
+                      ＋ {k.name}（{k.kind}）
+                    </Btn>
+                  ))}
+                </div>
+              </Note>
               <div className="actions toolbar-inline">
                 <label className="inline-filter">
                   <span>区域：</span>
@@ -483,13 +585,41 @@ export function BusinessTargets() {
             </>
           ) : (
             <>
-              <Note>
-                已选仪表：
-                <b>
-                  {crumb(pick).area} › {crumb(pick).device} › {crumb(pick).instrument}
-                </b>
-                {!editId && "（如需更换，点底部「上一步」）"}
-              </Note>
+              {form.targetKind === "仪表" ? (
+                <Note>
+                  已选仪表：
+                  <b>
+                    {crumb(pick).area} › {crumb(pick).device} › {crumb(pick).instrument}
+                  </b>
+                  {!editId && "（如需更换，点底部「上一步」）"}
+                </Note>
+              ) : (
+                <Note>
+                  目标类型：<b>{form.targetKind}类</b>（不关联设备台账）。业务目标 / 锚点用于圈定范围并归因。
+                </Note>
+              )}
+              {/* TGT-02：区域 / 空间目标必须填写参照物锚点 */}
+              {form.targetKind !== "仪表" && (
+                <>
+                  <Field
+                    label={`参照物锚点${
+                      form.targetKind === "区域" ? "（区域类必填）" : "（可选）"
+                    }`}
+                  >
+                    <input
+                      value={form.anchor}
+                      placeholder="例如 3# 罐区北侧立柱 / 管廊 A 段起点"
+                      onChange={(e) =>
+                        FORM({ ...form, anchor: e.target.value })
+                      }
+                    />
+                  </Field>
+                  <Note>
+                    目标粒度：区域类目标可覆盖<b>一系列原子动作</b>（气体 / 红外 / 声纹 / AI），
+                    不要求"一个台账 = 一个操作"；下发时仍是"某个坐标点 + 一批动作"，只是业务上归因到该区域。
+                  </Note>
+                </>
+              )}
               <Field label="业务目标（这条目标要达成什么）">
                 <input
                   value={form.goal}
@@ -592,6 +722,13 @@ export function BusinessTargets() {
                   巡检点不配置告警：判定阈值就是上面的<b>上下限 / 期望状态</b>，
                   告警开关、等级与通知只在这里设置，点位按此生效。
                 </p>
+                {/* TGT-03（待确认）：环境类目标的告警策略落点尚未定论，先沿用本处，待产品 + 算法方拍板 */}
+                {form.targetKind !== "仪表" && (
+                  <Note>
+                    <b>待确认（TGT-03）</b>：环境类目标（气体 / 红外 / 声纹 / AI）的算法关联与告警策略，
+                    落在「巡检目标台账」还是「巡检点」尚未定论；当前<b>暂放本处（目标台账）</b>，不新建第二个配置入口。
+                  </Note>
+                )}
                 <div className="actions">
                   <label className="inline-filter">
                     <input

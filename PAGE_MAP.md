@@ -53,7 +53,7 @@
 | `dispatch` | `#/dispatch/workbench` | `src/pages/DispatchDesk.tsx` | 调度中心：页头「当前调度对象」+ 平台态势 6 项 + 左机器人资源列（`DispatchFleetOverview`）+ 右工作区（当前任务 / 待执行队列 / 待安排·未来时间轴） |
 | `queue` | `#/dispatch/queue` | `src/pages/DispatchDesk.tsx`（兼容旧链接） | 合并到调度中心，侧边栏隐藏重复入口 |
 | `dispatch-log` | `#/dispatch/records` | `src/pages/Supporting.tsx` 日志兜底，侧边栏已隐藏 | 调度记录 |
-| `execution` | `#/execution/live` | `src/pages/ExecutionWorkbench.tsx`（`Execution.tsx` 再导出） | 实时执行监控 |
+| `execution` | `#/execution/live` | `src/pages/ExecutionWorkbench.tsx`（`Execution.tsx` 再导出） | 实时执行监控：**执行总览 · 任务维度**（异常优先）；行内「监控」进入**内置页** `execution-monitor` |
 | `manual` | `#/execution/manual` | `src/pages/Operations.tsx`（`page="manual"`） | **人工接管与遥控**（机器人选择器 + 内嵌 `ControlConsole`）；2026-09-29 由「机器人管理 › 机器人能力」移入「巡检执行 › 执行」，路由由 `#/robots/manual` 改为 `#/execution/manual` |
 | `replay` | `#/execution/replay` | `src/pages/ObjectDetails.tsx`（`page="replay"`） | 执行回溯（主从列表）；**侧边栏已收起**（`hiddenIds`），仍可从任务详情主按钮进入；内置页 `replay-detail` 不受影响 |
 
@@ -78,11 +78,11 @@
 |---------|---------|---------|------|
 | `equipment` | `#/resources/equipment` | `src/pages/DeviceMaster.tsx` | **设备主数据**（阶段③）：清单导入 → 待审核 → 通过/驳回 → 启停与「是否巡检」；设备是"巡检什么"的唯一来源，禁止由点位反推 |
 | `points` | `#/resources/points` | `src/pages/BusinessTargets.tsx` | **巡检目标台账**：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准；列表 + 两步抽屉（选检测目标 → 配业务逻辑）。巡检项从这里选目标 |
-| `annotation` | `#/resources/annotation` | `src/pages/InspectionPoints.tsx` | **巡检点管理**（原「点位标注与验证工作台」槽位）：已配置巡检点列表（地图/状态筛选 + 搜索 + 分页）+「＋ 添加巡检点」 |
-| `point-edit` | `#/resources/points/edit` | `src/pages/PointEdit.tsx` | **添加 / 编辑巡检点内置页**（父页面 `annotation`）：巡检点名称 + 地图 + 地图点位（带定位ID）+ 多个巡检项（名称 + 业务目标 + 原子动作 / 云台参数），逐项保存 |
+| `annotation` | `#/resources/annotation` | `src/pages/InspectionPoints.tsx` | **巡检点管理**（原「点位标注与验证工作台」槽位）：已配置巡检点列表（地图/状态筛选 + 搜索 + 分页）+「**巡检点导入**」（`components/PointCalibration.tsx`，右侧抽屉：先选**数据来源机器人（机器狗）**，再「从机器人拉取数据」（接口未接入、不造假数据）/「上传表格文件」（CSV/TXT/JSON 解析 → 绑定地图或暂存））|
+| `point-edit` | `#/resources/points/edit` | `src/pages/PointEdit.tsx` | **添加 / 编辑巡检点内置页**（父页面 `annotation`）：巡检点名称 + 地图 + 标定点（**定位ID = 来源绑定键**）+ 多个巡检项（名称 + 业务目标 + 原子动作 / 云台参数），逐项保存 |
 | `point-annotate` | `#/resources/points/annotate` | `src/pages/Annotation.tsx` | **地图标注工作台内置页**（父页面 `annotation`）：候选目标 / 图面双击打点 / 试采与自主验证；仍被地图上线工作台第 1 步内嵌 |
-| `maps` | `#/robots/maps` | `src/pages/Maps.tsx` | **地图管理**：只有地图列表（区域/状态筛选 + 搜索 + 分页 + 「详情」）；旧深链 `?tab=workflow/survey/archive/changes` 仍可进入（已不在界面暴露） |
-| `map-detail` | `#/robots/maps/detail/:id` | `src/pages/MapDetail.tsx` | **地图详情内置页**（父页面 `maps`）：信息 / 版本三元组 / 内容概览 / 版本历史 / 预览；**操作区只有两个按钮**——**地图工作台**（`components/MapWorkbench.tsx`：底图 + 定位ID（区分来源）+ 轨迹，可继续新增）与**地图下发**（`components/MapDispatch.tsx`：多选设备批量下发 + 回执）；`?tab=workbench/sync` 可直达抽屉。**地图预览**（`components/MapSpatialPreview.tsx`，2D `MapCanvas` / 3D SVG 双视图）：2026-09-30 起叠加**自动巡检路网**（橙色实线，蛇形正交连线，覆盖全部巡航点——"所有点都在线上"）与本地图**巡检路线**（绿色虚线，来自 `s.routes` 按途经巡航点连线） |
+| `maps` | `#/robots/maps` | `src/pages/Maps.tsx` | **地图管理（第一个模块）**：地图列表（区域/状态筛选 + 搜索 + 分页 + 「详情」）+「＋ 导入地图」（**只导入①点云地图文件**，不含定位ID与巡检点）；旧深链 `?tab=workflow/survey/archive/changes` 仍可进入（已不在界面暴露） |
+| `map-detail` | `#/robots/maps/detail/:id` | `src/pages/MapDetail.tsx` | **地图详情内置页**（父页面 `maps`）：信息 / 空间版本 m / 版本历史 / 纯点云底图预览；**操作区只有一个按钮**——**地图下发**（`components/MapDispatch.tsx`：多选设备批量下发 + 回执）；`?tab=sync` 可直达抽屉，旧深链 `?tab=workbench` 提示标定已迁至巡检点管理。**本页不含任何定位ID / 标定点 / 巡检点**（`MapSpatialPreview` 只渲染纯点云底图；原「地图工作台」已下线，标定数据改由 `mapCalibration.ts` 独立存储） |
 
 > 已删除：`objects`（设备 → 对象 → 检测项）独立页——能力已并入设备主数据；设备的检测项与「是否巡检」开关现由「设备清单」行内「详情」右侧抽屉承载；
 > `routes`（路线管理，含「路线与轨道」子分组）——2026-09-30 删除，路线随地图带入。
@@ -138,6 +138,7 @@
 | `result-detail` | `#/results/equipment/detail/:id` | `src/pages/Results.tsx`（`page="result-detail"`） | 结果只读详情；设备档案的结果编号进入；父页面 `archive` |
 | `alarm-detail` | `#/results/equipment/alarm/:id` | `src/pages/Results.tsx`（`Alarms` 的 `page="alarm-detail"`） | 告警只读详情；设备档案的关联告警进入；父页面 `archive` |
 | `replay-detail` | `#/results/equipment/replay/:id` | `src/pages/ObjectDetails.tsx`（`page="replay-detail"`） | 执行回溯（只读）；设备档案「过程回放」、机器人「历史任务」进入；父页面 `archive` |
+| `execution-monitor` | `#/execution/monitor/:id` | `src/pages/ExecutionWorkbench.tsx`（`ExecutionMonitor`，`Execution.tsx` 再导出） | **现场态势（单任务监控）**：现场态势（巡检地图 · 当前业务点位 + 现场视频 · 机器人自主观测）+ 任务进度与控制（暂停 / 恢复 / 接管 / 终止 / 下发临时任务）+ 实时结果与检测项完成情况；执行总览行内「监控」及工作台 / 调度 / 结果 / 调度台 / 任务详情等入口进入；父页面 `execution` |
 
 **进入写法（带来源页）**：
 
@@ -169,8 +170,8 @@
 | `Annotation.tsx` | `point-annotate`（内置页） | 地图标注工作台（候选目标 / 试采 / 自主验证）；不再是菜单页 |
 | `Planning.tsx` | `plans` / `plan-edit` / `tasks` / `quick` / `templates` | 计划 + 任务 + 模板 |
 | `DispatchDesk.tsx` / `Scheduling.tsx` | `dispatch` / `queue` | 调度中心（左资源列 + 右工作区）/ 旧三栏调度工作台（`Scheduling.tsx` 本版不可达） |
-| `ExecutionWorkbench.tsx` | — | 实时执行监控（`Execution.tsx` 再导出为 `Execution`） |
-| `Execution.tsx` | — | 再导出 `Execution`；并导出 `ControlConsole`（人工接管与遥控控制台主体，内嵌于 `manual`） |
+| `ExecutionWorkbench.tsx` | `execution` / `execution-monitor`（内置页） | 实时执行监控总览（`Execution`）+ 单任务现场态势（`ExecutionMonitor`，内置页） |
+| `Execution.tsx` | — | 再导出 `Execution` / `ExecutionMonitor`；并导出 `ControlConsole`（人工接管与遥控控制台主体，内嵌于 `manual`） |
 | `Results.tsx` | `results` / `review` / `result-detail` | 巡检结果查询 + 复核 + 结果详情；同时导出 `Alarms`（`alarms` / `alarm` / `alarm-detail`） |
 | `DeviceArchive.tsx` | — | 设备巡检档案（内部 5 tab，含任务/时间筛选） |
 | `ObjectDetails.tsx` | `point` / `task-detail` / `replay-detail` / `replay` | 下钻详情复用页 |
@@ -399,3 +400,20 @@
 | 新 action | `ADD_BUSINESS_TARGET`（校验仪表在册且非停用、要求存在、算法必填、数值范围上下限有效、期望状态必填）、`UPDATE_BUSINESS_TARGET`（含 `inspect` 开关） |
 | 「是否巡检」双向一致 | 过渡期约定：同一仪表下**只要有一条业务目标开着**，设备清单巡检项即为开（`syncInspectFlag`）；`SET_INSPECT_FLAG` 也会写回该仪表的全部业务目标 |
 | 新增页面 | `pages/BusinessTargets.tsx`（KPI + 区域/设备/是否巡检筛选 + 分页 + 两步抽屉）；`deviceMaster.defaultRequirementOfInstrument` 为"仪表 → 默认巡检要求"的**唯一口径**（种子与页面共用） |
+
+## 2026-10-06 地图 / 巡检点分模块（MAP-02 V1.3：采集一趟、产出两件）
+
+| 变更 | 说明 |
+|---|---|
+| **MAP-02 口径升级** | 由"页面流程顺序"升级为「**数据产出与模块边界**」：**采集一趟、产出两件**（① 点云地图文件 ② 巡检点标定文件）；**存储两份、上传两处**（地图归「地图管理」，标定文件归「巡检点管理」）；**模块两个、ID 一绑**（按定位 ID 绑定）。文案不再出现"第一步现场跑图、第二步现场标定" |
+| **地图彻底去点位** | `MapAsset` 删除 `targets` 与 `pointSet`：地图只存纯点云底图与建图元信息，**不含任何定位ID与巡检点**；`IMPORT` 不再随文件带入点位 / 轨迹 |
+| **标定数据独立成模块** | 新增 `data/mapCalibration.ts`：`MapCalibration`（`mapId` / `version` c{n} / `targets` / `file` / `importedAt`）+ `targetsOf` / `calibrationVersionOf` / `ensureCalibration` / `mergeCalibrationPoints` / `parsePointCalibration`（真实解析 CSV / TXT / JSON，解析不出即报错，不生成模拟数据） |
+| **取消"巡航点"术语** | 全平台统一为两级口径：**标定点** = 地图位置 + 定位ID（仅时空信息）；**巡检点** = 名称 + 标定点 + 多个巡检项 |
+| **版本口径解耦** | 地图只保留空间版本 m；`pointSet` 全面更名为 `calibrationVersion`（c）并改由标定数据提供；展示由 `m3 / p7` 改为 `m3 / c7` |
+| **标定不再改地图** | `ADD_TARGET` / `ANNOTATE` / `SAVE_POINT` / `SAVE_MAP_CALIBRATION` 只推进标定版本，**不再把地图打回草稿**；只有地图修订（`CHANGE_REVISION`）才 `m++` 并回草稿 |
+| **新 / 更名 action** | 新增 `IMPORT_POINT_CALIBRATION`（按定位 ID 合并 = **地图重传后重绑**）、`BIND_PENDING_CALIBRATION` / `DISCARD_PENDING_CALIBRATION`（标定文件先到可**暂存**）；`SAVE_MAP_TARGETS` 更名 `SAVE_MAP_CALIBRATION` |
+| **新组件** | `components/PointCalibration.tsx`（原 `components/MapWorkbench.tsx` 下线）：导入标定文件 → 解析预览 → 绑定地图 / 暂存 → 底图核对与补录 |
+| **地图管理收口** | 列表删除"定位ID / 轨迹 / 业务点位"列，改为纯点云内容与下发情况；详情只保留「地图下发」按钮与纯点云预览（`MapSpatialPreview` 传空标定点）；旧深链 `?tab=workbench` 提示标定已迁至巡检点管理 |
+| **巡检点列表操作列** | 去掉行内「详情」按钮（保留「编辑巡检点」）；`point` 详情页路由保留，仍可由结果 / 执行 / 驾驶舱下钻进入 |
+| **主键口径（对齐 DATA-01）** | 定位 ID 仅作**来源绑定键**，非业务主键；平台巡检点主键独立生成；统一坐标 XYZ + 姿态 + 上装参数为跨地图 / 跨版本定位依据；地图重传后按定位 ID 自动匹配，匹配不上按坐标辅助 + 人工确认重绑 |
+| **测试** | 62 → **63** 项（新增 MAP-02 全链路：解析 → 导入绑定 → 重绑 → 暂存）；`map-management.test.ts` 旧"点位回草稿"断言改为"标定与地图版本解耦" |

@@ -12,7 +12,7 @@ function available() {
   s.plans[0].time = "17:00";
   const r = s.robots.find((r) => r.id === "R02")!;
   r.mapVersion = 3;
-  r.pointSet = 7;
+  r.calibrationVersion = 7;
   return s;
 }
 test("plan auto-generates once, receives before time, cannot start early, completes autonomously", () => {

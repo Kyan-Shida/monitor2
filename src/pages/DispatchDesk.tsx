@@ -33,10 +33,11 @@ export function DispatchDesk({ id }: { id?: string }) {
   const [peek, setPeek] = useState<Task>();
   const r = s.robots.find((r) => r.id === rid)!;
   const current = s.tasks.find((t) => t.id === r.current);
+  // DSP-02 / TKO-04：队列含「已被接管」，被接管任务需在此可见并有「恢复任务」入口
   const queue = s.tasks.filter(
     (t) =>
       t.robotId === rid &&
-      ["已分配", "下发中", "待执行", "暂停"].includes(t.state) &&
+      ["已分配", "下发中", "待执行", "暂停", "已被接管"].includes(t.state) &&
       t.id !== current?.id,
   );
   const pending = s.tasks.filter(
@@ -44,6 +45,7 @@ export function DispatchDesk({ id }: { id?: string }) {
       (!t.robotId || t.robotId === rid) &&
       (t.state === "待调度" ||
         t.state === "超期" ||
+        t.state === "已被接管" ||
         (t.state === "已分配" && !!t.blockedReason)),
   );
   /**
@@ -101,7 +103,7 @@ export function DispatchDesk({ id }: { id?: string }) {
           </b>
           <Badge>{r.state}</Badge>
           <span className="muted">
-            电量 {r.battery}% · m{r.mapVersion}/p{r.pointSet}
+            电量 {r.battery}% · m{r.mapVersion}/c{r.calibrationVersion}
           </span>
         </div>
         <Btn primary onClick={() => setQuick(true)}>
@@ -133,7 +135,7 @@ export function DispatchDesk({ id }: { id?: string }) {
                   </p>
                 </div>
                 <Badge>{current.state}</Badge>
-                <Btn primary onClick={() => go("execution", current.id)}>
+                <Btn primary onClick={() => go("execution-monitor", current.id)}>
                   查看实时执行
                 </Btn>
                 {current.state === "执行中" && (
@@ -211,6 +213,15 @@ export function DispatchDesk({ id }: { id?: string }) {
                         onClick={() => act({ type: "START", id: t.id })}
                       >
                         开始执行
+                      </Btn>
+                    )}
+                    {/* TKO-04 / DSP-02：被接管的任务在调度中心可直接恢复 */}
+                    {t.state === "已被接管" && (
+                      <Btn
+                        primary
+                        onClick={() => act({ type: "START", id: t.id })}
+                      >
+                        恢复任务
                       </Btn>
                     )}
                     {t.state === "已分配" && (
@@ -297,7 +308,7 @@ export function DispatchDesk({ id }: { id?: string }) {
                             紧急插单
                           </Btn>
                         )}
-                      {reasons.includes("地图/点位版本待同步") && (
+                      {reasons.includes("地图/标定版本待同步") && (
                         <Btn onClick={() => go("map-detail", t.mapId, "sync")}>
                           同步地图
                         </Btn>

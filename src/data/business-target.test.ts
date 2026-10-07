@@ -35,7 +35,14 @@ test("工厂树三层齐全：区域 → 设备 → 仪表，且仪表归属可�
 
 test("巡检目标台账 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准；阈值与点位规则同源", () => {
   const s = seed();
-  assert.equal(s.businessTargets!.length, s.instruments!.length);
+  // TGT-01：装置类目标与仪表一一对应；空间 / 区域（非装置）类目标额外存在（不关联设备台账）
+  const deviceTargets = s.businessTargets!.filter((b) => b.instrumentId);
+  assert.equal(deviceTargets.length, s.instruments!.length);
+  const spaceTargets = s.businessTargets!.filter((b) => !b.instrumentId);
+  assert.ok(
+    spaceTargets.length >= 2,
+    "应存在空间 / 区域（非装置）类目标示例",
+  );
   // 压力表（可见光 + MPa）→ 看仪表读数，量程与点位判定规则一致（0.2–0.8 MPa）
   const p = bt(s, "BT-II-V001-P");
   assert.equal(p.requirementId, "REQ-READ");

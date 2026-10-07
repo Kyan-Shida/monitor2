@@ -44,7 +44,7 @@ export function PlanRobotBinding({
         <dt>执行前提</dt>
         <dd>
           {cur.state} · 电量 {cur.battery}% · 地图 {cur.mapId} m
-          {cur.mapVersion}/p{cur.pointSet}
+          {cur.mapVersion}/c{cur.calibrationVersion}
         </dd>
         <dt>当前任务</dt>
         <dd>

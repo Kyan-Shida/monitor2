@@ -1,30 +1,31 @@
 /**
  * @file MapDetail.tsx
- * @description 地图详情（内置页，挂在「地图管理」目录下）：展示单张地图的详细信息与状态，
- *              并提供两个内嵌抽屉——**地图工作台**（管理巡航点）与**地图下发**（多选设备同步）。
- * @interaction 地图列表「详情」→ `#/robots/maps/detail/:id`；深链 `?tab=sync` / `?tab=workbench` 直达抽屉
+ * @description 地图详情（内置页，挂在「地图管理」目录下）：展示单张**纯点云地图**的信息与状态，
+ *              并提供一个内嵌抽屉——**地图下发**（多选设备同步）。
+ *              **本页不含任何定位ID与巡检点**：采集同批产出的「巡检点标定文件」归第二个模块
+ *              ——「巡检点管理 › 导入巡检点标定文件」（components/PointCalibration.tsx）——
+ *              导入，两者按**定位 ID**绑定。
+ * @interaction 地图列表「详情」→ `#/robots/maps/detail/:id`；深链 `?tab=sync` 直达下发抽屉，
+ *              旧深链 `?tab=workbench` 会提示标定已迁至巡检点管理
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import { Badge, Btn, Modal, Note, Panel, Table } from "../components/UI";
+import { Badge, Btn, Modal, Note, Panel } from "../components/UI";
 import { MapSpatialPreview } from "../components/MapSpatialPreview";
-import { MapWorkbench } from "../components/MapWorkbench";
 import { MapDispatch } from "../components/MapDispatch";
 
 export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
   const { s } = useStore();
   const m = s.maps.find((x) => x.id === id) || s.maps[0];
-  /** 抽屉：空串表示关闭；深链 tab 可直接打开对应抽屉 */
-  const [drawer, DRAWER] = useState(
-    tab === "sync" ? "下发" : tab === "workbench" ? "工作台" : "",
-  );
+  /** 抽屉：空串表示关闭；深链 `?tab=sync` 可直接打开下发抽屉 */
+  const [drawer, DRAWER] = useState(tab === "sync" ? "下发" : "");
   /** 草稿状态下的下发确认弹窗 */
   const [confirmDispatch, SETCONFIRM] = useState(false);
   if (!m) return <Note>地图不存在，请从地图列表进入。</Note>;
-  const pts = s.points.filter((p) => p.mapId === m.id);
+  /** 旧深链 `?tab=workbench`：地图工作台已不再属于地图管理 */
+  const legacyWorkbench = tab === "workbench";
 
-  const openWorkbench = () => DRAWER("工作台");
   const openDispatch = () => {
     if (m.state === "草稿") SETCONFIRM(true);
     else DRAWER("下发");
@@ -35,25 +36,38 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
       <div className="context-bar">
         <b>{m.name}</b>
         <span>
-          {m.id} · {m.region} · m{m.version} / p{m.pointSet}
+          {m.id} · {m.region} · m{m.version}
         </span>
         <Badge>{m.state}</Badge>
-        {/* 详情页只保留两个动作：地图工作台（管理巡航点）与地图下发（同步给设备） */}
+        {/* 地图管理只保留一个动作：地图下发（同步给设备）；巡检点标定不在这里 */}
         <div className="actions">
-          <Btn primary onClick={openWorkbench}>
-            地图工作台
-          </Btn>
           <Btn primary onClick={openDispatch}>
             地图下发
           </Btn>
         </div>
       </div>
 
+      {legacyWorkbench && (
+        <Note>
+          <b>地图工作台已下线：</b>巡检点标定归第二个模块——「巡检点管理 › 巡检点导入」；
+          标定数据独立存储、与地图分开放，两者按<b>定位 ID</b>绑定。
+          <Btn onClick={() => go("annotation", m.id)}>前往巡检点导入 →</Btn>
+        </Note>
+      )}
+
       {m.state === "草稿" && (
         <Note>
           <b>当前地图为草稿状态：</b>编辑内容尚未下发到设备，请点击「地图下发」定版并同步。
         </Note>
       )}
+
+      {/* MAP-03：地图下发只下发点云底图；巡检点用坐标 + 业务数据单独下发 */}
+      <Note>
+        地图就是<b>纯点云</b>，只记录"机器人能走哪"，<b>不含任何定位ID与巡检点</b>。
+        地图下发<b>只下发纯点云底图</b>；<b>巡检点</b>由同批采集产出的「巡检点标定文件」
+        在「巡检点管理」导入后，用<b>坐标 + 业务数据单独下发</b>；
+        标定数据与地图分开放（各自带版本 m / c）。
+      </Note>
 
       <Panel title="地图信息">
         <dl className="kv">
@@ -65,8 +79,9 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
           <dd>{m.region}</dd>
           <dt>版本</dt>
           <dd>
-            空间 m{m.version} · 点位集合 p{m.pointSet}
+            空间版本 m{m.version}
             {m.deviceListVersion ? ` · 设备清单 c${m.deviceListVersion}` : ""}
+            <small>点位标定数据带自己的版本 c，不改变地图空间版本</small>
           </dd>
           <dt>状态</dt>
           <dd>
@@ -89,59 +104,42 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
             {m.cloud || "点云缺失"} / {m.video || "视频缺失"}
           </dd>
           <dt>底图</dt>
-          <dd>{m.image ? "已上传（可在地图工作台替换）" : "未上传"}</dd>
+          <dd>{m.image ? "已上传（纯点云底图）" : "未上传"}</dd>
         </dl>
       </Panel>
-      <div className="grid two">
-        <Panel title="巡航点清单（带ID）">
-          <p className="muted">
-            巡航点即地图携带的定位标记（带ID）；在「地图工作台」增删改。业务化（绑定设备成为可执行巡检点）在「巡检点管理 / 巡检目标台账」完成。
-          </p>
-          <Table
-            heads={["ID / 定位号", "来源", "类型", "坐标 (x,y)", "状态"]}
-            rows={m.targets.map((t) => [
-              t.externalId || t.id,
-              t.source,
-              t.kind,
-              `(${t.x}, ${t.y})`,
-              <Badge>{t.state}</Badge>,
-            ])}
-          />
-        </Panel>
-        <Panel title="版本历史">
-          {m.history.length ? (
-            m.history.map((h, i) => (
-              <p className="event" key={i}>
-                {h}
-              </p>
-            ))
-          ) : (
-            <p className="muted">暂无版本记录</p>
-          )}
-        </Panel>
-      </div>
-      <Panel title="地图预览 · 巡航点">
+      <Panel title="版本历史">
+        {m.history.length ? (
+          m.history.map((h, i) => (
+            <p className="event" key={i}>
+              {h}
+            </p>
+          ))
+        ) : (
+          <p className="muted">暂无版本记录</p>
+        )}
+      </Panel>
+      <Panel title="地图预览（纯点云底图）">
+        <Note>
+          <b>本页只预览纯点云底图</b>：定位ID、标定点、巡检点与巡检路线都不属于地图，
+          统一在「巡检点管理」中导入 / 维护。
+        </Note>
         <MapSpatialPreview
           map={m}
-          points={pts}
-          cruiseOnly
-          routes={(s.routes || []).filter((r) => r.mapId === m.id)}
+          points={[]}
+          targets={[]}
+          routes={[]}
           onSelect={() => go("annotation", m.id)}
         />
       </Panel>
 
       {drawer && (
         <Modal
-          title={`${m.name} · ${drawer === "工作台" ? "地图工作台" : "地图下发与机器同步"}`}
+          title={`${m.name} · 地图下发与机器同步`}
           drawer
           drawerWidth={920}
           onClose={() => DRAWER("")}
         >
-          {drawer === "工作台" ? (
-            <MapWorkbench mapId={m.id} />
-          ) : (
-            <MapDispatch mapId={m.id} />
-          )}
+          <MapDispatch mapId={m.id} />
         </Modal>
       )}
 
@@ -149,7 +147,7 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
         <Modal title="草稿地图即将下发" onClose={() => SETCONFIRM(false)}>
           <p>
             当前地图处于<b>草稿</b>状态，点击「确认下发」后将自动定版为当前版本，并把
-            m{m.version} / p{m.pointSet} 同步给所选设备。
+            m{m.version} 与最新标定数据同步给所选设备。
           </p>
           <div className="actions">
             <Btn onClick={() => SETCONFIRM(false)}>取消</Btn>

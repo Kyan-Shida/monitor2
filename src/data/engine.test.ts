@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run, constraints } from "./engine";
 import { pages } from "./navigation";
+import { ensureCalibration, calibrationVersionOf } from "./mapCalibration";
 import type { State } from "./types";
 function complete(s: State, id: string, abnormal = false) {
   while (s.tasks.find((t) => t.id === id)!.state === "执行中")
@@ -23,12 +24,15 @@ function dispatch(s: State, id: string) {
 }
 // 2026-09-30：下线「路线管理」目录（路线随地图带入）→ 39 → 38；
 // 同日合并「能力与健康 / 地图与版本 / 机型专项」三页为「机器人能力」并新增「新增机器人」页 → 37
+// 2026-10-06：新增「空间与区域目标」页（非装置类目标独立入口）→ 38
+// 2026-10-07：空间与区域目标（points-space）暂未实现，从菜单注释掉 → 38 → 37
 test("37 unique phase-one pages", () => {
   assert.equal(pages.length, 37);
   assert.equal(new Set(pages.map((p) => p.id)).size, 37);
 });
 test("map import → annotation → sync → validation → publication", () => {
   let s = seed();
+  // 采集产出 ①：只导入纯点云地图文件（不含任何定位ID与巡检点）
   s = run(s, {
     type: "IMPORT",
     name: "测试地图",
@@ -36,18 +40,18 @@ test("map import → annotation → sync → validation → publication", () => 
     cloud: "cloud.pcd",
     video: "video.mp4",
     source: "手持仪器",
-    // 定位ID与轨迹随文件带入（简化后的导入就是"上传地图 + 自带定位ID/轨迹"）
-    targets: [
-      { id: "O901", x: 37, y: 34, kind: "可见光" },
-      { id: "O902", x: 65, y: 60, kind: "红外" },
-    ],
-    track: [{ x: 16, y: 82, kind: "停靠点", seq: 1 }],
   });
   const m = s.maps[0];
+  // 采集产出 ②：导入同批采集的巡检点标定文件（独立模块，与地图分开放），按定位ID绑定
+  const cal = ensureCalibration(s, m.id);
+  cal.targets.push(
+    { id: "O901", externalId: "O901", source: "地图导入", kind: "可见光", x: 37, y: 34, state: "待确认" },
+    { id: "O902", externalId: "O902", source: "地图导入", kind: "红外", x: 65, y: 60, state: "待确认" },
+  );
   s = run(s, {
     type: "ANNOTATE",
     mapId: m.id,
-    targetId: m.targets[0].id,
+    targetId: cal.targets[0].id,
     name: "测试压力点",
     // v3：设备与检测对象必须来自设备主数据（DEV-V001 / 出口压力表）
     device: "V001",
@@ -65,7 +69,7 @@ test("map import → annotation → sync → validation → publication", () => 
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02" });
   assert.equal(s.points.find(x => x.id === p.id)!.validationFailure, undefined);
   assert.equal(s.points.find(x => x.id === p.id)!.state, "已启用");
-  assert.equal(s.robots[1].pointSet, s.maps[0].pointSet);
+  assert.equal(s.robots[1].calibrationVersion, calibrationVersionOf(s, m.id));
 });
 test("missing archive blocks publishing", () => {
   let s = seed();
@@ -110,7 +114,8 @@ test("takeover pause acknowledgment exclusive session exit resume", () => {
   assert.throws(() => run(s, { type: "CONTROL", id, command: "前进" }));
   assert.throws(() => run(s, { type: "TAKEOVER", robotId: "R01" }));
   s = run(s, { type: "CONTROL_ACK", id });
-  assert.equal(s.tasks[0].state, "暂停");
+  // TKO-04：接管＝借调，原任务进入「已被接管」，释放后由 START 显式恢复
+  assert.equal(s.tasks[0].state, "已被接管");
   s = run(s, { type: "CONTROL", id, command: "前进" });
   assert.equal(s.robots[0].y, 52);
   s = run(s, { type: "CONTROL_EXIT", id });
@@ -139,7 +144,7 @@ test("failed sync retains actual version; stale receipt rejected; busy activatio
 test("mismatched map may queue but may not dispatch", () => {
   let s = seed();
   assert.ok(
-    constraints(s, s.tasks[1], s.robots[1]).includes("地图/点位版本待同步"),
+    constraints(s, s.tasks[1], s.robots[1]).includes("地图/标定版本待同步"),
   );
   s = run(s, { type: "ASSIGN", id: "T010", robotId: "R02" });
   assert.throws(() => run(s, { type: "DISPATCH", id: "T010" }), /版本待同步/);

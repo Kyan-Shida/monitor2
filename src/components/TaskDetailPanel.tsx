@@ -64,8 +64,8 @@ export function TaskDetailPanel({
       : ["已分配", "下发中", "待执行", "执行中", "暂停"].includes(t.state)
         ? {
             label: "执行监控",
-            page: "execution",
-            title: "打开实时执行监控：查看当前阶段、采集进度与现场画面",
+            page: "execution-monitor",
+            title: "打开现场态势：查看当前阶段、采集进度与现场画面",
           }
         : ["完成", "部分完成"].includes(t.state)
           ? {
@@ -136,7 +136,7 @@ export function TaskDetailPanel({
             <ObjectLink type="robot" id={t.robotId} />
           </span>
           <span>
-            <i>版本</i>m{t.mapVersion} / p{t.pointSet}
+            <i>版本</i>m{t.mapVersion} / c{t.calibrationVersion}
           </span>
           <span>
             <i>当前阶段</i>

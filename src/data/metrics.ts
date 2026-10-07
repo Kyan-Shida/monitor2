@@ -6,6 +6,7 @@
 import type { State } from "./types";
 import { terminal } from "./selectors";
 import { deviceOf } from "./deviceMaster";
+import { calibrationVersionOf } from "./mapCalibration";
 
 /** 口径配置：成本 / 人力换算系数（口径可配，配置中心可改） */
 export const METRIC_CONFIG = {
@@ -182,7 +183,12 @@ export const metrics: MetricDef[] = [
         if (r.state === "离线" || r.battery < r.constraints.minBattery)
           return true;
         const m = s.maps.find((x) => x.id === r.mapId);
-        return !!m && (r.mapVersion !== m.version || r.pointSet !== m.pointSet);
+        // 地图空间版本 + 独立标定数据版本，任一落后即计入
+        return (
+          !!m &&
+          (r.mapVersion !== m.version ||
+            r.calibrationVersion !== calibrationVersionOf(s, r.mapId))
+        );
       }).length,
   },
   {
@@ -458,13 +464,49 @@ export const metrics: MetricDef[] = [
   {
     key: "alarmValid",
     name: "有效告警数",
-    formula: "告警总数 − 被标注为误报的告警数",
+    formula: "处置时被人工标注为「有效」的告警数（ALM-05）",
     unit: "条",
     positive: true,
     dims: ["厂区", "机型", "告警类型"],
     roles: "*",
+    calc: (s) => s.alarms.filter((a) => a.validity === "有效").length,
+  },
+  {
+    key: "alarmAccuracy",
+    name: "报警准确率",
+    formula:
+      "被标注为「有效」的告警数 / 已标注（有效 + 无效）的告警数 × 100%；取自告警处置时的「有效 / 无效」人工标注",
+    unit: "%",
+    target: 90,
+    positive: true,
+    dims: ["厂区", "机型", "告警类型"],
+    roles: "*",
+    calc: (s) => {
+      const labeled = s.alarms.filter(
+        (a) => a.validity === "有效" || a.validity === "无效",
+      );
+      return pct(
+        labeled.filter((a) => a.validity === "有效").length,
+        labeled.length,
+      );
+    },
+  },
+  {
+    key: "alarmLabelRate",
+    name: "告警标注率",
+    formula:
+      "已标注「有效 / 无效」的告警数 / 告警总数 × 100%；标注覆盖率越高，准确率越可信（产品成熟度信号）",
+    unit: "%",
+    target: 80,
+    positive: true,
+    dims: ["厂区", "时段"],
+    roles: "*",
     calc: (s) =>
-      s.alarms.length - s.feedbacks.filter((f) => f.label === "误报").length,
+      pct(
+        s.alarms.filter((a) => a.validity === "有效" || a.validity === "无效")
+          .length,
+        s.alarms.length,
+      ),
   },
 ];
 

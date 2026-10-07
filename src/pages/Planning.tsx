@@ -8,6 +8,7 @@ import { PlanRobotBinding } from "../components/PlanRobotBinding";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
 import { fmtTime } from "../data/selectors";
 import { actionsOfPoint, captureKindsOfPoint } from "../data/deviceMaster";
+import { targetsOf, calibrationVersionOf } from "../data/mapCalibration";
 import type { Task } from "../data/types";
 export function Planning({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
@@ -39,8 +40,14 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       "planning.tasks.robotFilter",
       "全部",
     ),
+    /** TASK-02：时间范围筛选，默认「当天」；最大跨度锁 30 天，避免列表爆量 */
+    [timeRange, TR] = useViewState<string>("planning.tasks.timeRange", "今日"),
     [srcPage, SP] = useState(1),
     [quickOpen, setQuickOpen] = useState(false),
+    /** TASK-03：按计划 / 按天批量取消任务的弹窗与选择 */
+    [cancelOpen, setCancelOpen] = useState(false),
+    [cancelPlan, setCancelPlan] = useState("全部"),
+    [cancelDay, setCancelDay] = useState(""),
     [planOpen, setPlanOpen] = useState(false),
     [planEditingId, setPlanEditingId] = useState<string | undefined>();
   /** 任务列表「详情」抽屉中的任务：就地查看完整详情，不打断列表上下文 */
@@ -149,15 +156,15 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       <Table
         heads={[
           "选择",
-          "巡检点",
-          "地图 / 地图点位",
+          "巡检点名称",
+          "地图 / 标定点",
           "巡检项",
           "机器操作内容",
+          "覆盖设备",
           "版本 / 状态",
         ]}
         rows={pickRows.map((p) => {
-          const m = s.maps.find((x) => x.id === p.mapId);
-          const mp = m?.targets.find((t) => t.id === p.targetId);
+          const mp = targetsOf(s, p.mapId).find((t) => t.id === p.targetId);
           const specs = p.inspectItems || [];
           return [
             <input
@@ -172,7 +179,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               </small>
             </>,
             <>
-              {m?.name || p.mapId}
+              {s.maps.find((x) => x.id === p.mapId)?.name || p.mapId}
               <small>{mp?.externalId ? `定位ID ${mp.externalId}` : "无定位ID"}</small>
             </>,
             <>
@@ -182,6 +189,35 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             <>
               {actionsOfPoint(s, p).join(" / ") || "—"}
               <small>{captureKindsOfPoint(s, p).join(" / ")}</small>
+            </>,
+            // TPL-01：覆盖设备可能多项 → 计数 + 明细展示（当前点位收敛到首个巡检项所属设备）
+            <>
+              {(() => {
+                const devs = [
+                  ...new Set(
+                    specs
+                      .map((sp) => {
+                        const bt = s.businessTargets?.find(
+                          (b) => b.id === sp.targetId,
+                        );
+                        const ins = bt
+                          ? s.instruments?.find((i) => i.id === bt.instrumentId)
+                          : undefined;
+                        const dev = ins
+                          ? s.devices?.find((d) => d.id === ins.deviceId)
+                          : undefined;
+                        return dev?.name;
+                      })
+                      .filter(Boolean) as string[],
+                  ),
+                ];
+                const names = devs.length ? devs : [p.device];
+                return (
+                  <>
+                    {names.length} 台<small>{names.join(" / ")}</small>
+                  </>
+                );
+              })()}
             </>,
             <>
               <span>v{p.version} </span>
@@ -372,6 +408,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             </Btn>
           }
         >
+          {/* PLAN-01：信息架构补「巡检规划（路线 / 频次）」一步；有效期须明确，避免"无限期"观感 */}
+          <Note>
+            <b>巡检规划（路线 / 频次）→ 任务分配</b>：先按巡检目标与巡检点设计巡检路线与频次（模板 + 计划），
+            再由计划按时生成任务。计划<b>有效期必须明确起止</b>（到期不再生成），并非无限期。
+          </Note>
           <Table
             heads={[
               "计划名称",
@@ -383,7 +424,10 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 周期 / 时间
                 <span className="th-note">自动下发计划任务</span>
               </>,
-              "执行机器人 / 自动化",
+              <>
+                执行机器人
+                <span className="th-note">计划任务创建即绑定，按时自动执行</span>
+              </>,
               "有效期",
               "版本 / 状态",
               "操作",
@@ -606,16 +650,48 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     "未分配",
     ...new Set(s.tasks.map((x) => x.robotId).filter(Boolean)),
   ];
-  const allFiltered = s.tasks.filter((t) => {
-    if ((t.name + t.id).includes(query) === false) return false;
-    if (srcFilter !== "全部" && t.source !== srcFilter) return false;
-    if (prioFilter !== "全部" && (t.priority || "普通") !== prioFilter)
-      return false;
-    if (statusFilter !== "全部" && t.state !== statusFilter) return false;
-    if (robotFilter !== "全部" && (t.robotId || "未分配") !== robotFilter)
-      return false;
-    return true;
-  });
+  const allFiltered = (() => {
+    /** TASK-02：按所选时间范围过滤（生成时间 created）；「今日」= 当天；最大 30 天 */
+    const now = Date.now();
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const windowMs =
+      timeRange === "今日"
+        ? now - dayStart.getTime()
+        : timeRange === "近 7 天"
+          ? 7 * 864e5
+          : timeRange === "近 30 天"
+            ? 30 * 864e5
+            : Infinity;
+    const loMs =
+      timeRange === "今日"
+        ? dayStart.getTime()
+        : now - Math.min(windowMs, 30 * 864e5);
+    const inWindow = (t: (typeof s.tasks)[number]) => {
+      const c = Date.parse(t.created);
+      return Number.isNaN(c) ? true : c >= loMs && c <= now;
+    };
+    const rows = s.tasks.filter((t) => {
+      if ((t.name + t.id).includes(query) === false) return false;
+      if (srcFilter !== "全部" && t.source !== srcFilter) return false;
+      if (prioFilter !== "全部" && (t.priority || "普通") !== prioFilter)
+        return false;
+      if (statusFilter !== "全部" && t.state !== statusFilter) return false;
+      if (robotFilter !== "全部" && (t.robotId || "未分配") !== robotFilter)
+        return false;
+      if (!inWindow(t)) return false;
+      return true;
+    });
+    /** TASK-02：未完成（待调度/已分配/下发中/待执行/执行中/暂停/…）置顶，已完成置后 */
+    const TERMINAL = new Set(["完成", "部分完成", "失败", "取消", "超期"]);
+    rows.sort((a, b) => {
+      const adone = TERMINAL.has(a.state) ? 1 : 0;
+      const bdone = TERMINAL.has(b.state) ? 1 : 0;
+      if (adone !== bdone) return adone - bdone;
+      return Date.parse(b.created) - Date.parse(a.created);
+    });
+    return rows;
+  })();
   const pageMax = Math.max(1, Math.ceil(allFiltered.length / TASK_PAGE_SIZE));
   const curPage = Math.min(srcPage, pageMax);
   const pageRows = allFiltered.slice(
@@ -627,6 +703,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
   return (
     <>
       <Panel
+        className="panel-filters-wrap"
         title="任务列表"
         extra={
           <div className="actions">
@@ -686,6 +763,21 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 ))}
               </select>
             </label>
+            <label className="inline-filter">
+              <span>时间范围：</span>
+              <select
+                value={timeRange}
+                onChange={(e) => {
+                  TR(e.target.value);
+                  resetPage();
+                }}
+                title="默认当天；最大可选近 30 天"
+              >
+                {["今日", "近 7 天", "近 30 天"].map((o) => (
+                  <option key={o}>{o}</option>
+                ))}
+              </select>
+            </label>
             <input
               placeholder="搜索任务名称 / 编号"
               value={query}
@@ -697,9 +789,23 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             <Btn primary onClick={() => setQuickOpen(true)}>
               ＋ 临时巡检任务
             </Btn>
+            {/* TASK-03：建错的任务支持按计划 / 按天批量取消 */}
+            <Btn onClick={() => setCancelOpen(true)}>按计划 / 按天批量取消</Btn>
           </div>
         }
       >
+        {/* TASK-01：任务生成规则说明；DSP-01：计划任务直接绑定机器人、临时任务走调度 */}
+        <Note>
+          <b>任务生成规则（TASK-01）</b>：周期计划按「到期滚动窗口」逐次生成（只生成到点前后窗口内的下一个时点，并按计划 + 时刻去重，<b>不预生成整年</b>），默认按天、当日任务默认展示。
+          <br />
+          <b>调度口径（DSP-01）</b>：<b>计划任务</b>创建时即绑定执行机器人（按时自动执行，异常转人工调度）；
+          <b>临时任务</b>不预选机器人，进入待调度，由调度中心按空闲度人工分配。
+        </Note>
+        {allFiltered.length === 0 && (
+          <Note>
+            当前时间范围（{timeRange}）内没有任务。可放宽到「近 7 天 / 近 30 天」，或核对来源 / 状态等筛选条件。
+          </Note>
+        )}
         <Table
           heads={[
             "任务 / 来源",
@@ -732,7 +838,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             </span>,
             <Badge>{t.state}</Badge>,
             t.robotId || "未分配",
-            `m${t.mapVersion} / p${t.pointSet}`,
+            `m${t.mapVersion} / c${t.calibrationVersion}`,
             `${t.done.length}/${t.items.length}`,
             <>
               <span>{fmtTime(t.created)}</span>
@@ -779,6 +885,72 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           onClose={() => setQuickOpen(false)}
           onCreated={(id) => go("dispatch", id)}
         />
+      )}
+      {/* TASK-03：按计划 / 按天批量取消（二次确认） */}
+      {cancelOpen && (
+        <Modal
+          title="按计划 / 按天批量取消任务"
+          onClose={() => setCancelOpen(false)}
+          footer={
+            <>
+              <Btn onClick={() => setCancelOpen(false)}>取消</Btn>
+              <Btn
+                danger
+                disabled={!cancelDay}
+                onClick={() => {
+                  const planned = s.tasks.filter(
+                    (t) =>
+                      t.state !== "完成" &&
+                      t.state !== "取消" &&
+                      t.state !== "失败" &&
+                      t.state !== "部分完成" &&
+                      (cancelPlan === "全部" || t.planId === cancelPlan) &&
+                      (t.created || "").slice(0, 10) === cancelDay,
+                  );
+                  if (
+                    !planned.length ||
+                    !window.confirm(
+                      `将取消 ${planned.length} 条任务（计划：${cancelPlan}，日期：${cancelDay}），确认？`,
+                    )
+                  )
+                    return;
+                  planned.forEach((t) =>
+                    act({ type: "STOP", id: t.id }),
+                  );
+                  setCancelOpen(false);
+                  setCancelDay("");
+                }}
+              >
+                批量取消
+              </Btn>
+            </>
+          }
+        >
+          <Note>
+            用于「任务创建错了、一天的任务要整体取消」的场景。按计划 + 生成日期筛选，
+            仅取消未结束（未完成 / 未取消）的任务，取消后不可自动恢复。
+          </Note>
+          <Field label="巡检计划">
+            <select
+              value={cancelPlan}
+              onChange={(e) => setCancelPlan(e.target.value)}
+            >
+              <option value="全部">全部计划 / 临时任务</option>
+              {s.plans.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="生成日期（按天）">
+            <input
+              type="date"
+              value={cancelDay}
+              onChange={(e) => setCancelDay(e.target.value)}
+            />
+          </Field>
+        </Modal>
       )}
       {/* 任务详情抽屉：列表里就地看完整详情（与「任务详情」内置页共用 TaskDetailPanel），主操作由面板内按钮提供 */}
       {taskPeek && (

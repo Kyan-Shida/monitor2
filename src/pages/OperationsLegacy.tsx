@@ -3,6 +3,7 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note } from "../components/UI";
 import { MapCanvas } from "../components/MapCanvas";
+import { calibrationVersionOf } from "../data/mapCalibration";
 export function Operations({ page, id }: { page: string; id?: string }) {
   const { s } = useStore();
   const [q, Q] = useState("");
@@ -53,7 +54,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
                   {r.battery}%
                 </>,
                 r.capabilities.join(" / "),
-                `m${r.mapVersion} / p${r.pointSet}`,
+                `m${r.mapVersion} / c${r.calibrationVersion}`,
                 r.current || "无",
                 <div className="actions">
                   <Btn onClick={() => go("robot", r.id)}>详情</Btn>
@@ -102,7 +103,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
               <dd>{r.current || "无"}</dd>
               <dt>激活版本</dt>
               <dd>
-                {r.mapId} m{r.mapVersion}/p{r.pointSet}
+                {r.mapId} m{r.mapVersion}/c{r.calibrationVersion}
               </dd>
               <dt>能力</dt>
               <dd>{r.capabilities.join(" / ")}</dd>
@@ -229,7 +230,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
                 r.region === s.maps[0].region &&
                 (r.mapId !== s.maps[0].id ||
                   r.mapVersion !== s.maps[0].version ||
-                  r.pointSet !== s.maps[0].pointSet),
+                  r.calibrationVersion !== calibrationVersionOf(s, s.maps[0].id)),
             )
             .map((r) => (
               <Note key={r.id}>
@@ -262,7 +263,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
             t.state === "执行中" ? "自主寻址 / 目标识别" : "—",
             `${t.done.length}/${t.items.length}`,
             <Badge>{t.state}</Badge>,
-            <Btn onClick={() => go("execution", t.id)}>监控</Btn>,
+            <Btn onClick={() => go("execution-monitor", t.id)}>监控</Btn>,
           ])}
         />
       </Panel>

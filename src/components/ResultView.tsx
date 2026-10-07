@@ -1,9 +1,9 @@
 import { TakeoverOutcome } from "./TakeoverOutcome";
 /**
  * @file ResultView.tsx
- * @description 「巡检结果详情」内置页（由弹窗改为路由页面）：顶部任务概要 + 「AI 识别结果」分页
- *              （表计识别 / 执行记录 / 复核记录）——复核入口与复核数据留在本页，
- *              点行内「复核」进入该结果**自己的内置页**（「结果详情 / 复核」页，在其中完成复核）
+ * @description 「巡检结果详情」内置页：顶部任务概要 + 检测项明细（按巡检点分组、
+ *              任务 → 巡检点 → 巡检项 三级可折叠）+ 执行记录 + 复核记录；
+ *              复核入口与复核数据留在本页，点行内「复核」进入该结果自己的内置页。
  * @interaction 由 pages/ObjectDetails.tsx 的 result-view 分支渲染；复核在 pages/Results.tsx 的 review 页提交
  */
 import { useState } from "react";
@@ -17,11 +17,19 @@ import type { Result, Task } from "../data/types";
 export function ResultView({ task }: { task: Task }) {
   const { s } = useStore();
   /** 分页：表计识别 / 执行记录 / 复核记录 */
-  const [tab, SETTAB] = useState<"表计识别" | "执行记录" | "复核记录">(
-    "表计识别",
+  const [tab, SETTAB] = useState<"检测项" | "执行记录" | "复核记录">(
+    "检测项",
   );
   /** 导出为演示占位提示 */
   const [exportKind, SETEXPORT] = useState<"EXCEL" | "PDF" | null>(null);
+  /** RES-03：巡检点分组折叠状态（默认全部展开） */
+  const [collapsed, SETCOL] = useState<Set<string>>(() => new Set());
+  const togglePoint = (pid: string) =>
+    SETCOL((old) => {
+      const n = new Set(old);
+      n.has(pid) ? n.delete(pid) : n.add(pid);
+      return n;
+    });
 
   const robot = s.robots.find((r) => r.id === task.robotId);
   const map = s.maps.find((m) => m.id === task.mapId);
@@ -53,6 +61,34 @@ export function ResultView({ task }: { task: Task }) {
    */
   const openReview = (r: Result) =>
     go("review", r.id, undefined, { page: "result-view", id: task.id });
+  /**
+   * RES-03：将检测结果按「巡检点」分组，形成 任务 → 巡检点（可折叠）→ 巡检项 三级层级；
+   * 异常巡检点优先置顶，便于一眼看出哪个巡检点有问题。
+   */
+  const pointGroups = (() => {
+    const order = task.items.map((it) => it.id);
+    const map = new Map<string, Result[]>();
+    for (const r of list) {
+      if (!map.has(r.pointId)) map.set(r.pointId, []);
+      map.get(r.pointId)!.push(r);
+    }
+    const arr = [...map.entries()].map(([pid, rs]) => {
+      const p = pointOf(pid);
+      return {
+        id: pid,
+        name: p?.name || pid,
+        device: p?.device || "—",
+        rs,
+        abn: rs.filter((x) => x.abnormal).length,
+        order: order.indexOf(pid),
+      };
+    });
+    arr.sort(
+      (a, b) =>
+        (b.abn > 0 ? 1 : 0) - (a.abn > 0 ? 1 : 0) || a.order - b.order,
+    );
+    return arr;
+  })();
 
   return (
     <div className="rd">
@@ -102,22 +138,38 @@ export function ResultView({ task }: { task: Task }) {
           </b>
         </span>
         <span>
-          执行批次
-          <b>
-            {task.id} · m{task.mapVersion} / p{task.pointSet}
-          </b>
-        </span>
-        <span>
           终止原因
           <b>{task.failure || "—"}</b>
         </span>
       </div>
+      {/* RES-04：地图版本仅作调试参考，移出主信息区，放进可折叠诊断信息 */}
+      <details className="rd-diag">
+        <summary>诊断信息（调试参考）</summary>
+        <div className="rd-grid">
+          <span>
+            任务编号
+            <b>{task.id}</b>
+          </span>
+          <span>
+            地图版本 / 点集
+            <b>
+              m{task.mapVersion} / p{task.calibrationVersion}
+            </b>
+          </span>
+          <span>
+            版本快照
+            <b>
+              v{task.items[0]?.version ?? "—"}
+            </b>
+          </span>
+        </div>
+      </details>
 
-      <h4 className="rd-h">AI 识别结果</h4>
+      <h4 className="rd-h">巡检结果明细（任务 → 巡检点 → 巡检项）</h4>
       <div className="rv-tabs">
         {(
           [
-            ["表计识别", `表计识别（${list.length}）`],
+            ["检测项", `检测项明细（${list.length}）`],
             ["执行记录", "执行记录"],
             ["复核记录", `复核记录（待复核 ${pendings.length}）`],
           ] as const
@@ -132,84 +184,111 @@ export function ResultView({ task }: { task: Task }) {
         ))}
       </div>
 
-      {tab === "表计识别" ? (
+      {tab === "检测项" ? (
         !list.length ? (
           <Note>该任务暂无检测结果。</Note>
         ) : (
-          <div className="table-scroll">
-            <table className="rd-table">
-              <thead>
-                <tr>
-                  {[
-                    "巡检点",
-                    "巡检项",
-                    "台账",
-                    "原始采集图像",
-                    "识别分析后图像",
-                    "识别结果",
-                    "识别耗时",
-                    "AI 状态",
-                    "复核状态",
-                    "时间",
-                    "操作",
-                  ].map((h) => (
-                    <th key={h}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((r) => {
-                  const p = pointOf(r.pointId);
-                  const name = p?.name || r.pointId;
-                  return (
-                    <tr key={r.id}>
-                      <td>{name}</td>
-                      <td>{r.item}</td>
-                      <td>{p?.device || "—"}</td>
-                      <td>
-                        <img
-                          className="rd-img"
-                          src={rawPhoto(name)}
-                          alt={`${name} 原始采集图像`}
-                        />
-                      </td>
-                      <td>
-                        <img
-                          className="rd-img"
-                          src={analyzedPhoto(
-                            name,
-                            `${r.final} ${r.unit}`.trim(),
-                            r.abnormal,
-                          )}
-                          alt={`${name} 识别分析后图像`}
-                        />
-                      </td>
-                      <td className="rd-result">{resultText(r)}</td>
-                      <td>{costOf(r.id)}s</td>
-                      <td>
-                        <span className={"rd-ai" + (r.abnormal ? " bad" : "")}>
-                          {r.status === "待复核" ? "待判定" : r.abnormal ? "异常" : "正常"}
-                        </span>
-                      </td>
-                      <td>
-                        <Badge>{r.status}</Badge>
-                      </td>
-                      <td className="rd-time">{r.time}</td>
-                      <td>
-                        {/* 复核：进入该结果自己的内置页（结果详情 / 复核） */}
-                        <Btn
-                          primary={r.status === "待复核"}
-                          title="进入该结果的「结果详情 / 复核」内置页"
-                          onClick={() => openReview(r)}
-                        >
-                          复核
-                        </Btn>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="rd-points">
+            {/* RES-03：任务 → 巡检点（可折叠）→ 巡检项 三级层级；异常点优先置顶 */}
+            {pointGroups.map((pg) => (
+              <section className="rd-point" key={pg.id}>
+                <header
+                  className={"rd-point-head" + (pg.abn ? " bad" : "")}
+                  onClick={() => togglePoint(pg.id)}
+                >
+                  <span className="rd-point-caret">
+                    {collapsed.has(pg.id) ? "▸" : "▾"}
+                  </span>
+                  <b>{pg.name}</b>
+                  <Badge>{pg.rs.length} 项</Badge>
+                  {pg.abn > 0 && (
+                    <span className="rd-point-bad">异常 {pg.abn} 项</span>
+                  )}
+                  <small className="rd-point-target">关联：{pg.device}</small>
+                </header>
+                {!collapsed.has(pg.id) && (
+                  <div className="table-scroll">
+                    <table className="rd-table">
+                      <thead>
+                        <tr>
+                          {[
+                            "巡检项",
+                            "台账",
+                            "原始采集图像",
+                            "识别分析后图像",
+                            "识别结果",
+                            "识别耗时",
+                            "AI 状态",
+                            "复核状态",
+                            "时间",
+                            "操作",
+                          ].map((h) => (
+                            <th key={h}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pg.rs.map((r) => {
+                          const p = pointOf(r.pointId);
+                          const name = p?.name || r.pointId;
+                          return (
+                            <tr key={r.id}>
+                              <td>{r.item}</td>
+                              <td>{p?.device || "—"}</td>
+                              <td>
+                                <img
+                                  className="rd-img"
+                                  src={rawPhoto(name)}
+                                  alt={`${name} 原始采集图像`}
+                                />
+                              </td>
+                              <td>
+                                <img
+                                  className="rd-img"
+                                  src={analyzedPhoto(
+                                    name,
+                                    `${r.final} ${r.unit}`.trim(),
+                                    r.abnormal,
+                                  )}
+                                  alt={`${name} 识别分析后图像`}
+                                />
+                              </td>
+                              <td className="rd-result">{resultText(r)}</td>
+                              <td>{costOf(r.id)}s</td>
+                              <td>
+                                <span
+                                  className={"rd-ai" + (r.abnormal ? " bad" : "")}
+                                >
+                                  {r.status === "待复核"
+                                    ? "待判定"
+                                    : r.abnormal
+                                      ? "异常"
+                                      : "正常"}
+                                </span>
+                              </td>
+                              <td>
+                                <Badge>{r.status}</Badge>
+                              </td>
+                              <td className="rd-time">{r.time}</td>
+                              <td>
+                                {/* 复核：进入该结果自己的内置页（结果详情 / 复核） */}
+                                <Btn
+                                  primary={r.status === "待复核"}
+                                  title="进入该结果的「结果详情 / 复核」内置页"
+                                  onClick={() => openReview(r)}
+                                >
+                                  复核
+                                </Btn>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ))}
           </div>
         )
       ) : tab === "执行记录" ? (

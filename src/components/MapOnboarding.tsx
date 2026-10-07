@@ -11,6 +11,7 @@ import { go } from "../data/navigation";
 import { Annotation } from "../pages/Annotation";
 import { MapBaseUpload } from "./MapBaseUpload";
 import { MapImageCanvas } from "./MapImageCanvas";
+import { targetsOf, calibrationVersionOf } from "../data/mapCalibration";
 import { Badge, Btn, Note, Panel, Table } from "./UI";
 
 /** One map, one workflow: trial deployment belongs to validation preparation. */
@@ -23,9 +24,16 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
   const [rid, setRid] = useState(robots.find((r) => r.state === "空闲")?.id || robots[0]?.id || "");
   const r = robots.find((x) => x.id === rid);
   const aligned = (robot: (typeof robots)[number] | undefined) =>
-    !!robot && robot.mapId === m.id && robot.mapVersion === m.version && robot.pointSet === m.pointSet;
+    !!robot &&
+    robot.mapId === m.id &&
+    robot.mapVersion === m.version &&
+    robot.calibrationVersion === calibrationVersionOf(s, m.id);
   const sy = s.syncs.find(
-    (x) => x.mapId === m.id && x.robotId === rid && x.mapVersion === m.version && x.pointSet === m.pointSet,
+    (x) =>
+      x.mapId === m.id &&
+      x.robotId === rid &&
+      x.mapVersion === m.version &&
+      x.calibrationVersion === calibrationVersionOf(s, m.id),
   );
   const verified = points.filter((p) => p.state === "已启用").length;
   const planned = points.filter((p) => p.actionPlan).length;
@@ -41,7 +49,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
     <>
       <div className="context-bar">
         <b>{m.name} · 上线工作台</b>
-        <span>m{m.version} / p{m.pointSet}</span>
+        <span>m{m.version} / c{calibrationVersionOf(s, m.id)}</span>
         <Badge>{m.state}</Badge>
         <Btn onClick={() => go("map-detail", m.id)}>地图详情</Btn>
       </div>
@@ -66,7 +74,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
           <MapBaseUpload mapId={m.id} />
           <MapImageCanvas
             image={m.image}
-            markers={m.targets
+            markers={targetsOf(s, m.id)
               .filter((t) => t.state !== "已剔除")
               .map((t) => ({ id: t.id, x: t.x, y: t.y, label: t.kind, kind: t.kind, state: t.state }))}
             height={400}
@@ -88,7 +96,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
               ["地图底图", m.image ? "已上传" : "待补齐"],
               ["巡检点", `${points.length} 个（${verified} 已启用）`],
               ["巡检项 / 视角", `${planned} / ${points.length} 已编排（在「编辑巡检点」维护）`],
-              ["当前内容版本", `m${m.version} / p${m.pointSet}`],
+              ["当前内容版本", `m${m.version} / c${calibrationVersionOf(s, m.id)}`],
             ]}
           />
           <Note>
@@ -126,7 +134,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
             heads={["机器人", "实际激活版本", "上线结论"]}
             rows={robots.map((r) => [
               r.name,
-              `m${r.mapVersion} / p${r.pointSet}`,
+              `m${r.mapVersion} / c${r.calibrationVersion}`,
               <Badge>{m.state === "已发布" && aligned(r) ? "地图上线完成" : "待完成上线"}</Badge>,
             ])}
           />
@@ -158,7 +166,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
     return (
       <div className="onboarding-sync">
         <p>
-          实际版本：{r ? `m${r.mapVersion} / p${r.pointSet}` : "未选择机器人"} ·{" "}
+          实际版本：{r ? `m${r.mapVersion} / c${r.calibrationVersion}` : "未选择机器人"} ·{" "}
           <Badge>{aligned(r) ? "版本已一致" : sy?.state || "待同步"}</Badge>
         </p>
         <div className="actions">

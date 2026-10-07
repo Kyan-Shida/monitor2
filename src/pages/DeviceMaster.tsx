@@ -9,7 +9,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Field, Note, Modal } from "../components/UI";
-import { deviceStats } from "../data/deviceMaster";
+import { deviceStats, archiveIdOf } from "../data/deviceMaster";
 import type { DeviceAsset } from "../data/types";
 import { ChevronDown, ChevronRight, Folder, FolderOpen } from "lucide-react";
 
@@ -319,6 +319,12 @@ export function DeviceMaster() {
                   </>,
                   <div className="actions">
                     <Btn onClick={() => SETDETAIL(d)}>详情</Btn>
+                    {/* EQ-01：设备档案入口移入设备台账详情（以设备为主线看全生命周期） */}
+                    <Btn
+                      onClick={() => go("archive", archiveIdOf(s, d.name))}
+                    >
+                      设备档案
+                    </Btn>
                     {d.reviewState === "已通过" ? (
                       <Btn
                         onClick={() =>

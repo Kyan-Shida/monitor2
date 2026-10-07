@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
+import { calibrationVersionOf } from "../data/mapCalibration";
 import { Badge, Btn, Modal, Note } from "../components/UI";
 import { ObjectLink, Kpis } from "../components/Business";
 import {
@@ -144,14 +145,15 @@ export function Workbench() {
       const map = s.maps.find((m) => m.id === robot.mapId);
       const stale =
         !!map &&
-        (robot.mapVersion !== map.version || robot.pointSet !== map.pointSet);
+        (robot.mapVersion !== map.version ||
+          robot.calibrationVersion !== calibrationVersionOf(s, map.id));
       const reasons = [
         robot.state === "离线" ? "通信离线" : "",
         robot.battery < robot.constraints.minBattery
           ? `电量 ${robot.battery}%（低于${robot.deviceType}门槛 ${robot.constraints.minBattery}%）`
           : "",
         stale
-          ? `地图版本落后（实际 m${robot.mapVersion} / p${robot.pointSet}）`
+          ? `地图版本落后（实际 m${robot.mapVersion} / c${robot.calibrationVersion}）`
           : "",
       ].filter(Boolean);
       return { robot, reasons };
@@ -483,7 +485,7 @@ export function Workbench() {
                   <li
                     key={t.id}
                     className="wb-feed-item"
-                    onClick={() => go("execution", t.id)}
+                    onClick={() => go("execution-monitor", t.id)}
                   >
                     <div className="wb-feed-top">
                       <b>{t.name}</b>
@@ -542,7 +544,7 @@ export function Workbench() {
             </div>
             <p className="wb-alarm-note">
               未闭环 <b>{alarmOpen.length}</b> 条 · 近 7 天已闭环{" "}
-              <b>{closed7}</b> 条 · 闭环：确认 → 处置 → 复查 → 恢复 → 关闭
+              <b>{closed7}</b> 条 · 闭环（已简化）：处理 / 消警（一条处理意见）即终态，不做复查任务闭环
             </p>
             <ul className="wb-alarm-feed">
               {alarmFeed.map((a) => {
@@ -551,7 +553,7 @@ export function Workbench() {
                   <li
                     key={a.id}
                     className={"wb-alarm-item lv-" + LEVEL_CLASS[a.level]}
-                    title="点击进入处置 / 复查"
+                    title="点击进入处置"
                     onClick={() => go("alarm", a.id)}
                   >
                     <i className={"wb-alarm-dot lv-" + LEVEL_CLASS[a.level]} />

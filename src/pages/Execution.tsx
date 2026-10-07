@@ -8,7 +8,7 @@ import { MapCanvas } from "../components/MapCanvas";
 import { Video } from "../components/Video";
 import { Can, useRole } from "../components/Can";
 import { PERMS } from "../data/roles";
-export { Execution } from "./ExecutionWorkbench";
+export { Execution, ExecutionMonitor } from "./ExecutionWorkbench";
 /**
  * 人工接管与遥控控制台主体
  * @description 内嵌于「人工操作与遥控」页；机器人身份由该页页头的选择器确定，故此处不再重复选择器
@@ -22,6 +22,13 @@ export function ControlConsole({ robotId }: { robotId: string }) {
     (y) => y.robotId === r.id && !["已释放", "已超时"].includes(y.state),
   );
   const t = s.tasks.find((y) => y.id === r.current);
+  /** TKO-01：机器人主动「申请人工接管」产生的待处理会话 */
+  const robotReqs = s.sessions.filter(
+    (y) =>
+      y.robotId === r.id &&
+      y.origin === "机器人申请" &&
+      y.state === "待暂停确认",
+  );
   const [checked, C] = useState(false);
   const [view, setView] = useState<"video" | "map">("video");
   const latest = s.sessions.find(y => y.robotId === r.id);
@@ -34,7 +41,7 @@ export function ControlConsole({ robotId }: { robotId: string }) {
       <div className="context-bar">
         <Badge>{r.state}</Badge>
         <span>
-          电量 {r.battery}% · m{r.mapVersion} / p{r.pointSet}
+          电量 {r.battery}% · m{r.mapVersion} / c{r.calibrationVersion}
         </span>
         <span>当前任务：{t?.name || "无执行任务"}</span>
         <Badge>{outcome}</Badge>
@@ -57,8 +64,67 @@ export function ControlConsole({ robotId }: { robotId: string }) {
         </section>
         <aside className="manual-controls">
         <Panel title="接管与任务控制" extra={<Badge>{outcome}</Badge>}>
-          <p className="muted">{x?.state === "已接管" ? "控制权已取得，可移动机器人或采集证据。" : x?.state === "待暂停确认" ? "下一步：确认机器人已暂停，取得控制权。" : x?.state === "退出核对中" ? "下一步：核对现场与任务，释放控制权。" : t?.state === "暂停" ? "下一步：明确恢复原任务。" : latest?.resumedAt ? "任务已恢复；需要再次操作时可申请新会话。" : "先申请接管，再进行移动、云台和采集操作。"}</p>
-          {!x && <Can perm={PERMS.接管申请}><Btn primary={t?.state !== "暂停"} disabled={r.state === "离线"} onClick={() => { C(false); act({type:"TAKEOVER", robotId:r.id}); }}>申请接管</Btn></Can>}
+          {/* TKO-03：第一阶段接管＝「借调」：任务暂停 → 人工操作 → 释放 → 恢复原任务 */}
+          <p className="muted">
+            {x?.state === "已接管"
+              ? "控制权已取得（借调中）：可移动机器人或采集证据，做完人工的事后释放并恢复原任务。"
+              : x?.state === "待暂停确认"
+                ? "下一步：确认机器人已暂停，取得控制权。"
+                : x?.state === "退出核对中"
+                  ? "下一步：核对现场与任务，释放控制权。"
+                  : ["暂停", "已被接管"].includes(t?.state || "")
+                    ? "下一步：明确恢复原任务。"
+                    : latest?.resumedAt
+                      ? "任务已恢复；需要再次操作时可申请新会话。"
+                      : "先申请接管，再进行移动、云台和采集操作。"}
+          </p>
+          {/* TKO-01：机器人申请人工接管 —— 人从异常入口进入，而非主动切入 */}
+          {!!robotReqs.length && (
+            <Note>
+              <b>机器人申请人工接管</b>（{robotReqs.length}）：机器人自主处理超时，请接管或跳过。
+              <div className="actions">
+                <Btn
+                  primary
+                  onClick={() =>
+                    act({ type: "CONTROL_ACK", id: robotReqs[0].id })
+                  }
+                >
+                  接管（确认已暂停）
+                </Btn>
+                <Btn
+                  onClick={() =>
+                    act({ type: "ROBOT_TAKEOVER_SKIP", robotId: r.id })
+                  }
+                >
+                  跳过（机器人继续）
+                </Btn>
+              </div>
+            </Note>
+          )}
+          {!x && (
+            <Can perm={PERMS.接管申请}>
+              <Btn
+                primary={!["暂停", "已被接管"].includes(t?.state || "")}
+                disabled={r.state === "离线"}
+                onClick={() => {
+                  C(false);
+                  act({ type: "TAKEOVER", robotId: r.id });
+                }}
+                title="人工主动接管（区别于机器人申请）"
+              >
+                申请接管（人工主动）
+              </Btn>
+            </Can>
+          )}
+          {/* TKO-01 演示：模拟机器人端发起接管申请（现场由机器人自主触发） */}
+          {!x && !robotReqs.length && r.state !== "离线" && (
+            <Btn
+              onClick={() => act({ type: "ROBOT_TAKEOVER_REQ", robotId: r.id })}
+              title="演示：模拟机器人自主处理超时后申请人工接管"
+            >
+              机器人申请接管（演示）
+            </Btn>
+          )}
           <p>持有人：{x ? role.person : "无"}</p>
 
           <small>{x?.id}</small>
@@ -109,7 +175,7 @@ export function ControlConsole({ robotId }: { robotId: string }) {
               <Note>
                 当前任务 {t?.name || "无"}；已完成 {t?.done.length || 0} 项 /
                 剩余 {(t?.items.length || 0) - (t?.done.length || 0)}{" "}
-                项。实际版本 m{r.mapVersion}/p{r.pointSet}。
+                项。实际版本 m{r.mapVersion}/c{r.calibrationVersion}。
               </Note>
               <Field label="恢复核对">
                 <label>
@@ -132,14 +198,15 @@ export function ControlConsole({ robotId }: { robotId: string }) {
               </Btn>
             </>
           )}
-          {!x && t?.state === "暂停" && (
+          {/* TKO-04：被接管的任务在释放后需在此显式恢复 */}
+          {!x && t && ["暂停", "已被接管"].includes(t.state) && (
             <Btn
               primary
               onClick={() => {
                 act({ type: "START", id: t.id });
               }}
             >
-              明确恢复任务
+              恢复任务
             </Btn>
           )}
         </Panel>

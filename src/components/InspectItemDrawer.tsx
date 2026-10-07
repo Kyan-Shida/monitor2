@@ -1,7 +1,7 @@
 /**
  * @file InspectItemDrawer.tsx
  * @description 巡检项编辑抽屉：把「名称 + 业务目标 + 机器操作内容」放到右侧抽屉，
- *              支持三种参数录入方式：操控台边调边看、手动逐项输入、Excel 批量导入。
+ *              支持两种参数录入方式：操控台边调边看、手动逐项输入。
  * @interaction 被 pages/PointEdit.tsx 调用
  */
 import { useMemo, useState } from "react";
@@ -22,9 +22,9 @@ import {
 } from "lucide-react";
 import { Badge, Btn, Field, Modal, Note } from "./UI";
 import {
-  atomicActions,
   atomicActionCapability,
   payloadGroups,
+  BEHAVIOR_TYPES,
 } from "../data/types";
 import type {
   AtomicAction,
@@ -32,20 +32,13 @@ import type {
   BusinessTarget,
   InspectSpec,
   PTZ,
-  SiteSurvey,
-  TrialReceipt,
 } from "../data/types";
 
 /** 避障策略选项（到点后的通行策略） */
 const AVOID = ["标准", "谨慎", "绕行"];
 
-/** 动态加载 xlsx，只在 Excel 功能时打包，避免主包膨胀 */
-async function loadXlsx() {
-  return await import("xlsx");
-}
-
-/** 三种参数录入方式 */
-type EditMode = "cockpit" | "manual" | "excel";
+/** 两种参数录入方式 */
+type EditMode = "cockpit" | "manual";
 
 export interface InspectItemDrawerProps {
   /** 正在编辑的巡检项草稿 */
@@ -62,10 +55,6 @@ export interface InspectItemDrawerProps {
   labelOfBt: (id: string) => string;
   /** 打开「快速新建巡检目标台账」弹窗 */
   onOpenBt: () => void;
-  /** 当前地图的现场踩点记录（Excel 模板/导入可参考） */
-  surveys: SiteSurvey[];
-  /** 当前点位的试采回执 */
-  trials: TrialReceipt[];
 }
 
 /**
@@ -85,10 +74,6 @@ export function InspectItemDrawer({
   const [recordingAction, setRecordingAction] = useState<AtomicAction | "">(
     draft.actions[0] || "",
   );
-  const [excelRows, setExcelRows] = useState<
-    { action: AtomicAction; cfg: AtomicActionConfig }[]
-  >([]);
-  const [excelErr, setExcelErr] = useState("");
 
   /** 取某原子动作的逐项编排；未单独配置时回退到共享视角 */
   function cfgOf(a: AtomicAction): AtomicActionConfig {
@@ -127,95 +112,6 @@ export function InspectItemDrawer({
     if (on && !recordingAction) setRecordingAction(a);
   }
 
-  /** 将 Excel 解析结果回填到草稿 */
-  function applyExcelRows(rows: { action: AtomicAction; cfg: AtomicActionConfig }[]) {
-    const actions = rows.map((r) => r.action);
-    const actionConfigs: Partial<Record<AtomicAction, AtomicActionConfig>> = {};
-    rows.forEach((r) => {
-      actionConfigs[r.action] = r.cfg;
-    });
-    onChange({ actions, actionConfigs });
-  }
-
-  /** Excel 模板下载 */
-  async function downloadExcelTemplate() {
-    const XLSX = await loadXlsx();
-    const headers = [
-      "动作",
-      "参数来源",
-      "水平(pan)",
-      "俯仰(tilt)",
-      "变焦(zoom)",
-      "补光",
-      "升降",
-      "停留(秒)",
-      "观察方向",
-      "预置位",
-      "避障策略",
-      "镜头聚焦",
-      "光圈",
-      "聚焦模式",
-      "移动速度",
-      "报警灯",
-      "雨刷",
-      "防冻",
-      "透雾",
-    ];
-    const rows = atomicActions.map((a) => [
-      a,
-      "import",
-      0,
-      0,
-      a === "采集红外热像" ? 1 : 3,
-      40,
-      0,
-      5,
-      "",
-      "",
-      "标准",
-      0,
-      50,
-      "半自动",
-      30,
-      "否",
-      "否",
-      "否",
-      "否",
-    ]);
-    const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, sheet, "原子动作参数模板");
-    XLSX.writeFile(wb, "巡检项原子动作参数模板.xlsx");
-  }
-
-  /** 解析上传的 Excel / CSV */
-  function parseExcelFile(file: File) {
-    setExcelErr("");
-    setExcelRows([]);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      void (async () => {
-        try {
-          const XLSX = await loadXlsx();
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: "array" });
-          const sheet = workbook.Sheets[workbook.SheetNames[0]];
-          const json = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as (
-            | string
-            | number
-          )[][];
-          const { rows, error } = parseRows(json);
-          setExcelRows(rows);
-          if (error) setExcelErr(error);
-          else applyExcelRows(rows);
-        } catch (err) {
-          setExcelErr("Excel 解析失败：" + (err as Error).message);
-        }
-      })();
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
   /** 渲染模式切换栏 */
   const modeBar = (
     <div className="drawer-mode-bar">
@@ -225,7 +121,6 @@ export function InspectItemDrawer({
           [
             { k: "cockpit", label: "操控台录入" },
             { k: "manual", label: "手动输入" },
-            { k: "excel", label: "Excel 导入" },
           ] as { k: EditMode; label: string }[]
         ).map((m) => (
           <label
@@ -342,15 +237,6 @@ export function InspectItemDrawer({
         </>
       )}
 
-      {mode === "excel" && (
-        <ExcelImportPanel
-          draft={draft}
-          excelRows={excelRows}
-          excelErr={excelErr}
-          onDownloadTemplate={downloadExcelTemplate}
-          onFile={(f) => parseExcelFile(f)}
-        />
-      )}
     </Modal>
   );
 }
@@ -507,6 +393,95 @@ function ActionParamForm({
           />
         </label>
       </div>
+
+      {/* 采集方式专属参数：按能力结构化录入，不再塞进 extra 黑盒 */}
+      {a === "采集气体" && (
+        <div className="actions">
+          <label className="inline-filter">
+            <span>采集方式：</span>
+            <select
+              aria-label="气体采集方式"
+              value={c.gasMode ?? "泵吸式"}
+              onChange={(e) =>
+                updCfg(a, { gasMode: e.target.value as "泵吸式" | "扩散式" })
+              }
+            >
+              <option>泵吸式</option>
+              <option>扩散式</option>
+            </select>
+          </label>
+          <label className="inline-filter">
+            <span>传感器种类：</span>
+            <input
+              value={c.sensorKind ?? ""}
+              placeholder="如 4 合 1 / 6 合 1 / 具体气体组分"
+              onChange={(e) => updCfg(a, { sensorKind: e.target.value })}
+            />
+          </label>
+        </div>
+      )}
+      {a === "采集红外热像" && (
+        <div className="actions">
+          <label className="inline-filter">
+            <span>发射率：</span>
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              max={1}
+              aria-label="红外发射率"
+              value={c.emissivity ?? ""}
+              onChange={(e) =>
+                updCfg(a, { emissivity: Number(e.target.value) })
+              }
+            />
+          </label>
+          <label className="inline-filter">
+            <span>测温距离：</span>
+            <input
+              type="number"
+              aria-label="测温距离"
+              value={c.thermalDistance ?? ""}
+              onChange={(e) =>
+                updCfg(a, { thermalDistance: Number(e.target.value) })
+              }
+            />
+            <span>米</span>
+          </label>
+        </div>
+      )}
+      {a === "录制声音" && (
+        <div className="actions">
+          <label className="inline-filter">
+            <span>关注频段：</span>
+            <input
+              value={c.soundBand ?? ""}
+              placeholder="如 20Hz–20kHz"
+              onChange={(e) => updCfg(a, { soundBand: e.target.value })}
+            />
+          </label>
+        </div>
+      )}
+      {a === "分析不安全行为" && (
+        <div className="actions">
+          <span>行为类别：</span>
+          {BEHAVIOR_TYPES.map((t) => (
+            <label key={t} className="inline-filter">
+              <input
+                type="checkbox"
+                checked={(c.behaviorTypes || []).includes(t)}
+                onChange={(e) => {
+                  const set = new Set(c.behaviorTypes || []);
+                  if (e.target.checked) set.add(t);
+                  else set.delete(t);
+                  updCfg(a, { behaviorTypes: [...set] });
+                }}
+              />
+              <span>{t}</span>
+            </label>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -902,139 +877,4 @@ function AuxToggle({
       />
     </label>
   );
-}
-
-/** Excel 导入面板 */
-function ExcelImportPanel({
-  draft,
-  excelRows,
-  excelErr,
-  onDownloadTemplate,
-  onFile,
-}: {
-  draft: InspectSpec;
-  excelRows: { action: AtomicAction; cfg: AtomicActionConfig }[];
-  excelErr: string;
-  onDownloadTemplate: () => void | Promise<void>;
-  onFile: (file: File) => void;
-}) {
-  return (
-    <div className="excel-import">
-      <Note>
-        通过 Excel 一次性导入全部上装动作及其参数。下载模板后按列填写，
-        上传即自动回填到当前巡检项。动作列必须填写：
-        {atomicActions.join(" / ")}。
-      </Note>
-      <div className="actions">
-        <Btn onClick={onDownloadTemplate}>下载 Excel 模板</Btn>
-        <label className="btn primary file-btn">
-          <input
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-          />
-          上传 Excel / CSV
-        </label>
-      </div>
-      {excelErr && <p className="reference-upload-error">{excelErr}</p>}
-      {excelRows.length > 0 && (
-        <div className="table-scroll" style={{ marginTop: 12 }}>
-          <table>
-            <thead>
-              <tr>
-                <th>动作</th>
-                <th>来源</th>
-                <th>水平</th>
-                <th>俯仰</th>
-                <th>变焦</th>
-                <th>补光</th>
-                <th>升降</th>
-                <th>停留</th>
-                <th>预置位</th>
-                <th>避障</th>
-              </tr>
-            </thead>
-            <tbody>
-              {excelRows.map((r, i) => (
-                <tr key={i}>
-                  <td>{r.action}</td>
-                  <td>{r.cfg.source}</td>
-                  <td>{r.cfg.ptz?.pan}</td>
-                  <td>{r.cfg.ptz?.tilt}</td>
-                  <td>{r.cfg.ptz?.zoom}</td>
-                  <td>{r.cfg.light}</td>
-                  <td>{r.cfg.lift}</td>
-                  <td>{r.cfg.dwellSec}</td>
-                  <td>{r.cfg.preset}</td>
-                  <td>{r.cfg.avoidPolicy}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {draft.actions.length > 0 && excelRows.length === 0 && !excelErr && (
-        <p className="muted">已导入 {draft.actions.length} 个动作，可点击「保存本项」确认。</p>
-      )}
-    </div>
-  );
-}
-
-/** 解析 Excel/CSV 行数据为动作配置 */
-function parseRows(rows: (string | number)[][]) {
-  if (rows.length < 2) return { rows: [], error: "文件至少包含表头和一行数据" };
-  const header = rows[0].map((h) => String(h).trim());
-  const col = (name: string) => header.indexOf(name);
-  const getS = (r: (string | number)[], name: string) =>
-    r[col(name)] !== undefined ? String(r[col(name)]).trim() : "";
-  const getN = (r: (string | number)[], name: string) => {
-    const v = r[col(name)];
-    return v === undefined || v === "" ? undefined : Number(v);
-  };
-
-  const out: { action: AtomicAction; cfg: AtomicActionConfig }[] = [];
-  const errors: string[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r.length || r.every((x) => x === "" || x === undefined)) continue;
-    const actionName = getS(r, "动作");
-    if (!actionName) continue;
-    if (!atomicActions.includes(actionName as AtomicAction)) {
-      errors.push(`第 ${i + 1} 行动作「${actionName}」不在可选列表`);
-      continue;
-    }
-    const action = actionName as AtomicAction;
-    const sourceRaw = getS(r, "参数来源") || "import";
-    const source = ["import", "manual", "cockpit"].includes(sourceRaw)
-      ? (sourceRaw as "import" | "manual" | "cockpit")
-      : "import";
-
-    const cfg: AtomicActionConfig = {
-      source,
-      importRef: source === "import" ? "Excel 导入" : undefined,
-      ptz: {
-        pan: getN(r, "水平(pan)") ?? 0,
-        tilt: getN(r, "俯仰(tilt)") ?? 0,
-        zoom: getN(r, "变焦(zoom)") ?? (action === "采集红外热像" ? 1 : 3),
-      },
-      light: getN(r, "补光") ?? 40,
-      lift: getN(r, "升降") ?? 0,
-      dwellSec: getN(r, "停留(秒)") ?? 5,
-      viewDir: getS(r, "观察方向"),
-      preset: getS(r, "预置位"),
-      avoidPolicy: getS(r, "避障策略") || "标准",
-      extra: {
-        focus: getN(r, "镜头聚焦") ?? 0,
-        iris: getN(r, "光圈") ?? 50,
-        focusMode: getS(r, "聚焦模式") || "半自动",
-        moveSpeed: getN(r, "移动速度") ?? 30,
-        alarmLight: getS(r, "报警灯") === "是",
-        wiper: getS(r, "雨刷") === "是",
-        antiFreeze: getS(r, "防冻") === "是",
-        defog: getS(r, "透雾") === "是",
-      },
-    };
-    out.push({ action, cfg });
-  }
-  return { rows: out, error: errors.join("；") };
 }

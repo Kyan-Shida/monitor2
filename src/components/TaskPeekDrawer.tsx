@@ -75,7 +75,7 @@ export function TaskPeekDrawer({
           </dd>
           <dt>地图版本</dt>
           <dd>
-            m{t.mapVersion} / p{t.pointSet}
+            m{t.mapVersion} / c{t.calibrationVersion}
           </dd>
           <dt>阻塞 / 校验</dt>
           <dd>

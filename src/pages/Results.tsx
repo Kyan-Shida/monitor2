@@ -4,6 +4,7 @@ import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
 import { pointOf, fmtTime, parseTime } from "../data/selectors";
 import { archiveIdOf } from "../data/deviceMaster";
+import { metricValue } from "../data/metrics";
 import { Btn, Badge, Panel, Table, Field, Note, Steps, Modal } from "../components/UI";
 import { ObjectLink, Pager } from "../components/Business";
 import { Video } from "../components/Video";
@@ -168,7 +169,7 @@ export function Results({ page, id }: { page: string; id?: string }) {
     return (
       <>
       <Panel
-        title="巡检结果 · 业务检测记录"
+        title="巡检结果 · 历史查询与追溯"
         extra={
           <div className="segmented">
             {["按任务", "按巡检点"].map((x) => (
@@ -186,6 +187,12 @@ export function Results({ page, id }: { page: string; id?: string }) {
           </div>
         }
       >
+        {/* RES-01：本页定位为「历史查询 / 追溯」，不承担每日待办；并给出 ALM-01 异常 vs 告警口径 */}
+        <Note>
+          本页用于<b>历史查询与追溯</b>（筛选 + 明细 + 导出）；每日待办请到「工作台 · 待我处理」或「告警事件」集中处理，列表不承担待办职责。
+          <br />
+          口径：<b>异常</b> = 机器人判定不确定，需人工复核；<b>告警</b> = 明确触发阈值 / 规则，需处置。
+        </Note>
         {/* 业务范围芯片：点一下即按该状态筛（计数与下方列表同源，不用二次理解口径） */}
         <div className="result-scope">
           {chips.map((c) => (
@@ -394,12 +401,19 @@ export function Results({ page, id }: { page: string; id?: string }) {
                       </>
                     )}
                     <i>·</i>
+                    {/* RES-02：列表补开始 / 结束时间 */}
+                    <span>开始 {fmtTime(t?.startedAt || t?.created)}</span>
+                    <i>·</i>
                     <span>结束 {fmtTime(t?.finishedAt || t?.created)}</span>
                   </span>
                 </span>
                 <span className="tg-stats">
                   <span className="tg-stat">
                     检测 <b>{list.length}</b>
+                  </span>
+                  {/* RES-02：异常数独立成列，客户关注字段 */}
+                  <span className={"tg-stat" + (abn ? " warn" : "")}>
+                    异常 <b>{abn}</b>
                   </span>
                   <span className={"tg-stat" + (pend ? " warn" : "")}>
                     待复核 <b>{pend}</b>
@@ -474,6 +488,15 @@ export function Results({ page, id }: { page: string; id?: string }) {
                               ? "异常"
                               : "正常"}
                         </Badge>
+                        {/* REV-02：复核可见性 —— 一眼看出是否已复核 / 何时复核 */}
+                        {r.status !== "待复核" && (
+                          <span className="muted rev-visible">
+                            已复核
+                            {r.reviews.length
+                              ? ` · ${r.reviews[r.reviews.length - 1].time}`
+                              : ""}
+                          </span>
+                        )}
                       </span>
                     ))}
                     <span className="muted">共 {list.length} 条</span>
@@ -513,7 +536,8 @@ export function Results({ page, id }: { page: string; id?: string }) {
     return (
       <>
         <div className="context-bar">
-          <b>{isReview ? "结果详情 / 复核" : "结果详情"}</b>
+          {/* REV-01：正常结果 = 详情（白盒只读）；异常结果 = 复核（人工判定） */}
+          <b>{isReview ? "人工复核" : "结果详情（白盒）"}</b>
           <span className="bc-id">{rd.id}</span>
           <Badge>{rd.status === "待复核" ? "待判定" : rd.abnormal ? "异常" : "正常"}</Badge>
           <Badge>{rd.status}</Badge>
@@ -545,6 +569,14 @@ export function Results({ page, id }: { page: string; id?: string }) {
                 ))}
               </select>
             )}
+            {/* REV-03：详情可一键查看该任务的完整回溯（任务 → 巡检点 → 巡检项 全量） */}
+            <Btn
+              onClick={() =>
+                go("result-view", rd.taskId, undefined, { page })
+              }
+            >
+              任务回溯（全量）
+            </Btn>
             {!isReview && (
               <Btn primary onClick={() => go("review", rd.id)}>
                 进入复核
@@ -554,6 +586,11 @@ export function Results({ page, id }: { page: string; id?: string }) {
         </div>
         <div className="grid two">
           <Panel title="原始采集证据">
+            {/* REV-04：版面优先级 —— 结果明细 / 判定为主区；视频、证据、参数降级为侧栏或折叠区 */}
+            <p className="muted">
+              REV-04：版面优先级 ——「结果链路 · 判定」占主区，视频 / 证据 / 参数等想看频率低的内容
+              降级到折叠区或侧栏，避免最想看的判定被挤出视野。
+            </p>
             <div className="segmented">
               {["照片", "红外", "视频", "音频", "传感器"].map((x) => (
                 <button
@@ -582,7 +619,11 @@ export function Results({ page, id }: { page: string; id?: string }) {
               采集时间 <b>{rd.time}</b>
             </p>
             <p>{rd.source}</p>
-            <small>证据为演示示意；原始采集值独立留存。</small>
+            {/* RES-05：巡检视频留存与回放走工厂 NVR，平台只做回放入口与关键帧截图 */}
+            <small>
+              证据为演示示意；原始采集值独立留存。巡检视频留存与回放对接工厂 NVR（一般存 3 个月，按质保 / 覆盖策略），
+              平台不做大规模视频存储，仅提供回放入口与关键帧截图。
+            </small>
           </Panel>
           <Panel title="结果链路 · 原始 → 识别 → 最终">
             <dl>
@@ -641,13 +682,61 @@ export function Results({ page, id }: { page: string; id?: string }) {
                 .map((a) => [
                   a.name,
                   <Badge>{a.state}</Badge>,
-                  <ObjectLink type="alarm" id={a.id}>
-                    处置与复查 →
+                  <ObjectLink
+                    type="alarm"
+                    to="alarm"
+                    id={a.id}
+                    from={{ page, id: rd.id }}
+                  >
+                    处置 →
                   </ObjectLink>,
                 ])}
             />
           </Panel>
         </div>
+        {/* REV-01：只有异常 / 待复核结果才进入「复核」（可下拉结论 + 依据必填）；正常项只读详情 */}
+        {isReview &&
+          (rd.abnormal || rd.status === "待复核" ? (
+            <Panel title="人工复核 · 判定与依据">
+              <Note>
+                复核结论将追加到该结果的审计记录；原始值与识别值一并保留以便追溯（多次复核形成历史链）。
+              </Note>
+              <Field label="复核结论">
+                <select value={conclusion} onChange={(e) => C(e.target.value)}>
+                  {["确认", "修正", "标记无效"].map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="最终值">
+                <input
+                  value={value}
+                  disabled={conclusion !== "修正"}
+                  placeholder={rd.final}
+                  onChange={(e) => V(e.target.value)}
+                />
+              </Field>
+              <Field label="最终业务状态">
+                <select
+                  value={finalState || (rd.abnormal ? "异常" : "正常")}
+                  onChange={(e) => FS(e.target.value)}
+                >
+                  <option>正常</option>
+                  <option>异常</option>
+                </select>
+              </Field>
+              <Field label="复核依据 / 无效原因（必填）">
+                <textarea value={reason} onChange={(e) => R(e.target.value)} />
+              </Field>
+              <div className="actions">
+                <Btn primary disabled={!reason} onClick={submitReview}>
+                  提交复核
+                </Btn>
+              </div>
+            </Panel>
+          ) : (
+            <Note>该结果判定为正常，仅需查看详情（白盒），无需复核。</Note>
+          ))}
       </>
     );
   }
@@ -689,7 +778,7 @@ export function Results({ page, id }: { page: string; id?: string }) {
                 ? `原始采集值：${r.raw} ${r.unit}`
                 : evidence === "红外"
                   ? p?.kind === "红外"
-                    ? `热像测温结果 ${r.raw} ${r.unit}（Mock 数据）`
+                    ? `热像测温结果 ${r.raw} ${r.unit}（演示数据）`
                     : "本条结果未关联红外证据。"
                   : "本条结果未关联音频文件。"}
             </Note>
@@ -698,7 +787,10 @@ export function Results({ page, id }: { page: string; id?: string }) {
             采集时间 <b>{r.time}</b>
           </p>
           <p>{r.source}</p>
-          <small>证据为 Mock 示意；原始采集值独立留存。</small>
+          {/* RES-05：视频留存走工厂 NVR */}
+          <small>
+            证据为演示示意；原始采集值独立留存。巡检视频留存与回放对接工厂 NVR，平台仅提供回放入口与关键帧截图。
+          </small>
         </Panel>
         <Panel title="结果链路 · 原始 → 识别 → 最终">
           <dl>
@@ -796,8 +888,13 @@ export function Results({ page, id }: { page: string; id?: string }) {
               .map((a) => [
                 a.name,
                 <Badge>{a.state}</Badge>,
-                <ObjectLink type="alarm" id={a.id}>
-                  处置与复查 →
+                <ObjectLink
+                  type="alarm"
+                  to="alarm"
+                  id={a.id}
+                  from={{ page, id: r.id }}
+                >
+                  处置 →
                 </ObjectLink>,
               ])}
           />
@@ -809,16 +906,19 @@ export function Results({ page, id }: { page: string; id?: string }) {
 export function Alarms({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const [note, N] = useState(""),
+    /** ALM-05：处置时可选标注「有效 / 无效」告警 */
+    [validity, VAL] = useState<"" | "有效" | "无效">(""),
     [filter, F] = useViewState("alarms.filter", "全部"),
-    [catF, CF] = useViewState("alarms.cat", "全部");
+    [catF, CF] = useViewState("alarms.cat", "全部"),
+    [drawer, setDrawer] = useState<string | null>(null);
   const [modal, setModal] = useState<null | "result" | "task">(null);
   // 告警分级口径统一：紧急→red（需立即处置）· 重要→amber（需关注）· 一般→blue（提示）
   const levelTone = (lv: string): "red" | "amber" | "blue" | undefined =>
     lv === "紧急" ? "red" : lv === "重要" ? "amber" : lv === "一般" ? "blue" : undefined;
   const levelClass = (lv: string): string =>
     lv === "紧急" ? "lv-urgent" : lv === "重要" ? "lv-important" : lv === "一般" ? "lv-minor" : "";
-  /** 闭环阶段：顺序即流程（异常触发 → 确认处置 → 复查 → 恢复 → 关闭） */
-  const ALARM_PHASES = ["待确认", "处理中", "待复查", "已恢复", "已关闭"];
+  /** 闭环阶段（ALM-02/03 简化）：异常触发 → 确认处置 → 已消警关闭；复查为可选，不进主流程 */
+  const ALARM_PHASES = ["待确认", "处置中", "已关闭"];
   /** 未闭环 = 仍需动作（已关闭才是闭环终点） */
   const openStates = ["待确认", "处理中", "待复查", "已恢复"];
   const alarmsOpen = s.alarms.filter((a) => openStates.includes(a.state));
@@ -865,13 +965,44 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             </button>
           ))}
         </div>
-        <p className="alarm-note">
-          闭环：异常触发 → <b>确认处置</b>（可一键派单）→ <b>创建复查任务</b> →{" "}
-          <b>复查恢复</b> → <b>人工关闭</b>；分级决定处置机制 ——
-          <i className="alarm-lv lv-urgent">紧急</i> 立即派单 ·
+        {/* ALM-05：有效 / 无效人工标注 → 报警准确率与标注覆盖率（产品成熟度信号），口径取自指标中心 */}
+        <div className="metric-strip">
+          <div>
+            <span>告警总数</span>
+            <strong>{s.alarms.length}</strong>
+          </div>
+          <div>
+            <span>已标注有效 / 无效</span>
+            <strong>
+              {
+                s.alarms.filter(
+                  (a) => a.validity === "有效" || a.validity === "无效",
+                ).length
+              }
+            </strong>
+          </div>
+          <div>
+            <span>报警准确率</span>
+            <strong>{metricValue(s, "alarmAccuracy")}%</strong>
+          </div>
+          <div>
+            <span>告警标注率</span>
+            <strong>{metricValue(s, "alarmLabelRate")}%</strong>
+          </div>
+        </div>
+        {/* ALM-01：告警与异常的定义、闭环与分级口径 —— 收进「口径说明」，正文区只留可操作内容 */}
+        <details className="spec-note">
+          <summary>口径说明：告警 vs 异常 · 闭环流程 · 分级处置机制</summary>
+          <b>告警 vs 异常</b>：<b>异常</b> = 机器人判定不确定，需人工复核（见「巡检结果」）；{" "}
+          <b>告警</b> = 明确触发阈值 / 规则，需处置（本页）。
+          <br />
+          闭环（ALM-02/03/06 已简化）：异常触发 → <b>处理 / 消警</b>
+          （填写处理意见，可选标注「有效 / 无效」）即终态；<b>不产生复查任务闭环</b>。
+          分级决定处置机制 ——
+          <i className="alarm-lv lv-urgent">紧急</i> 立即处置并升级 ·
           <i className="alarm-lv lv-important">重要</i> 限时确认 ·
           <i className="alarm-lv lv-minor">一般</i> 批量复核。
-        </p>
+        </details>
         {focus && (
           <div className="context-bar">
             <b>驾驶舱下钻</b>
@@ -884,7 +1015,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             </span>
             <div className="actions">
               <Btn primary onClick={() => go("alarm", focus.id)}>
-                处置 / 复查
+                去处置
               </Btn>
             </div>
           </div>
@@ -900,7 +1031,9 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
           ]}
           rows={alarmsAll.map((a) => {
             const wo = s.workOrders.find((w) => w.alarmId === a.id);
-            const idx = ALARM_PHASES.indexOf(a.state);
+            // 简化闭环进度：待确认=0；处置中/待复查/已恢复=1；已关闭=2
+            const idx =
+              a.state === "待确认" ? 0 : a.state === "已关闭" ? 2 : 1;
             return [
               <>
                 {a.id === id ? (
@@ -959,11 +1092,6 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                       {wo.assignee ? ` · ${wo.assignee}` : " · 待派单"}
                     </small>
                   </>
-                ) : a.reviewTask ? (
-                  <>
-                    复查任务 {a.reviewTask}
-                    <small>{s.tasks.find((t) => t.id === a.reviewTask)?.state}</small>
-                  </>
                 ) : (
                   <>
                     尚未派单
@@ -971,12 +1099,133 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                   </>
                 )}
               </>,
-              <Btn onClick={() => go("alarm", a.id)}>
-                {a.state === "已关闭" ? "查看" : "处置 / 复查"}
+              <Btn onClick={() => setDrawer(a.id)}>
+                {a.state === "已关闭" ? "查看" : "处置"}
               </Btn>,
             ];
           })}
         />
+        {drawer && (
+          <Modal
+            title="告警详情"
+            drawer
+            drawerWidth={900}
+            onClose={() => setDrawer(null)}
+          >
+            {(() => {
+              const ad = s.alarms.find((x) => x.id === drawer)!;
+              const p = s.points.find((x) => x.id === ad.pointId);
+              const t = s.tasks.find((x) => x.id === ad.taskId);
+              const rd = s.results.find((x) => x.id === ad.resultId);
+              const wo = s.workOrders.find((w) => w.alarmId === ad.id);
+              return (
+                <>
+                  <div className="context-bar" style={{ marginTop: -4 }}>
+                    <b>告警详情</b>
+                    <span className="bc-id">{ad.id}</span>
+                    <Badge tone={levelTone(ad.level)}>{ad.level}</Badge>
+                    <span
+                      className={
+                        "alarm-cat " +
+                        (ad.category === "机器人" ? "cat-robot" : "cat-biz")
+                      }
+                    >
+                      {ad.category}
+                    </span>
+                    <Badge>{ad.state}</Badge>
+                    <span>{p?.device}</span>
+                    <span>{p?.name}</span>
+                    <span className="muted">{ad.time}</span>
+                    <div className="actions">
+                      <Btn
+                        primary
+                        onClick={() => {
+                          setDrawer(null);
+                          go("alarm", ad.id);
+                        }}
+                      >
+                        进入处置
+                      </Btn>
+                    </div>
+                  </div>
+                  <Steps
+                    items={["异常触发", "确认处置", "已消警关闭"]}
+                    current={ad.state === "待确认" ? 0 : ad.state === "已关闭" ? 2 : 1}
+                  />
+                  <div className="grid two">
+                    <Panel title="触发证据与业务上下文">
+                      <Video live={false} label={p?.name} robotId={t?.robotId} />
+                      <p>
+                        <b>设备</b>{" "}
+                        <ObjectLink
+                          type="archive"
+                          id={p && archiveIdOf(s, p.device)}
+                        >
+                          {p?.device || "—"}
+                        </ObjectLink>
+                        {" "}· <b>点位</b>{" "}
+                        <ObjectLink type="point" id={ad.pointId}>
+                          {p?.name || "—"}
+                        </ObjectLink>
+                      </p>
+                      <p>
+                        <b>执行机器人</b>{" "}
+                        <ObjectLink type="robot" id={t?.robotId || ad.robotId}>
+                          {t?.robotId || ad.robotId || "—"}
+                        </ObjectLink>
+                      </p>
+                      <p>
+                        <b>触发结果</b>{" "}
+                        {rd
+                          ? `${rd.raw} ${rd.unit} · ${rd.source}`
+                          : "—"}
+                      </p>
+                      <div className="actions">
+                        <Btn
+                          onClick={() => {
+                            setDrawer(null);
+                            go("result-detail", ad.resultId);
+                          }}
+                        >
+                          查看原始结果
+                        </Btn>
+                        <Btn
+                          onClick={() => {
+                            setDrawer(null);
+                            go("task-detail", ad.taskId);
+                          }}
+                        >
+                          来源任务
+                        </Btn>
+                      </div>
+                    </Panel>
+                    <Panel title="处置轨迹">
+                      {ad.notes.length ? (
+                        ad.notes.map((x, i) => (
+                          <p className="event" key={i}>
+                            {x}
+                          </p>
+                        ))
+                      ) : (
+                        <Note>
+                          尚无处置记录，点击「进入处置 / 复查」开始处理。
+                        </Note>
+                      )}
+                      {wo && (
+                        <Field label="关联工单">
+                          <p>
+                            {wo.id} · {wo.state} · SLA 剩余 {wo.slaLeft} 分钟 ·{" "}
+                            {wo.assignee || "待派单"}
+                          </p>
+                        </Field>
+                      )}
+                    </Panel>
+                  </div>
+                </>
+              );
+            })()}
+          </Modal>
+        )}
       </Panel>
     );
   }
@@ -1012,15 +1261,13 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
           <span className="muted">{ad.time}</span>
           <div className="actions">
             <Btn primary onClick={() => go("alarm", ad.id)}>
-              进入处置 / 复查
+              进入处置
             </Btn>
           </div>
         </div>
         <Steps
-          items={["异常触发", "确认处置", "复查任务", "恢复确认", "关闭"]}
-          current={["待确认", "处理中", "待复查", "已恢复", "已关闭"].indexOf(
-            ad.state,
-          )}
+          items={["异常触发", "确认处置", "已消警关闭"]}
+          current={ad.state === "待确认" ? 0 : ad.state === "已关闭" ? 2 : 1}
         />
         <div className="grid two">
           <Panel title="触发证据与业务上下文">
@@ -1052,7 +1299,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                 </p>
               ))
             ) : (
-              <Note>尚无处置记录，点击「进入处置 / 复查」开始处理。</Note>
+              <Note>尚无处置记录，点击「进入处置」开始处理。</Note>
             )}
           </Panel>
         </div>
@@ -1081,10 +1328,8 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
         </span>
       </div>
       <Steps
-        items={["异常触发", "确认处置", "复查任务", "恢复确认", "关闭"]}
-        current={["待确认", "处理中", "待复查", "已恢复", "已关闭"].indexOf(
-          a.state,
-        )}
+        items={["异常触发", "确认处置", "已消警关闭"]}
+        current={a.state === "待确认" ? 0 : a.state === "已关闭" ? 2 : 1}
       />
       <div className="grid two">
         <Panel title="触发证据与业务上下文">
@@ -1121,62 +1366,53 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
           </div>
         </Panel>
         <Panel title="告警处置工作台">
-          <Btn
-            primary
-            disabled={a.state !== "待确认"}
-            onClick={() => act({ type: "ALARM_ACK", id: a.id })}
-          >
-            确认告警
-          </Btn>
-          <Field label="处置说明 / 关闭依据">
+          <Field label="处置说明 / 消警依据">
             <textarea
               value={note}
               onChange={(e) => N(e.target.value)}
-              placeholder="例如：已检查压力调节，申请机器人复查确认"
+              placeholder="例如：已现场确认压力恢复正常，无需复查，直接消警"
             />
           </Field>
+          {/* ALM-05：可选标注「有效 / 无效」，汇总到指标中心统计报警准确率 / 误报率 */}
+          <Field label="告警有效性（可选，用于统计报警准确率与产品成熟度）">
+            <select
+              value={validity}
+              onChange={(e) =>
+                VAL(e.target.value as "" | "有效" | "无效")
+              }
+            >
+              <option value="">未标注</option>
+              <option value="有效">有效告警</option>
+              <option value="无效">无效告警（误报）</option>
+            </select>
+          </Field>
+          {/* ALM-04：处置意见可推送第三方工单系统，平台不做工单闭环 */}
+          <Note>
+            处置意见经中间件可推送第三方工单系统（隐患治理 / 维修 / 作业票等），接口在「系统设置 ›
+            上层任务服务 · 接口配置」；平台<b>不做工单流转与 SLA 闭环</b>。
+          </Note>
+          {/* ALM-02/03/06：处置简化为「处理 / 消警」+ 处理意见文本，不做复查任务闭环 */}
           <div className="actions">
             <Btn
-              onClick={() =>
-                act({ type: "ALARM_NOTE", id: a.id, reason: note })
-              }
-            >
-              保存处置记录
-            </Btn>
-            <Btn
               primary
-              disabled={!["处理中", "已恢复"].includes(a.state)}
+              disabled={a.state === "已关闭" || !note.trim()}
+              title={!note.trim() ? "请先填写处理意见 / 消警依据" : "处理并消警"}
               onClick={() =>
-                act({ type: "RECHECK", id: a.id }, (n) =>
-                  go(
-                    "dispatch",
-                    n.alarms.find((x) => x.id === a.id)?.reviewTask,
-                  ),
-                )
+                act({
+                  type: "ALARM_RESOLVE",
+                  id: a.id,
+                  reason: note,
+                  validity: validity || undefined,
+                })
               }
             >
-              创建复查任务
-            </Btn>
-            <Btn
-              disabled={a.state !== "已恢复"}
-              onClick={() =>
-                act({ type: "ALARM_CLOSE", id: a.id, reason: note })
-              }
-            >
-              关闭告警
+              处理 / 消警
             </Btn>
           </div>
-          {a.reviewTask && (
+          {a.state === "已关闭" && (
             <Note>
-              复查任务 {a.reviewTask} ·{" "}
-              {s.tasks.find((t) => t.id === a.reviewTask)?.state}
-              <div className="actions">
-                <Btn onClick={() => go("dispatch", a.reviewTask)}>进入调度</Btn>
-                <Btn onClick={() => go("execution", a.reviewTask)}>
-                  执行监控
-                </Btn>
-                <Btn onClick={() => go("results", a.reviewTask)}>复查结果</Btn>
-              </div>
+              已消警闭环
+              {a.validity ? ` · 有效性标注：${a.validity}` : " · 未标注有效性"}
             </Note>
           )}
           <h4>处置轨迹</h4>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note } from "../components/UI";
+import { calibrationVersionOf } from "../data/mapCalibration";
 import { profileOf } from "../data/deviceProfile";
 import { capabilityMatrix } from "../data/robotCapabilities";
 import { ObjectLink, Kpis, EventTimeline, Pager } from "../components/Business";
@@ -35,7 +36,6 @@ export function Operations({
   const [q, Q] = useViewState("robots.query", ""),
     [status, ST] = useViewState("robots.status", "全部"),
     [pn, PN] = useViewState("robots.page", 1);
-  const [mode, MO] = useViewState("robots.mode", "cards");
   const r = s.robots.find((r) => r.id === id) || s.robots[0];
   const t = currentTask(s, r);
   const queued = queueFor(s, r.id);
@@ -74,142 +74,68 @@ export function Operations({
             )}
           </select>
           <span>实时状态 · 模拟通信</span>
-          <div className="segmented">
-            <button
-              onClick={() => MO("cards")}
-              className={mode === "cards" ? "active" : ""}
-            >
-              运行视图
-            </button>
-            <button
-              onClick={() => MO("list")}
-              className={mode === "list" ? "active" : ""}
-            >
-              列表视图
-            </button>
-          </div>
+          {/* ROB-01：新增机器人入口放在台账列表内（robot-new 为内置页，带返回）；
+              ROB-03：台账固定为列表视图，运行视图（卡片）已下线 */}
+          <Btn primary onClick={() => go("robot-new")}>
+            ＋ 新增机器人
+          </Btn>
         </div>
-        {mode === "cards" ? (
-          <div className="robot-monitor-grid">
-            {rows.slice((pn - 1) * 6, pn * 6).map((r) => {
-              const t = currentTask(s, r);
-              return (
-                <section className="robot-monitor" key={r.id}>
-                  <div className="robot-monitor-head">
-                    <i style={{ background: robotColors[r.state] }} />
-                    <ObjectLink type="robot" id={r.id}>
-                      {r.id} · {r.name}
-                    </ObjectLink>
-                    <Badge>{r.deviceType}</Badge>
-                    <Badge>{r.state}</Badge>
-                  </div>
-                  <div className="robot-monitor-body">
-                    <div className="split">
-                      <span>
-                        {r.deviceType} · {r.region} ·{" "}
-                        {r.state === "离线" ? "离线" : "在线"}
-                      </span>
-                      <b>{r.state === "人工接管" ? "MANUAL" : "AUTO"}</b>
-                    </div>
-                    <div className="battery-line">
-                      <span>电量 {r.battery}%</span>
-                      <progress max={100} value={r.battery} />
-                    </div>
-                    <dl>
-                      <dt>当前任务</dt>
-                      <dd>
-                        <ObjectLink type="execution" id={t?.id}>
-                          {t?.name || "无当前任务"}
-                        </ObjectLink>
-                      </dd>
-                      <dt>当前巡检点</dt>
-                      <dd>
-                        <ObjectLink type="point" id={t?.items[t.index]?.id}>
-                          {t?.items[t.index]?.name || "—"}
-                        </ObjectLink>
-                      </dd>
-                      <dt>自主阶段</dt>
-                      <dd>{stageOf(t)}</dd>
-                      <dt>待执行任务</dt>
-                      <dd>
-                        <ObjectLink type="queue" id={r.id}>
-                          {queueFor(s, r.id).length} 个 · 查看队列
-                        </ObjectLink>
-                      </dd>
-                      <dt>预计可用</dt>
-                      <dd>{robotAvailability(s, r)}</dd>
-                      <dt>激活版本</dt>
-                      <dd>
-                        m{r.mapVersion} / p{r.pointSet}
-                      </dd>
-                      <dt>健康提示</dt>
-                      <dd>
-                        {r.battery < r.constraints.minBattery
-                          ? `电量低于本机型门槛 ${r.constraints.minBattery}%，充电完成前禁止调度`
-                          : `关键能力正常 · 健康度 ${r.health} · 固件 ${r.firmware}`}
-                      </dd>
-                      <dt>最后通信</dt>
-                      <dd>
-                        {r.state === "离线"
-                          ? "无新心跳"
-                          : "演示连接在线 · 页面采样"}
-                      </dd>
-                    </dl>
-                    <div className="tags">
-                      {/* 载荷能力 + 移动能力双标签：移动能力决定任务能否下发到本机型 */}
-                      {[...r.mobility, ...r.capabilities].map((c) => (
-                        <Badge key={c}>{c}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                  <button
-                    className="robot-monitor-footer"
-                    onClick={() => go("robot", r.id)}
-                  >
-                    进入机器人运行监测 →
-                  </button>
-                </section>
-              );
-            })}
-          </div>
-        ) : (
-          <Panel title="机器人实时状态">
-            <Table
-              heads={[
-                "机器人",
-                "机型",
-                "区域 / 状态",
-                "电量 / 控制",
-                "当前任务 / 阶段",
-                "待执行 / 预计可用",
-                "版本 / 健康",
-              ]}
-              rows={rows.slice((pn - 1) * 6, pn * 6).map((r) => [
-                <ObjectLink type="robot" id={r.id}>
-                  {r.name}
-                </ObjectLink>,
-                <Badge>{r.deviceType}</Badge>,
-                <>
-                  {r.region}
-                  <small>
-                    <Badge>{r.state}</Badge>
-                  </small>
-                </>,
-                `${r.battery}% / ${r.state === "人工接管" ? "MANUAL" : "AUTO"}`,
-                <>
-                  <ObjectLink type="execution" id={r.current} />
-                  <small>{stageOf(currentTask(s, r))}</small>
-                </>,
-                <ObjectLink type="queue" id={r.id}>
-                  {queueFor(s, r.id).length} 个 / {robotAvailability(s, r)}
-                </ObjectLink>,
-                `m${r.mapVersion} / p${r.pointSet} · ${
-                  r.battery < r.constraints.minBattery ? "低电量" : "正常"
-                } · 健康 ${r.health}`,
-              ])}
-            />
-          </Panel>
-        )}
+        {/* ROB-03：台账固定为列表视图（原「运行视图」卡片已下线）；
+            运行监测 / 机器人能力两个内置页的入口固定在行尾「操作」列，另可从「能力摘要」直入能力页 */}
+        <Panel title="机器人实时状态">
+          <Table
+            heads={[
+              "机器人",
+              "机型",
+              "区域 / 状态",
+              "电量 / 控制",
+              "当前任务 / 阶段",
+              "待执行 / 预计可用",
+              "能力摘要",
+              "版本 / 健康",
+              "操作",
+            ]}
+            rows={rows.slice((pn - 1) * 6, pn * 6).map((r) => [
+              <ObjectLink type="robot" id={r.id}>
+                {r.name}
+              </ObjectLink>,
+              <Badge>{r.deviceType}</Badge>,
+              <>
+                {r.region}
+                <small>
+                  <Badge>{r.state}</Badge>
+                </small>
+              </>,
+              `${r.battery}% / ${r.state === "人工接管" ? "MANUAL" : "AUTO"}`,
+              <>
+                <ObjectLink type="execution" id={r.current} />
+                <small>{stageOf(currentTask(s, r))}</small>
+              </>,
+              <ObjectLink type="queue" id={r.id}>
+                {queueFor(s, r.id).length} 个 / {robotAvailability(s, r)}
+              </ObjectLink>,
+              // ROB-02：台账直出能力（可用 / 缺失 / 未接入）；带 to 才是真入口，不传 to 只渲染纯展示 span
+              <ObjectLink type="health" id={r.id} to="health">
+                <small>
+                  {(() => {
+                    const cm = capabilityMatrix(r);
+                    const n = (k: string) =>
+                      cm.filter((c) => c.availability === k).length;
+                    return `可用 ${n("可用")} / 缺失 ${n("缺失")} / 未接入 ${n("未接入")}`;
+                  })()}
+                </small>
+              </ObjectLink>,
+              `m${r.mapVersion} / c${r.calibrationVersion} · ${
+                r.battery < r.constraints.minBattery ? "低电量" : "正常"
+              } · 健康 ${r.health}`,
+              // ROB-03：运行监测 / 机器人能力已收为内置页（菜单隐藏），入口只保留在本列按钮上
+              <div className="actions">
+                <Btn onClick={() => go("robot", r.id)}>详情</Btn>
+                <Btn onClick={() => go("health", r.id)}>能力</Btn>
+              </div>,
+            ])}
+          />
+        </Panel>
         <Pager page={pn} count={rows.length} onChange={PN} />
       </>
     );
@@ -254,6 +180,11 @@ export function Operations({
       return (
         <>
           {common}
+          {/* ROB-02：能力不是与台账并列的"筛选维度"，而是台账直出 + 详情 Tab；本页从台账行「能力摘要」进入 */}
+          <Note>
+            机器人能力<b>不再是独立筛选维度</b>：台账列表已直出能力摘要（可用 / 缺失 / 未接入），
+            本页用于从台账详情查看能力明细（能力与健康 / 地图与版本 / 机型专项）。
+          </Note>
           <div className="object-tabs">
             {(
               [
@@ -296,7 +227,7 @@ export function Operations({
                 <dt>空间版本</dt>
                 <dd>m{cur.mapVersion}</dd>
                 <dt>点位版本</dt>
-                <dd>p{cur.pointSet}</dd>
+                <dd>c{cur.calibrationVersion}</dd>
                 <dt>最近同步</dt>
                 <dd>
                   <Badge>
@@ -358,7 +289,7 @@ export function Operations({
               <dt>空间版本</dt>
               <dd>m{cur.mapVersion}</dd>
               <dt>点位版本</dt>
-              <dd>p{cur.pointSet}</dd>
+              <dd>c{cur.calibrationVersion}</dd>
               <dt>最近同步</dt>
               <dd>
                 <Badge>
@@ -433,7 +364,7 @@ export function Operations({
             当前任务 <ObjectLink type="execution" id={t?.id} />
           </span>
           <span>
-            m{r.mapVersion} / p{r.pointSet}
+            m{r.mapVersion} / c{r.calibrationVersion}
           </span>
           <span>
             预计可用 <b>{robotAvailability(s, r)}</b>
@@ -504,13 +435,17 @@ export function Operations({
                     </ObjectLink>
                   </dd>
                 </dl>
-                <Btn
-                  primary
-                  disabled={!t}
-                  onClick={() => go("execution", t?.id)}
-                >
-                  进入实时执行监控
-                </Btn>
+                <div className="actions">
+                  <Btn
+                    primary
+                    disabled={!t}
+                    onClick={() => go("execution-monitor", t?.id)}
+                  >
+                    进入实时执行监控
+                  </Btn>
+                  {/* EXE-03：人工接管与遥控已降为内置页，从机器人详情进入 */}
+                  <Btn onClick={() => go("manual", r.id)}>人工操作与遥控</Btn>
+                </div>
               </section>
             </div>
           </>
@@ -680,7 +615,7 @@ export function Operations({
         <section>
           <h3>异常</h3>
           <Kpis
-            items={["新告警", "未确认", "处理中", "待复查"].map((x) => ({
+            items={["新告警", "未确认", "处理中", "已恢复"].map((x) => ({
               label: x,
               value: alerts.filter(
                 (a) =>
@@ -754,7 +689,9 @@ export function Operations({
             .filter((r) => {
               const m = s.maps.find((m) => m.id === r.mapId);
               return (
-                m && (r.mapVersion !== m.version || r.pointSet !== m.pointSet)
+                m &&
+                (r.mapVersion !== m.version ||
+                  r.calibrationVersion !== calibrationVersionOf(s, r.mapId))
               );
             })
             .map((r) => (
@@ -777,7 +714,7 @@ export function Operations({
               <button
                 className="attention"
                 key={t.id}
-                onClick={() => go("execution", t.id)}
+                onClick={() => go("execution-monitor", t.id)}
               >
                 <i className="severity red" />
                 <div>
@@ -867,7 +804,7 @@ export function Operations({
                 </Badge>
                 <small>预计 {timeAt(minutesLeft(t))} 结束</small>
               </div>
-              <Btn primary onClick={() => go("execution", t.id)}>
+              <Btn primary onClick={() => go("execution-monitor", t.id)}>
                 执行监控 →
               </Btn>
             </div>

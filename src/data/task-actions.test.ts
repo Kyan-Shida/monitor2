@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run } from "./engine";
 import { captureKindOfPoint } from "./deviceMaster";
+import { targetsOf } from "./mapCalibration";
 import type { State } from "./types";
 
 /** 同步地图到指定机器人（三个阶段步进，与 engine.test 的辅助函数同口径） */
@@ -43,7 +44,7 @@ test("任务原子动作由「采集方式」推导，不由业务类型推导�
 test("一个停靠位覆盖多种采集方式时，动作列表保留全部（不丢红外）", () => {
   let s = seed();
   const map = s.maps.find((x) => x.id === "MAP-A03")!;
-  const targetId = map.targets[0].id;
+  const targetId = targetsOf(s, map.id)[0].id;
   // 同一次停靠：出口压力表（可见光）+ 罐壁（红外）
   s = run(s, {
     type: "ANNOTATE",
@@ -187,7 +188,7 @@ test("端到端验收（K′4）：上传底图 → 图上标注（多选检测�
   assert.ok(mapOf().image);
   // ② 图面点击新增候选目标
   s = run(s, { type: "ADD_TARGET", mapId: MAP, x: 30, y: 70, kind: "仪表" });
-  const target = mapOf().targets.at(-1)!;
+  const target = targetsOf(s, MAP).at(-1)!;
   // ③ 标注：一次停靠覆盖 2 个检测目标 + 就地编排"怎么看"
   s = run(s, {
     type: "ANNOTATE",

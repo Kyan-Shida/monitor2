@@ -4,12 +4,15 @@
  *              含「地图 → 巡检任务」链路新增类型（DeviceAsset/LogicalPoint/Route/TrialReceipt…）
  * @interaction 被 data 层（seed / engine / selectors / metrics / planSchedule…）与各页面组件消费
  */
+import type { MapCalibration, PendingCalibration } from "./mapCalibration";
 export type TaskStatus =
   | "待调度"
   | "已分配"
   | "下发中"
   | "待执行"
   | "执行中"
+  /** 人工接管（借调）打断中的任务：由机器人申请 / 人工接管后进入，需显式「恢复任务」才回到执行中 */
+  | "已被接管"
   | "暂停"
   | "完成"
   | "部分完成"
@@ -21,6 +24,11 @@ export interface Point {
   id: string;
   name: string;
   targetId: string;
+  /**
+   * 来源地图 id（**仅作来源记录，非关键外键**，DATA-01）：
+   * 地图删除 / 重传后巡检点仍可用，绑定关系以 targetId → Candidate 为准，
+   * 权威坐标以统一坐标系 `world` 为准，不以本字段判别身份。
+   */
   mapId: string;
   version: number;
   device: string;
@@ -30,8 +38,15 @@ export interface Point {
   kind: string;
   requirement: string;
   state: "待标注" | "待验证" | "已启用" | "待重新验证" | "停用";
+  /** 地图内相对坐标（百分比，仅用于底图展示投影，非权威定位） */
   x: number;
   y: number;
+  /**
+   * 统一坐标系下的巡点位（DATA-01 权威定位）：全厂 XYZ（米）。
+   * 多张分区地图（相对坐标系）统一到该坐标系后，才能做"全部巡检点"叠加、
+   * 对接人员定位 / 市政地图，且地图删改不影响巡检点。
+   */
+  world?: { x: number; y: number; z: number };
   validated?: string;
   /** 物理停靠位姿（阶段⑥：示教定稿时回填） */
   pose?: { x: number; y: number; yaw: number };
@@ -43,6 +58,8 @@ export interface Point {
   calibrate?: "正常" | "待校准";
   /** 是否由示教「记录当前位姿」回填而来 */
   taught?: boolean;
+  /** PT-02：标定用机器人 id（选在巡检点层面；位姿由"机器人 → 平台"上行抓取而来） */
+  calibrateRobot?: string;
   /**
    * 巡检项（**多个巡检项组成一个巡检点**）
    * @description 有巡检项时：任务指令集（原子动作）与所需采集方式**以巡检项配置为准**，
@@ -51,9 +68,9 @@ export interface Point {
   inspectItems?: InspectSpec[];
 }
 /**
- * 地图点位来源
+ * 标定点来源
  * @description `地图导入` = 随地图文件带来的定位ID（外部ID，平台不改）；
- *              `平台新增` = 在「地图工作台」里继续添加的点位
+ *              `平台新增` = 在「巡检点导入」面板里补录的点位
  */
 export type MapPointSource = "地图导入" | "平台新增";
 
@@ -65,7 +82,7 @@ export interface Candidate {
   y: number;
   state: "待确认" | "已确认" | "已剔除";
   pointId?: string;
-  /** 地图点位来源（地图导入 / 平台新增） */
+  /** 标定点来源（地图导入 / 平台新增） */
   source?: MapPointSource;
   /** 地图自带的外部定位ID（source = 地图导入 时随文件带入） */
   externalId?: string;
@@ -80,12 +97,18 @@ export interface Candidate {
   /** 聚类簇 id（一个停靠位覆盖多设备） */
   clusterId?: string;
 }
+/**
+ * 地图（**纯点云**）
+ * @description 地图只承载"机器人能走哪"：点云底图 + 采集批次元信息，
+ *              **不含任何定位ID、巡检点与业务信息**（第一次扫描不可能已有巡检点）。
+ *              巡检点标定数据独立存放在 `mapCalibration.ts` 的标定集合里，按 id 关联。
+ */
 export interface MapAsset {
   id: string;
   name: string;
   region: string;
+  /** 空间版本 m{n}：底图 / 建图内容变更时自增（点位标定不改变本版本） */
   version: number;
-  pointSet: number;
   /**
    * 地图状态：`草稿`（内容未定版）/ `已发布`（已定版，可下发与引用）
    * @description 平台**不区分试验版 / 正式版**：下发时会自动把当前内容定版为「已发布」
@@ -97,13 +120,12 @@ export interface MapAsset {
   video: string;
   file: string;
   checksum: string;
-  targets: Candidate[];
   history: string[];
   /** 坐标系标定（阶段②，原型可只存示意值） */
   frames?: MapFrames;
   /** 图层可用性/可见性（阶段②） */
   layers?: MapLayerFlags;
-  /** 设备清单版本（阶段⑧，与 version / pointSet 并列的第三类版本） */
+  /** 设备清单版本（阶段⑧，与空间版本 m 并列的第三类版本） */
   deviceListVersion?: number;
   /** 底图（用户上传的地图图片 dataUrl）；有底图即可在图上标注点位 */
   image?: string;
@@ -171,8 +193,27 @@ export interface AtomicActionConfig {
   /** 云台预置位 */
   preset?: string;
   /**
-   * 操控台额外记录项（镜头聚焦、光圈、机器人移动速度、辅助功能开关等）。
-   * @description 上装能力差异大，通用字段无法穷举，扩展字段用 key-value 记录。
+   * 镜头对焦距离（PT-03：常用上装参数提升为结构化字段，避免 key 名各写各的）。
+   * @description 口径：以下上装参数均为**粗参考**，机器人到场后由本体本地算法微调对准。
+   */
+  focus?: number;
+  /** 镜头光圈（F 值） */
+  aperture?: number;
+  /** PT-07：气体采集方式 —— 泵吸式（主动抽气，响应快）/ 扩散式（被动感应） */
+  gasMode?: "泵吸式" | "扩散式";
+  /** PT-07：气体传感器种类（如 4 种 / 6 种 / 具体气体组分） */
+  sensorKind?: string;
+  /** PT-07：红外测温发射率（0–1，材质相关） */
+  emissivity?: number;
+  /** PT-07：红外有效测温距离（米） */
+  thermalDistance?: number;
+  /** PT-07：声纹关注频段（如 20Hz–20kHz） */
+  soundBand?: string;
+  /** PT-07：AI 不安全行为识别的具体类别清单（见 BEHAVIOR_TYPES） */
+  behaviorTypes?: string[];
+  /**
+   * 其它操控台额外记录项（机器人移动速度、辅助功能开关等，未结构化的部分）。
+   * @description 上装能力差异大，先结构化常用项（focus / aperture / lift / light / 四类能力专属参数），其余用 key-value 兜底。
    */
   extra?: Record<string, string | number | boolean>;
 }
@@ -181,12 +222,18 @@ export interface AtomicActionConfig {
  * 上装分组：把原子动作按执行载荷归类，供「按上装选动作模板」展示
  * @description 一个上装对应一类机器人能力（可见光相机 / 红外相机 / 气体采集 / 声音采集）。
  */
+// 能力分类按「采集方式 4 类」对齐（可见光 / 红外 / 气体 / 声音）；
+// AI 不安全行为分析不是独立采集方式，而是「可见光 + 边缘 AI」的一个原子动作，归入可见光相机。
 export const payloadGroups: { name: string; caption: string; actions: AtomicAction[] }[] = [
-  { name: "可见光相机", caption: "拍照 / 录像（可见光）", actions: ["拍照", "录像片段"] },
-  { name: "红外相机", caption: "热成像采集", actions: ["采集红外热像"] },
-  { name: "气体采集", caption: "气体浓度采样", actions: ["采集气体"] },
-  { name: "声音采集", caption: "现场声音录制", actions: ["录制声音"] },
+  { name: "可见光相机", caption: "拍照 / 录像 / AI 行为分析（可见光 + 边缘 AI）", actions: ["拍照", "录像片段", "分析不安全行为"] },
+  { name: "红外相机", caption: "热成像采集（发射率 / 测温距离在动作参数里配置）", actions: ["采集红外热像"] },
+  // PT-07：气体采集区分采集方式（泵吸式 / 扩散式）与传感器种类，在动作参数里配置
+  { name: "气体采集", caption: "气体浓度采样（泵吸式 / 扩散式）", actions: ["采集气体"] },
+  { name: "声音采集", caption: "现场声音录制 / 声纹（关注频段在动作参数里配置）", actions: ["录制声音"] },
 ];
+
+/** AI 不安全行为识别的具体类别清单（动作参数多选） */
+export const BEHAVIOR_TYPES = ["未戴安全帽", "人员闯入", "越界", "违规作业", "人员聚集"];
 
 /** 点位级机器人动作编排（阶段⑥：解决"到得了之后怎么看"） */
 export interface PointActionPlan {
@@ -378,8 +425,17 @@ export interface BusinessAlarm {
  */
 export interface BusinessTarget {
   id: string;
-  /** 外键 → Instrument（仪表） */
-  instrumentId: string;
+  /**
+   * 目标类型（TGT-01）：仪表类挂设备台账；环境 / 区域类**不强制关联设备**（如罐区气体、区域声纹、AI 不安全行为）。
+   */
+  targetKind?: "仪表" | "环境" | "区域";
+  /** 外键 → Instrument（仪表）；环境 / 区域类目标可为空（TGT-01） */
+  instrumentId?: string;
+  /**
+   * 区域 / 空间目标的参照物锚点（TGT-02）：如"3# 罐区北侧立柱"。
+   * 区域目标必须有锚点，否则"泄漏发生在哪一段管道 / 哪个罐区"无法归因。
+   */
+  anchor?: string;
   /** 外键 → Requirement（巡检要求） */
   requirementId: string;
   /** 业务目标：这条目标要达成什么（如"确认出口压力表读数在正常范围内"） */
@@ -517,8 +573,10 @@ export interface Robot {
   state:
     "空闲" | "执行中" | "暂停" | "人工接管" | "离线" | "充电" | "返航中" | "故障" | "维护";
   mapId: string;
+  /** 已同步的空间版本 m{n} */
   mapVersion: number;
-  pointSet: number;
+  /** 已同步的标定数据版本 c{n}（来自独立标定集合，与地图空间版本解耦） */
+  calibrationVersion: number;
   current?: string;
   x: number;
   y: number;
@@ -537,7 +595,7 @@ export interface Robot {
 }
 export interface Snapshot extends Point {
   mapVersion: number;
-  pointSet: number;
+  calibrationVersion: number;
   /**
    * 创建任务时推导出的到位原子动作列表（快照：不随后续设备主数据 / 采集方式变更而变）
    * @description 一个停靠位可覆盖多个检测目标，故为列表（如同时"拍照"+"采集红外热像"）
@@ -547,7 +605,13 @@ export interface Snapshot extends Point {
 export type TaskType =
   "光学任务" | "红外任务" | "气体采集任务" | "声音采集任务" | "综合巡检任务";
 export type AtomicAction =
-  "拍照" | "录像片段" | "采集红外热像" | "采集气体" | "录制声音";
+  | "拍照"
+  | "录像片段"
+  | "采集红外热像"
+  | "采集气体"
+  | "录制声音"
+  /** PT-07：AI 不安全行为分析（未戴安全帽 / 人员闯入 / 越界等），基于可见光 + 边缘 AI */
+  | "分析不安全行为";
 /** 全部原子动作：巡检项「机器操作内容」的选择范围（与任务指令集同一份名单） */
 export const atomicActions: AtomicAction[] = [
   "拍照",
@@ -555,6 +619,7 @@ export const atomicActions: AtomicAction[] = [
   "采集红外热像",
   "采集气体",
   "录制声音",
+  "分析不安全行为",
 ];
 /**
  * 由原子动作反推任务类型
@@ -589,6 +654,7 @@ export const atomicActionCapability: Record<AtomicAction, string> = {
   采集红外热像: "红外",
   采集气体: "气体",
   录制声音: "声音",
+  分析不安全行为: "可见光",
 };
 /**
  * 采集方式 → 原子动作（任务指令集由"看什么"推导，不由业务类型推导）
@@ -622,7 +688,7 @@ export interface Task {
   robotId?: string;
   mapId: string;
   mapVersion: number;
-  pointSet: number;
+  calibrationVersion: number;
   items: Snapshot[];
   stage: number;
   index: number;
@@ -770,6 +836,10 @@ export interface Alarm {
   level: string;
   state: "待确认" | "处理中" | "待复查" | "已恢复" | "已关闭";
   notes: string[];
+  /**
+   * ALM-05：处置时标注「有效 / 无效」告警（可选），用于统计机器人报警准确率 / 误报率。
+   */
+  validity?: "有效" | "无效";
   /** 处置机制摘要（按级别自动推导，可覆盖；用于详情/推送展示"该怎么处理"） */
   handle?: string;
   reviewTask?: string;
@@ -780,7 +850,7 @@ export interface Sync {
   mapId: string;
   robotId: string;
   mapVersion: number;
-  pointSet: number;
+  calibrationVersion: number;
   state: "传输中" | "校验中" | "待激活" | "已同步" | "失败";
   reason?: string;
 }
@@ -793,7 +863,7 @@ export interface Change {
   note: string;
   state: "待确认" | "维护中" | "待同步" | "已完成" | "已驳回";
   version?: number;
-  pointSet?: number;
+  calibrationVersion?: number;
 }
 export interface Session {
   startedAt?: string;
@@ -802,6 +872,10 @@ export interface Session {
   id: string;
   robotId: string;
   taskId?: string;
+  /**
+   * TKO-01：接管来源 —— 「人工主动」= 人从接管页主动切入；「机器人申请」= 机器人自主处理超时后申请人介入。
+   */
+  origin?: "人工主动" | "机器人申请";
   state: "待暂停确认" | "已接管" | "退出核对中" | "已释放" | "已超时";
   expires: number;
   seq: number;
@@ -878,6 +952,17 @@ export interface State {
   trackSamples?: TrackSample[];
   /** 试采回执（阶段⑤） */
   trialReceipts?: TrialReceipt[];
+  /**
+   * 巡检点标定文件（**独立模块，与地图分开放**）：
+   * 地图是纯点云、不含任何点位；采集时产出的「巡检点标定文件」解析后落在这里，按 mapId 关联。
+   * @see mapCalibration.ts
+   */
+  mapCalibrations?: MapCalibration[];
+  /**
+   * 待绑定的标定文件（暂存）：允许**先导入标定文件**，待点云地图就绪后再选地图绑定
+   * @description 绑定前这些定位点不参与任何业务，也不会自动生成平台巡检点
+   */
+  pendingCalibration?: PendingCalibration;
   /** 当前演示角色 ID，用于角色切换器（原型阶段代替真实登录） */
   roleId: string;
 }

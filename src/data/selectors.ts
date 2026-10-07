@@ -166,16 +166,16 @@ export function schedule(s: State, r: Robot): Window[] {
     cursor += 45;
   }
   const q = queueFor(s, r.id);
-  let mv = `${r.mapId}/${r.mapVersion}/${r.pointSet}`;
+  let mv = `${r.mapId}/${r.mapVersion}/${r.calibrationVersion}`;
   for (const t of q) {
-    const target = `${t.mapId}/${t.mapVersion}/${t.pointSet}`;
+    const target = `${t.mapId}/${t.mapVersion}/${t.calibrationVersion}`;
     if (mv !== target) {
       out.push({
         id: t.id + "sync",
         kind: "maintenance",
         start: cursor,
         end: cursor + 15,
-        label: "地图 / 点位同步窗口",
+        label: "地图 / 标定同步窗口",
       });
       cursor += 15;
       mv = target;
@@ -255,9 +255,9 @@ export function checks(s: State, t: Task, r: Robot) {
       detail: `实际 m${r.mapVersion} → 要求 m${t.mapVersion}`,
     },
     {
-      name: "点位版本",
-      pass: r.pointSet === t.pointSet,
-      detail: `实际 p${r.pointSet} → 要求 p${t.pointSet}`,
+      name: "标定版本",
+      pass: r.calibrationVersion === t.calibrationVersion,
+      detail: `实际 c${r.calibrationVersion} → 要求 c${t.calibrationVersion}`,
     },
     {
       name: "电量",

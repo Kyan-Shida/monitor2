@@ -6,6 +6,7 @@
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
+import { calibrationVersionOf } from "../data/mapCalibration";
 import { Badge, Btn, Empty, Note, Panel, Table } from "./UI";
 
 export function MapDispatch({ mapId }: { mapId: string }) {
@@ -13,6 +14,8 @@ export function MapDispatch({ mapId }: { mapId: string }) {
   const m = s.maps.find((x) => x.id === mapId);
   const [sel, SEL] = useState<string[]>([]);
   if (!m) return <Note>地图不存在。</Note>;
+  /** 该地图的标定数据版本 c{n}（来自独立标定集合，与地图空间版本解耦） */
+  const calVer = calibrationVersionOf(s, m.id);
   const syncs = s.syncs.filter((x) => x.mapId === m.id);
   const done = (rid: string) =>
     s.syncs.some(
@@ -21,7 +24,7 @@ export function MapDispatch({ mapId }: { mapId: string }) {
         x.robotId === rid &&
         x.state === "已同步" &&
         x.mapVersion === m.version &&
-        x.pointSet === m.pointSet,
+        x.calibrationVersion === calVer,
     );
   /**
    * 维护窗口：区域不匹配不可下发；任务中需等结束；非空闲需等待
@@ -45,15 +48,21 @@ export function MapDispatch({ mapId }: { mapId: string }) {
     <>
       {m.state === "草稿" && (
         <Note>
-          <b>当前地图为草稿状态：</b>下发将自动定版为当前版本（m{m.version} / p{m.pointSet}）并同步给所选设备。
+          <b>当前地图为草稿状态：</b>下发将自动定版为当前版本（m{m.version} / c{calVer}）并同步给所选设备。
         </Note>
       )}
       <Note>
         下发只登记“传输中”，**传输完成不等于已同步**——需机器人激活回执确认版本一致后，
         平台才更新机器人实际版本；任务执行中需等待维护窗口。
       </Note>
+      {/* MAP-05：换机器人后一键重下发（地图 + 巡检点 + 业务数据） */}
+      <Note>
+        <b>换机器人一键重下发（MAP-05）</b>：机器人坏了 / 换机时，勾选新设备点「下发」，
+        平台把<b>点云底图 + 巡检点坐标 + 业务数据</b>一次性重新同步到新机，新机即知道要干什么；
+        巡检路线 / 相关调整无需逐台重配。
+      </Note>
       <Panel
-        title={`选择设备下发 · 目标版本 m${m.version} / p${m.pointSet}`}
+        title={`选择设备下发 · 目标版本 m${m.version} / c${calVer}`}
         extra={
           <div className="actions">
             <Btn onClick={() => SEL(s.robots.map((r) => r.id))}>全选</Btn>
@@ -94,7 +103,7 @@ export function MapDispatch({ mapId }: { mapId: string }) {
             </>,
             r.region,
             <Badge>{r.state}</Badge>,
-            `${r.mapId} / m${r.mapVersion} / p${r.pointSet}`,
+            `${r.mapId} / m${r.mapVersion} / c${r.calibrationVersion}`,
             windowOf(r),
             done(r.id) ? <Badge>已同步</Badge> : <span className="muted">—</span>,
           ])}
@@ -107,7 +116,7 @@ export function MapDispatch({ mapId }: { mapId: string }) {
             rows={syncs.map((x) => [
               x.id,
               x.robotId,
-              `m${x.mapVersion} / p${x.pointSet}`,
+              `m${x.mapVersion} / c${x.calibrationVersion}`,
               <Badge>{x.state}</Badge>,
               x.reason || "—",
               <div className="actions">

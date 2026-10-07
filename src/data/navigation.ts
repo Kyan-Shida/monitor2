@@ -35,28 +35,35 @@ export const groups = [
     "结果与异常",
     "results:巡检结果查询::结果",
     "review:结果详情 / 复核::结果",
-    "archive:设备巡检档案::结果",
+    // EQ-01：设备巡检档案已移入「资源与地图 › 设备主数据」（结果与异常侧只保留按任务的结果查询）
     "alarms:告警事件::告警与工单",
     "alarm:告警详情 / 复查::告警与工单",
 
   ],
   [
     "资源与地图",
+    // EQ-01：设备巡检档案并入设备台账（行内「设备档案」入口）；路由保留、菜单隐藏（见 hiddenIds），避免与台账语义重复
     "equipment:设备台账::点位与对象",
+    "archive:设备巡检档案::点位与对象",
     "points:巡检目标台账::点位与对象",
+    // TGT-01：空间 / 区域（非装置）类目标单独成入口，与环境/区域类算法对齐
+    // "points-space:空间与区域目标::点位与对象",
     "rules:采集结果与告警规则::点位与对象",
-    // 巡检点管理（原「点位标注与验证工作台」）：巡检点 = 名称 + 地图 + 地图点位 + 多个巡检项
+    // 巡检点管理（原「点位标注与验证工作台」）：巡检点 = 名称 + 地图 + 标定点 + 多个巡检项
     "annotation:巡检点管理::点位与对象",
     // 原「路线与轨道 → 路线管理」已下线：路线随地图带入，不再作为独立目录
     "maps:地图管理::地图",
   ],
   [
     "机器人管理",
-    "robots:机器台账::机器人资产",
-    "robot:机器人运行监测::机器人资产",
-    "robot-new:新增机器人::机器人资产",
+    // ROB-03：「机器人管理」收口为「机器台账」单一菜单入口 ——
+    // 运行监测（须指定机器人）、新增机器人（动作）、机器人能力（某台机器人的详情）
+    // 三者都不是可与台账并列的目录页，降级为台账内的按钮 / 行内链接入口（菜单隐藏，路由保留）
+    "robots:机器台账",
+    "robot:机器人运行监测",
+    "robot-new:新增机器人",
     // 原「能力与健康 / 地图与版本 / 机型专项」三页合并为一个「机器人能力」页（页内 Tab 切换）
-    "health:机器人能力::机器人能力",
+    "health:机器人能力",
   ],
   ["分析与报表", "metrics:分析报表", "analytics:基础分析", "report:巡检结果报表::巡检报表"],
   [
@@ -90,6 +97,15 @@ const hiddenIds = [
   // 已合并进「机器人能力」页（health 的页内 Tab）；路由保留，旧链接仍可打开
   "robot-map",
   "device",
+  // EQ-01：设备巡检档案并入设备台账（行内入口）；路由保留（含 result-detail/alarm-detail/replay-detail 的父级），仅隐藏菜单
+  "archive",
+  // EXE-03：人工接管与遥控降为「实时执行监控」的内置页（从现场态势 / 机器人详情进入）；路由保留，仅隐藏菜单
+  "manual",
+  // ROB-03：运行监测 / 新增机器人 / 机器人能力 降为「机器台账」的内置页
+  // （分别由台账行「机器人名」、顶部「＋ 新增机器人」按钮、行「能力摘要」进入）；路由保留，仅隐藏菜单
+  "robot",
+  "robot-new",
+  "health",
 ];
 const roots = [
   "workbench",
@@ -117,7 +133,9 @@ const paths: Record<string, string> = {
   device: "robots/device",
   equipment: "resources/equipment",
   points: "resources/points",
-  /** 添加 / 编辑巡检点（内置页）：名称 + 地图 + 地图点位 + 多个巡检项 */
+  /** 空间 / 区域（非装置）类目标：复用巡检目标台账页，预置为空间与区域视图 */
+  "points-space": "resources/points-space",
+  /** 添加 / 编辑巡检点（内置页）：名称 + 地图 + 标定点 + 多个巡检项 */
   "point-edit": "resources/points/edit",
   /** 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证 */
   "point-annotate": "resources/points/annotate",
@@ -132,6 +150,8 @@ const paths: Record<string, string> = {
   queue: "dispatch/queue",
   "dispatch-log": "dispatch/records",
   execution: "execution/live",
+  /** 单任务现场态势（内置页）：挂在「实时执行监控」下，由执行总览行内「监控」进入 */
+  "execution-monitor": "execution/monitor",
   replay: "execution/replay",
   results: "results/query",
   review: "results/review",
@@ -165,8 +185,23 @@ const paths: Record<string, string> = {
   bigscreen: "screen/bigscreen",
 };
 const parents: Record<string, string> = {
+  /** ROB-03：运行监测 / 新增机器人 / 机器人能力 都是「机器台账」的内置页 */
   robot: "robots",
+  "robot-new": "robots",
+  health: "robots",
   "map-detail": "maps",
+  /** 单任务现场态势（内置页）：归属「实时执行监控」 */
+  "execution-monitor": "execution",
+  /** EXE-03：「人工操作与遥控」降为执行监控的内置页（菜单隐藏，仅保留行内入口） */
+  manual: "execution",
+  /**
+   * EQ-01：设备巡检档案并入「设备台账」（菜单隐藏，仅保留行内入口）。
+   * 这里仍登记其父级为「设备台账」，才能：
+   *  ① 进入档案页时侧边栏继续高亮设备台账（menuIdOf 逐级回落）；
+   *  ② 面包屑补出「设备台账 › 设备巡检档案」；
+   *  ③ 「返回」按钮回到设备台账（而非置灰）。
+   */
+  archive: "equipment",
   /** 添加 / 编辑巡检点、地图标注工作台、巡检点详情都归属「巡检点管理」 */
   "point-edit": "annotation",
   "point-annotate": "annotation",
@@ -259,6 +294,14 @@ export const routeMeta = [
     name: "任务详情",
     path: paths["task-detail"],
     parent: "tasks",
+  },
+  {
+    // 单任务现场态势（内置页）：由「实时执行监控」执行总览行内「监控」进入
+    ...pages.find((x) => x.id === "execution")!,
+    id: "execution-monitor",
+    name: "现场态势",
+    path: paths["execution-monitor"],
+    parent: "execution",
   },
   {
     // 结果详情内置页：无侧边栏入口，挂在设备巡检档案目录下，由档案内的结果引用点击进入

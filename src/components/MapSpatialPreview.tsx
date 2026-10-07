@@ -1,9 +1,9 @@
 import { useState } from "react";
-import type { MapAsset, Point, Route } from "../data/types";
+import type { Candidate, MapAsset, Point, Route } from "../data/types";
 import { MapCanvas } from "./MapCanvas";
 import { Badge } from "./UI";
 
-/** 空间预览通用项（业务点位 / 巡航点共用，仅巡航点带 externalId / source） */
+/** 空间预览通用项（业务点位 / 巡检点共用，仅巡检点带 externalId / source） */
 type SPItem = {
   id: string;
   externalId?: string;
@@ -19,7 +19,7 @@ type SPItem = {
  * @description 评审参考样式要求**所有点都在线上**——行内相邻点用 L 形（先水平后垂直）
  *              正交段连接，点的坐标精确作为折线顶点，因此每个点必然落在路网上；
  *              行与行之间在行末用正交段衔接，整体呈蛇形往复，类似现场道路网。
- * @param items 全部点（巡航点或业务点位，地图百分比坐标）
+ * @param items 全部点（巡检点或业务点位，地图百分比坐标）
  * @returns 正交折线段集合（每段为一串顶点）
  */
 function buildRoadNetwork(items: SPItem[]): { x: number; y: number }[][] {
@@ -72,17 +72,23 @@ function buildRoadNetwork(items: SPItem[]): { x: number; y: number }[][] {
 export function MapSpatialPreview({
   map,
   points,
+  /**
+   * 巡检点（来自**独立标定数据**，不在地图对象上）。
+   * @description 地图管理里不展示巡检点，故默认空数组；传空即只渲染纯点云底图。
+   */
+  targets = [],
   onSelect,
   /**
-   * 巡航点模式（地图详情页）：三维/二维都只渲染地图携带的「巡航点」（带 ID 的定位标记），
+   * 巡检点模式：三维/二维都只渲染传入的「巡检点」（带 ID 的定位标记），
    * 业务点位（巡检点管理绑定后生成）不在此展示——业务配置见巡检目标台账。
    */
   cruiseOnly = false,
-  /** 本地图的巡检路线：途经点顺序由 route.nodeIds 给出，换算为巡航点坐标后连线展示 */
+  /** 本地图的巡检路线：途经点顺序由 route.nodeIds 给出，换算为巡检点坐标后连线展示 */
   routes = [],
 }: {
   map: MapAsset;
   points: Point[];
+  targets?: Candidate[];
   onSelect?: (id: string) => void;
   cruiseOnly?: boolean;
   routes?: Route[];
@@ -90,7 +96,7 @@ export function MapSpatialPreview({
   const [mode, M] = useState("二维业务图"),
     [angle, A] = useState(25),
     [picked, P] = useState(""),
-    /** 三维视图下悬浮高亮的巡航点 ID */
+    /** 三维视图下悬浮高亮的巡检点 ID */
     [hoverId, SETHOVER] = useState("");
   const project = (x: number, y: number, z = 0) => {
     const a = (angle * Math.PI) / 180;
@@ -99,13 +105,13 @@ export function MapSpatialPreview({
       190 + (x - 50) * Math.sin(a) * 1.6 + (y - 50) * Math.cos(a) * 1.6 - z,
     ];
   };
-  /** 三维视图渲染项：巡航点模式用 map.targets，否则用业务点位 */
+  /** 三维视图渲染项：巡检点模式用标定数据，否则用业务点位 */
   const items: SPItem[] = cruiseOnly
-    ? (map.targets as unknown as SPItem[])
+    ? (targets as unknown as SPItem[])
     : (points as unknown as SPItem[]);
   /**
-   * 巡检路线 → 途经巡航点坐标序列
-   * @description route.nodeIds 引用业务点位（Point），经其 targetId 回查地图巡航点坐标；
+   * 巡检路线 → 途经巡检点坐标序列
+   * @description route.nodeIds 引用业务点位（Point），经其 targetId 回查地图巡检点坐标；
    *              少于 2 个可连点的路线不绘制
    */
   const routePaths = routes
@@ -115,7 +121,7 @@ export function MapSpatialPreview({
       pts: rt.nodeIds
         .map((nid) => {
           const pt = points.find((p) => p.id === nid);
-          const t = pt ? map.targets.find((x) => x.id === pt.targetId) : undefined;
+          const t = pt ? targets.find((x) => x.id === pt.targetId) : undefined;
           return t ? { x: t.x, y: t.y } : undefined;
         })
         .filter((x): x is { x: number; y: number } => !!x),
@@ -151,14 +157,12 @@ export function MapSpatialPreview({
             </button>
           ))}
         </div>
-        <Badge>
-          m{map.version}/p{map.pointSet}
-        </Badge>
+        <Badge>m{map.version}</Badge>
       </div>
       {mode === "二维业务图" ? (
         <MapCanvas
           points={cruiseOnly ? [] : points}
-          targets={map.targets}
+          targets={targets}
           cruiseOnly={cruiseOnly}
           routePaths={routePaths}
           network={network}
@@ -225,7 +229,7 @@ export function MapSpatialPreview({
                 opacity="0.92"
               />
             ))}
-            {/* 巡检路线：途经巡航点顺序连线（绿色虚线，悬浮显示路线名） */}
+            {/* 巡检路线：途经巡检点顺序连线（绿色虚线，悬浮显示路线名） */}
             {routePaths.map((rt) => (
               <polyline
                 key={rt.id}
@@ -241,7 +245,7 @@ export function MapSpatialPreview({
                 strokeLinecap="round"
                 opacity="0.95"
               >
-                <title>{`${rt.name}（途经 ${rt.pts.length} 个巡航点）`}</title>
+                <title>{`${rt.name}（途经 ${rt.pts.length} 个巡检点）`}</title>
               </polyline>
             ))}
             {items.map((it) => {
@@ -286,7 +290,7 @@ export function MapSpatialPreview({
             })}
             <text x="14" y="24" fill="#94b5c8" fontSize="12">
               {cruiseOnly
-                ? `巡航点 · 巡检路网（橙线，所有点都在线上）${
+                ? `巡检点 · 巡检路网（橙线，所有点都在线上）${
                     routePaths.length ? " · 巡检路线（绿虚线）" : ""
                   } · 非真实地图解析`
                 : `模拟点云 · 巡检路网（橙线）${
@@ -308,7 +312,7 @@ export function MapSpatialPreview({
       )}
       <small>
         {cruiseOnly
-          ? "巡航点为地图携带的定位标记（带ID），坐标待厂商解析接入。"
+          ? "巡检点为地图携带的定位标记（带ID），坐标待厂商解析接入。"
           : points.find((p) => p.id === picked)?.name ||
             "两种视图共享业务点位身份与地图版本。实际坐标与格式待厂商接入。"}
       </small>

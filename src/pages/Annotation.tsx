@@ -12,6 +12,7 @@ import { Btn, Badge, Panel, Field, Note, Table, Modal } from "../components/UI";
 import { MapImageCanvas } from "../components/MapImageCanvas";
 import { MapBaseUpload } from "../components/MapBaseUpload";
 import { rulesOf } from "../data/alarmRules";
+import { targetsOf, calibrationVersionOf } from "../data/mapCalibration";
 import {
   deviceOf,
   defaultInspectItemName,
@@ -67,12 +68,14 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
     return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
   }, [embedded]);
   const m = s.maps.find((m) => m.id === id) || s.maps[0];
-  const first = s.points.find((p) => p.targetId === m.targets[0]?.id);
+  /** 巡检点来自**独立标定数据**（与地图分开放），地图本身不含任何点位 */
+  const targets = targetsOf(s, m.id);
+  const first = s.points.find((p) => p.targetId === targets[0]?.id);
   /** 可标注的设备：必须已通过审核且在用（设备主数据是"巡检什么"的唯一来源） */
   const usable = (s.devices || []).filter(
     (d) => d.reviewState === "已通过" && d.state !== "停用",
   );
-  const [target, T] = useState(m.targets[0]?.id || ""),
+  const [target, T] = useState(targets[0]?.id || ""),
     [name, N] = useState(first?.name || ""),
     [device, D] = useState(""),
     /** 「看什么」多选：检测目标名列表，一次停靠可覆盖多个 */
@@ -92,14 +95,14 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
     [dwell, DW] = useState(6),
     [taught, TAUGHT] = useState(false);
   const dev = deviceOf(s, device);
-  const candidate = m.targets.find((t) => t.id === target),
+  const candidate = targets.find((t) => t.id === target),
     p = s.points.find((p) => p.targetId === target && p.mapId === m.id);
   const pts = s.points.filter((p) => p.mapId === m.id);
   /** 「判定」：判定规则随点位走（就地确认，不跳页重定义） */
   const rule = p ? rulesOf(s).find((r) => r.pointId === p.id) : undefined;
   const itemDefault = objects[0] ? defaultInspectItemName(objects[0]) : "";
   useEffect(() => {
-    if (m.targets[0]) select(target || m.targets[0].id);
+    if (targets[0]) select(target || targets[0].id);
     // 仅在地图切换时重载一次右栏内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.id]);
@@ -159,7 +162,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
    * @description 真实实现应由机器人回传当前云台 / 位姿；原型按目标相对位置生成示意值
    */
   function teach() {
-    const c = m.targets.find((t) => t.id === target);
+    const c = targets.find((t) => t.id === target);
     PTZ({
       pan: Math.round(((c?.x || 50) - 50) * 1.2),
       tilt: Math.round((50 - (c?.y || 50)) * 0.9),
@@ -186,22 +189,19 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
           ))}
         </select>
         <span>
-          m{m.version} / 点位集合 p{m.pointSet}
+          m{m.version} · 标定 c{calibrationVersionOf(s, m.id)}
         </span>
         <Badge>{m.state}</Badge>
-        <Btn primary onClick={() => go("map-detail", m.id, "workbench")}>
-          地图工作台
-        </Btn>
         <Btn onClick={() => go("map-detail", m.id)}>地图详情 →</Btn>
       </div>
       }
       <div ref={workspace} className="annotation-grid annotation-fit" style={{height}}>
         <Panel
-          title="候选目标与业务点位"
-          extra={<span>{m.targets.length} 个</span>}
+          title="巡检点与业务点位"
+          extra={<span>{targets.length} 个</span>}
         >
           <div className="target-list">
-            {m.targets
+            {targets
               .filter((t) => t.state !== "已剔除")
               .map((t) => (
                 <button
@@ -235,7 +235,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
             </div> : (
             <MapImageCanvas
               image={m.image}
-              markers={m.targets
+              markers={targets
                 .filter((t) => t.state !== "已剔除")
                 .map((t) => ({ id: t.id, x: t.x, y: t.y, label: t.kind, kind: t.kind, state: t.state }))}
               selected={target}
