@@ -1,12 +1,19 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { ObjectLink, Pager } from "../components/Business";
 import { ReplayDetail } from "../components/ReplayDetail";
+import { ResultReviewDrawer } from "../components/ResultReviewDrawer";
 import { ResultView } from "../components/ResultView";
 import { Panel, Table, Badge, Btn, Note } from "../components/UI";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
-import { stageOf, fmtTime, queueFor, terminal } from "../data/selectors";
+import {
+  stageOf,
+  fmtTime,
+  queueFor,
+  terminal,
+  judgeOf,
+} from "../data/selectors";
 import { archiveIdOf } from "../data/deviceMaster";
 export function ObjectDetails({ page, id }: { page: string; id?: string }) {
   const { s } = useStore();
@@ -15,6 +22,8 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
   const [replayFrom, setReplayFrom] = useState("");
   const [replayTo, setReplayTo] = useState("");
   const [replayPage, setReplayPage] = useState(1);
+  /** REV-02：人工复核抽屉（复核不再单独成页，就地打开） */
+  const [reviewId, SETREVIEW] = useState<string | null>(null);
   if (page === "point") {
     const p = s.points.find((p) => p.id === id);
     if (!p) return <Note>请选择具体巡检点。</Note>;
@@ -54,7 +63,7 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
         >
           {results.length ? (
             <Table
-              heads={["任务", "时间", "结果", "判定", "详情"]}
+              heads={["任务", "时间", "结果", "判定", "操作"]}
               rows={results.slice(0, 10).map((r) => [
                 <ObjectLink
                   type="replay"
@@ -64,16 +73,25 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
                 />,
                 r.time,
                 r.final + r.unit,
-                <Badge>
-                  {r.status === "待复核" ? "待判定" : r.abnormal ? "异常" : "正常"}
-                </Badge>,
-                <ObjectLink type="review" id={r.id} />,
+                <Badge>{judgeOf(r)}</Badge>,
+                <Btn
+                  title="打开人工复核抽屉（证据链路 + 判定与依据）"
+                  onClick={() => SETREVIEW(r.id)}
+                >
+                  {r.abnormal || r.status === "待复核" ? "复核" : "查看"}
+                </Btn>,
               ])}
             />
           ) : (
             <Note>该巡检点还没有检测结果。</Note>
           )}
         </Panel>
+        {reviewId && (
+          <ResultReviewDrawer
+            id={reviewId}
+            onClose={() => SETREVIEW(null)}
+          />
+        )}
       </>
     );
   }
@@ -90,10 +108,9 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
     if (!tk) return <Note>未找到该任务。</Note>;
     return <ReplayDetail task={tk} />;
   }
-  const t =
-    s.tasks.find((t) => t.id === id) ||
-    s.tasks.find((t) => t.state === "执行中") ||
-    s.tasks[0];
+  // 任务详情：严格按路由 ID 绑定；缺 ID 或查不到就明确提示，
+  // 不再退化到"执行中的任务"或任务列表首条（否则详情页会显示别人的数据）
+  const t = s.tasks.find((x) => x.id === id);
   // 执行回溯：独立主从视图——左侧已结束任务列表（支持搜索/状态/时间筛选/分页），右侧选中后的记录详情
   if (page === "replay") {
     const ended = s.tasks.filter((x) => terminal.includes(x.state));
@@ -133,8 +150,13 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
     const curPage = Math.min(replayPage, pages);
     const pageItems = filtered.slice((curPage - 1) * size, curPage * size);
 
-    const picked = s.tasks.find((x) => x.id === id);
-    const cur = picked && terminal.includes(picked.state) ? picked : ended[0];
+    const picked = id ? s.tasks.find((x) => x.id === id) : undefined;
+    // 带了 ID 就必须命中该已结束任务；未命中时右侧留空，不静默换成列表首条
+    const cur = id
+      ? picked && terminal.includes(picked.state)
+        ? picked
+        : undefined
+      : ended[0];
     return (
       <div className="replay-layout">
         <Panel title="任务回溯列表">
@@ -232,5 +254,11 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
     );
   }
   // 详情内容已抽到 components/TaskDetailPanel.tsx：内置页与任务列表的详情抽屉共用同一实现
+  if (!t)
+    return (
+      <Note>
+        未找到任务{id ? ` ${id}` : ""}，请从「任务列表」进入。
+      </Note>
+    );
   return <TaskDetailPanel task={t} />;
 }

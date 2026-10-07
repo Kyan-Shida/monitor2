@@ -40,6 +40,18 @@ const tabKey = (page: string, id?: string) => page + (id ? "/" + id : "");
 const metaOf = (page: string) => routeMeta.find((x) => x.id === page);
 
 /**
+ * 页签是否可登记：仅侧边栏可见的目录页
+ * @description 内置页（有 parent）复用父级页签；菜单已隐藏的页面（如合并进「设备台账」的
+ *              「设备巡检档案」、改为抽屉的「人工复核」）没有对应菜单入口，不应出现在页签栏
+ * @param page 页面 ID
+ * @returns 可登记返回 true
+ */
+const tabbable = (page: string) => {
+  const meta = metaOf(page);
+  return !!meta && !meta.parent && !meta.hidden;
+};
+
+/**
  * 从会话存储恢复页签列表
  * @returns 上次会话的页签；无记录或存储被禁用时返回空数组
  */
@@ -47,9 +59,7 @@ function loadTabs(): PageTab[] {
   try {
     const arr = JSON.parse(sessionStorage.getItem(STORE_KEY) || "[]");
     return Array.isArray(arr)
-      ? arr.filter(
-          (t: PageTab) => t && t.page && t.name && !metaOf(t.page)?.parent,
-        )
+      ? arr.filter((t: PageTab) => t && t.page && t.name && tabbable(t.page))
       : [];
   } catch {
     return [];
@@ -92,12 +102,16 @@ export function PageTabs({
   const activeId = activeMeta?.parent ? undefined : route.id;
   const activeKey = tabKey(activePage, activeId);
 
-  // 首次挂载：清理残留的内置页页签（有 parent 的），并保证常驻工作台页签存在
+  // 首次挂载：清理残留页签（内置页 / 菜单已隐藏的页面），并把页名校正为当前菜单名
   useEffect(() => {
     setTabs((prev) => {
-      const cleaned = prev.filter(
-        (t) => t.key === PINNED || !metaOf(t.page)?.parent,
-      );
+      const cleaned = prev
+        .filter((t) => t.key === PINNED || tabbable(t.page))
+        // 页面改名或合并后，历史页签不应继续显示旧名称
+        .map((t) => {
+          const meta = metaOf(t.page);
+          return meta && meta.name !== t.name ? { ...t, name: meta.name } : t;
+        });
       if (cleaned.some((t) => t.key === PINNED)) return cleaned;
       const meta = metaOf(PINNED);
       return meta
@@ -119,6 +133,7 @@ export function PageTabs({
     const tabMeta = metaOf(tabPage);
     if (!tabMeta) return;
     const key = tabKey(tabPage, tabId);
+    if (!tabbable(tabPage)) return; // 隐藏菜单页 / 内置页不登记页签
     setTabs((prev) => {
       const exists = prev.find((t) => t.key === key);
       if (exists)

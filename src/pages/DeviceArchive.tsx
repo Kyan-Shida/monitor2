@@ -1,6 +1,6 @@
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
-import { pointOf, terminal, fmtTime } from "../data/selectors";
+import { pointOf, terminal, fmtTime, judgeOf } from "../data/selectors";
 import { Panel, Table, Badge, Note } from "../components/UI";
 import { ObjectLink } from "../components/Business";
 import { ResultTrend } from "../components/ResultTrend";
@@ -14,21 +14,38 @@ export function DeviceArchive({ id }: { id?: string; tab?: string }) {
   const devices = master.length
     ? master.map((d) => d.name)
     : [...new Set(s.points.map((p) => p.device))];
-  const picked = deviceOf(s, id || "");
-  const device = picked && devices.includes(picked.name) ? picked.name : devices[0];
-  const dev = deviceOf(s, device);
-  const points = s.points.filter((p) => p.device === device),
-    results = s.results.filter((r) => pointOf(s, r)?.device === device),
-    alarms = s.alarms.filter((a) => points.some((p) => p.id === a.pointId)),
-    tasks = s.tasks.filter((t) => t.items.some((p) => p.device === device));
-  const [tab, T] = useViewState("archive." + device, "检测对象"),
-    [pid, P] = useViewState("archive.point." + device, points[0]?.id || ""),
-    [srcF, SF] = useViewState("archive.tasks.src." + device, "全部"),
-    [robotF, RF] = useViewState("archive.tasks.robot." + device, "全部"),
-    [stateF, STF] = useViewState("archive.tasks.state." + device, "全部"),
-    [taskQ, TQ] = useViewState("archive.tasks.q." + device, ""),
-    [fromD, FD] = useViewState("archive.tasks.from." + device, ""),
-    [toD, TD] = useViewState("archive.tasks.to." + device, "");
+  // 设备档案：严格按路由上的设备 ID 绑定，查不到就明确提示（不退化到"第一台设备"）
+  const picked = id ? deviceOf(s, id) : undefined;
+  const device = picked && devices.includes(picked.name) ? picked.name : "";
+  const dev = device ? deviceOf(s, device) : undefined;
+  const points = device ? s.points.filter((p) => p.device === device) : [],
+    results = device
+      ? s.results.filter((r) => pointOf(s, r)?.device === device)
+      : [],
+    alarms = device
+      ? s.alarms.filter((a) => points.some((p) => p.id === a.pointId))
+      : [],
+    tasks = device
+      ? s.tasks.filter((t) => t.items.some((p) => p.device === device))
+      : [];
+  // 视图状态按设备维度记忆：未绑定时先用占位 key，保证 Hook 调用顺序稳定
+  const scope = device || "_";
+  const [tab, T] = useViewState("archive." + scope, "检测对象"),
+    [pid, P] = useViewState("archive.point." + scope, points[0]?.id || ""),
+    [srcF, SF] = useViewState("archive.tasks.src." + scope, "全部"),
+    [robotF, RF] = useViewState("archive.tasks.robot." + scope, "全部"),
+    [stateF, STF] = useViewState("archive.tasks.state." + scope, "全部"),
+    [taskQ, TQ] = useViewState("archive.tasks.q." + scope, ""),
+    [fromD, FD] = useViewState("archive.tasks.from." + scope, ""),
+    [toD, TD] = useViewState("archive.tasks.to." + scope, "");
+  // 未绑定到具体设备（缺 ID 或 ID 不存在）时直接说明，不展示别的设备的档案
+  // 注：必须放在全部 Hook 之后，避免 Hook 调用数量随数据变化
+  if (!device)
+    return (
+      <Note>
+        未找到设备{id ? ` ${id}` : ""}，请从「设备台账」进入设备档案。
+      </Note>
+    );
   // 设备巡检任务筛选：来源 / 机器人 / 状态三个下拉 + 任务名称/编号关键词，选项从本设备任务动态派生
   const taskSrcOpts = ["全部", ...new Set(tasks.map((t) => t.source))];
   const taskRobotOpts = [
@@ -150,7 +167,7 @@ export function DeviceArchive({ id }: { id?: string; tab?: string }) {
               r.time,
               r.item,
               tab === "采集证据" ? r.source : `${r.final} ${r.unit}`,
-              <Badge>{r.abnormal ? "异常" : "正常"}</Badge>,
+              <Badge>{judgeOf(r)}</Badge>,
               <ObjectLink type="review" id={r.id} to="result-detail" />,
             ])}
           />

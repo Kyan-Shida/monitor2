@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run } from "./engine";
 import { persist, migrate } from "./store";
+import { activeMenuId, activeGroupOf } from "./navigation";
 
 test("state survives persistence and old schema migration", () => {
   let saved = "";
@@ -51,4 +52,14 @@ test("autonomous point completion also continues the queue", () => {
   for (let i = 0; i < 50 && s.tasks.find(t => t.id === "T009")!.state === "执行中"; i++) s = run(s, { type: "TICK", id: "T009" });
   assert.equal(s.tasks.find(t => t.id === "T009")!.state, "完成");
   assert.equal(s.robots.find(r => r.id === "R01")!.current, "T010");
+});
+
+test("sidebar highlight follows explicit source page across directories", () => {
+  // 回归：从「结果与异常 › 巡检结果查询 › 巡检结果详情」进入「执行回溯」
+  // （其静态挂在设备档案=资源与地图下），应高亮来源目录「结果与异常」，而非「资源与地图」
+  assert.equal(activeMenuId("replay-detail", { page: "result-view" }), "results");
+  assert.equal(activeGroupOf("replay-detail", { page: "result-view" }), "结果与异常");
+  // 无显式来源时，按自身目录归属回落到「设备台账」（资源与地图）
+  assert.equal(activeMenuId("replay-detail"), "equipment");
+  assert.equal(activeGroupOf("replay-detail"), "资源与地图");
 });

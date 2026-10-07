@@ -539,147 +539,6 @@ h4 {
   align-items: center;
   gap: 8px;
 }
-.task-group {
-  margin-bottom: 6px;
-}
-.task-group-head {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 10px 14px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  cursor: default;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-}
-.task-group-head:hover {
-  border-color: #c9d6e3;
-  background: #fcfdfe;
-}
-/* 判断与统计一律用文字表达：不再使用左侧色条、实心徽标与胶囊底色 */
-.task-group-head .tg-flag {
-  display: none;
-}
-.task-group-head .tg-judge {
-  font-size: 12px;
-  font-weight: 500;
-}
-.task-group-head .tg-judge.abn {
-  color: #c0544a;
-}
-.task-group-head .tg-judge.ok {
-  color: #34806a;
-}
-/* 行内状态（完成 / 部分完成等）：去底色边框，纯文字 */
-.task-group-head .badge {
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: 12px;
-  color: #5f7185;
-}
-.task-group-head .badge.green {
-  color: #34806a;
-}
-.task-group-head .badge.amber {
-  color: #a07531;
-}
-.task-group-head .badge.red {
-  color: #c0544a;
-}
-.task-group-head.abn {
-  background: #fff;
-}
-.task-group-head.open {
-  border-color: var(--border);
-}
-/* 左侧信息块：标题行（任务名 + 状态）+ 元信息行（任务号 / 机器人 / 结束时间） */
-.task-group-head .tg-main {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.task-group-head .tg-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.task-group-head .tg-title b {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1f3346;
-}
-.task-group-head .tg-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #8694a2;
-}
-.task-group-head .tg-meta i {
-  font-style: normal;
-  color: #c2ccd6;
-}
-.task-group-head .tg-caret {
-  flex: none;
-  width: 10px;
-  color: #7b8c9b;
-  font-size: 11px;
-}
-/* 右侧统计胶囊：检测 / 异常 / 待复核，异常与待复核按等级着色 */
-/* 右侧统计：纯文字，项之间用分隔点 */
-.task-group-head .tg-stats {
-  flex: none;
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-.task-group-head .tg-stat {
-  padding: 0;
-  background: none;
-  border: 0;
-  font-size: 12px;
-  color: #8794a3;
-  white-space: nowrap;
-}
-.task-group-head .tg-stat + .tg-stat::before {
-  content: "·";
-  margin: 0 8px;
-  color: #c3cedb;
-}
-.task-group-head .tg-stat b {
-  color: #24384f;
-  font-weight: 500;
-}
-.task-group-head .tg-stat.abn {
-  color: #c0544a;
-}
-.task-group-head .tg-stat.abn b {
-  color: #c0544a;
-}
-.task-group-head .tg-stat.warn {
-  color: #a07531;
-}
-.task-group-head .tg-stat.warn b {
-  color: #a07531;
-}
-.task-group-head .tg-toggle {
-  flex: none;
-  color: var(--blue);
-  font-size: 12px;
-}
-.task-group-head.open + .table-scroll {
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 3px 3px;
-}
 .grid {
   display: grid;
   gap: 18px;
@@ -4698,16 +4557,171 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 .result-scope button b { font-size: 18px; color: #22364d; }
 .result-scope button.on b { color: #1d6fe0; }
-/* 按巡检点视图：最近 3 条读数 */
-.point-result-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px 10px;
-  border-top: 1px dashed #e4ebf3;
+/* 巡检结果查询：一行口径说明（异常 vs 告警），取代原来的整块说明卡 */
+.res-hint {
+  margin: 0 0 12px;
   font-size: 12px;
+  color: #6f7f90;
+}
+.res-hint b {
+  color: #22364d;
+}
+/* 列表内明细行：对象 / 检测项 / 识别 → 最终值 / 判定依据 / 判定 · 复核 */
+.tg-list {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #fff;
+  overflow-x: auto;
+}
+/* 列表只到「任务 / 巡检点」这一层：一行多列，检测明细与复核统一进「详情」 */
+.rt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+.rt-table thead th {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: #fafcfe;
+  color: #8694a2;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.rt-table tbody td {
+  padding: 11px 14px;
+  border-top: 1px dashed #e4ebf3;
+  vertical-align: middle;
   color: #5f7287;
+}
+.rt-table tbody tr:first-child td {
+  border-top: 0;
+}
+/* 异常任务 / 巡检点整行淡底，扫读时更容易捉住 */
+.rt-table tbody tr.abn {
+  background: #fffbfa;
+}
+.rt-table .rt-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rt-table .rt-title b {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f3346;
+}
+/* 判定与状态一律纯文字：不使用色块与胶囊 */
+.rt-table .rt-judge {
+  font-size: 12px;
+  font-weight: 500;
+}
+.rt-table .rt-judge.ok {
+  color: #34806a;
+}
+.rt-table .rt-judge.abn {
+  color: #c0544a;
+}
+.rt-table .rt-title .badge {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: #5f7185;
+}
+/* 编号 / 机器人 / 时间列：弱化显示，作定位信息用 */
+.rt-table .rt-id {
+  color: #5f7185;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rt-table .rt-robot {
+  color: #5f7185;
+  white-space: nowrap;
+}
+.rt-table .rt-time {
+  color: #8694a2;
+  white-space: nowrap;
+}
+/* 待复核列：有值时用琥珀色提示，0 保持弱化 */
+.rt-table .rt-pend {
+  color: #8794a3;
+  white-space: nowrap;
+}
+.rt-table .rt-pend b {
+  color: #24384f;
+  font-weight: 500;
+}
+.rt-table .rt-pend.warn,
+.rt-table .rt-pend.warn b {
+  color: #a07531;
+}
+.rt-table .rt-actions {
+  white-space: nowrap;
+}
+.rt-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font-size: 12px;
+  cursor: pointer;
+}
+.rt-link:hover {
+  background: none;
+  text-decoration: underline;
+}
+/* 窄屏：时间列允许换行，避免整表横向溢出 */
+@media (max-width: 1180px) {
+  .rt-table .rt-time {
+    white-space: normal;
+  }
+}
+/* ── 人工复核抽屉：就地完成判定（证据链路 + 复核表单），不再单独开内置页 ── */
+.rvd-sec {
+  margin-top: 16px;
+}
+.rvd-sec > h5 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f3346;
+}
+.rvd-sec > h5 small {
+  margin-left: 6px;
+  font-weight: 400;
+  color: #8694a2;
+}
+.rvd-chain {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+.rvd-chain dt {
+  color: #8694a2;
+}
+.rvd-chain dd {
+  margin: 0;
+  color: #3c5164;
+}
+.rvd-chain dd.big-number {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f3346;
+}
+.rvd-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #8694a2;
+}
+.rvd-foot-hint {
+  margin-right: auto;
+  align-self: center;
+  font-size: 12px;
+  color: #8694a2;
 }
 /* 导入地图：底图预览与可折叠的原始资料 */
 .map-import-preview {
@@ -9706,27 +9720,6 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   min-width: 0;
 }
 
-/* 任务行改为只读概要（明细收进「详情」弹窗）：整行不再可点，仅「详情」为操作入口 */
-.task-group-head {
-  cursor: default;
-}
-
-/* ── 巡检结果查询：任务行「详情」入口（朴素文字链接） ── */
-.task-group-head .tg-detail {
-  margin-left: 8px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--blue);
-  font-size: 12px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.task-group-head .tg-detail:hover {
-  background: none;
-  text-decoration: underline;
-}
-
 /* ── 巡检结果详情：朴素版式（以表格线 + 文字为主，去掉卡片化装饰） ── */
 /* 概要：细线网格，标签与值同行；无底色、无圆角、无阴影 */
 .rd-grid {
@@ -9841,6 +9834,21 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   font-size: 11px;
   color: #9aa9b8;
   text-align: left;
+}
+/* RES：动作栏上移——顶部操作条（说明在左、任务回溯/导出按钮靠右） */
+.rd-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.rd-top .rd-hint {
+  margin-top: 0;
+}
+.rd-top .rd-actions {
+  margin-top: 0;
+  margin-left: auto;
 }
 @media (max-width: 1240px) {
   .rd-grid {

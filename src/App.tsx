@@ -59,7 +59,8 @@ import {
   href,
   parse,
   routeMeta,
-  menuIdOf,
+  activeMenuId,
+  activeGroupOf,
   back,
   parentTargetOf,
 } from "./data/navigation";
@@ -200,14 +201,14 @@ export default function App() {
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
   }, [userMenu]);
-  // 当前页面所在一级组自动展开（首次进入时）
+  // 当前页面所在一级组自动展开（首次进入时）；带来源时按来源页所属分组，避免跨目录详情页展开错组
   useEffect(() => {
-    const m = routeMeta.find((p) => p.id === route.page);
-    if (m && !expanded.has(m.group)) {
-      SETE((prev) => new Set(prev).add(m.group));
+    const g = activeGroupOf(route.page, route.from);
+    if (g && !expanded.has(g)) {
+      SETE((prev) => new Set(prev).add(g));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.page]);
+  }, [route.page, route.from?.page]);
   useEffect(() => {
     const fn = () => {
       RO(parse());
@@ -235,7 +236,9 @@ export default function App() {
   /** 面包屑一级分组：带来源时按来源页所属分组 */
   const breadcrumbGroup = fromMeta ? fromMeta.group : meta.group;
   /** 侧边栏高亮目标：详情页回落到其列表页；带来源时按来源页归属 */
-  const activeId = menuIdOf(fromMeta ? fromMeta.id : page);
+  const activeId = activeMenuId(page, route.from);
+  /** 侧边栏高亮的一级中心：以高亮叶子所属分组为准，与叶子保持一致（避免详情页错高亮到自身的静态归属组） */
+  const activeGroup = activeGroupOf(page, route.from);
   /**
    * 返回目标：优先回到显式来源页；否则按导航目录层级逐级向上，
    * 不依赖点击历史；已到终点时为空，按钮置灰
@@ -385,7 +388,7 @@ export default function App() {
               <div key={groupName} className="nav-group">
                 <button
                   className={
-                    "center-nav " + (meta.group === groupName ? "active" : "")
+                    "center-nav " + (activeGroup === groupName ? "active" : "")
                   }
                   onClick={toggleGroup}
                 >

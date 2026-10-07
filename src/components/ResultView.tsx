@@ -3,14 +3,15 @@ import { TakeoverOutcome } from "./TakeoverOutcome";
  * @file ResultView.tsx
  * @description 「巡检结果详情」内置页：顶部任务概要 + 检测项明细（按巡检点分组、
  *              任务 → 巡检点 → 巡检项 三级可折叠）+ 执行记录 + 复核记录；
- *              复核入口与复核数据留在本页，点行内「复核」进入该结果自己的内置页。
- * @interaction 由 pages/ObjectDetails.tsx 的 result-view 分支渲染；复核在 pages/Results.tsx 的 review 页提交
+ *              复核入口与复核数据留在本页，点行内「复核」就地打开人工复核抽屉。
+ * @interaction 由 pages/ObjectDetails.tsx 的 result-view 分支渲染；复核在 components/ResultReviewDrawer.tsx 抽屉内提交
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import { fmtTime } from "../data/selectors";
+import { fmtTime, isAbnormal, judgeOf } from "../data/selectors";
 import { Badge, Btn, Modal, Note, Panel, Table } from "./UI";
+import { ResultReviewDrawer } from "./ResultReviewDrawer";
 import { analyzedPhoto, costOf, rawPhoto } from "../data/evidence";
 import type { Result, Task } from "../data/types";
 
@@ -24,6 +25,8 @@ export function ResultView({ task }: { task: Task }) {
   const [exportKind, SETEXPORT] = useState<"EXCEL" | "PDF" | null>(null);
   /** RES-03：巡检点分组折叠状态（默认全部展开） */
   const [collapsed, SETCOL] = useState<Set<string>>(() => new Set());
+  /** REV-02：人工复核抽屉（就地打开，不再跳「结果详情 / 复核」内置页） */
+  const [reviewId, SETREVIEW] = useState<string | null>(null);
   const togglePoint = (pid: string) =>
     SETCOL((old) => {
       const n = new Set(old);
@@ -37,18 +40,20 @@ export function ResultView({ task }: { task: Task }) {
   const pointOf = (pid: string) => s.points.find((p) => p.id === pid);
   /** 待复核结果数 */
   const pendings = list.filter((r) => r.status === "待复核");
-  /** 巡检点异常数：存在异常结果的点位个数 */
+  /** 巡检点异常数：存在"已判定异常"结果（待复核不计）的点位个数 */
   const abnPoints = new Set(
-    list.filter((r) => r.abnormal).map((r) => r.pointId),
+    list.filter(isAbnormal).map((r) => r.pointId),
   ).size;
-  const abnItems = list.filter((r) => r.abnormal).length;
-  /** 识别结果文案：异常给结论，温度类给读数，正常即场景正常 */
+  const abnItems = list.filter(isAbnormal).length;
+  /** 识别结果文案：未判定 / 异常 / 温度读数 / 场景正常 */
   const resultText = (r: Result) =>
-    r.status === "待复核" ? "待复核，尚未确认有效结论" : r.abnormal
-      ? `${r.item}异常：${r.final} ${r.unit}（超出阈值）`
-      : r.item.includes("温度")
-        ? `最高温度: ${r.final}${r.unit}`
-        : "场景正常";
+    r.status === "待复核"
+      ? "待复核，尚未确认有效结论"
+      : r.abnormal
+        ? `${r.item}异常：${r.final} ${r.unit}（超出阈值）`
+        : r.item.includes("温度")
+          ? `最高温度: ${r.final}${r.unit}`
+          : "场景正常";
   // 展示已有任务事件，不按结果行数生成预置位或控制回执。
   const camRows = s.logs.filter(log => log.object === task.id).map(log => ({
     time: log.time, point: task.id, action: `${log.action} · ${log.detail}`,
@@ -56,11 +61,11 @@ export function ResultView({ task }: { task: Task }) {
   /** 最近一次复核记录 */
   const lastReview = (r: Result) => r.reviews[r.reviews.length - 1];
   /**
-   * 进入该结果自己的内置页（「结果详情 / 复核」）：复核表单与复核历史都在其中
+   * 打开人工复核抽屉：复核表单与复核历史都在抽屉内，本页上下文不丢失
    * @param r 目标结果
+   * @returns 结果不存在时不打开
    */
-  const openReview = (r: Result) =>
-    go("review", r.id, undefined, { page: "result-view", id: task.id });
+  const openReview = (r: Result) => r && SETREVIEW(r.id);
   /**
    * RES-03：将检测结果按「巡检点」分组，形成 任务 → 巡检点（可折叠）→ 巡检项 三级层级；
    * 异常巡检点优先置顶，便于一眼看出哪个巡检点有问题。
@@ -79,7 +84,7 @@ export function ResultView({ task }: { task: Task }) {
         name: p?.name || pid,
         device: p?.device || "—",
         rs,
-        abn: rs.filter((x) => x.abnormal).length,
+        abn: rs.filter(isAbnormal).length,
         order: order.indexOf(pid),
       };
     });
@@ -92,36 +97,64 @@ export function ResultView({ task }: { task: Task }) {
 
   return (
     <div className="rd">
+      {/* RES：原底部动作栏上移 —— 顶部操作条（说明在左 / 任务回溯·导出在右）；返回仍用页面顶部返回 */}
+      <div className="rd-top">
+        <small className="rd-hint">
+          演示环境：图像为离线生成的示意画面；导出按钮为占位提示，不生成真实文件。
+        </small>
+        <div className="rd-actions">
+          <Btn
+            onClick={() =>
+              go("replay-detail", task.id, undefined, {
+                page: "result-view",
+                id: task.id,
+              })
+            }
+          >
+            任务回溯
+          </Btn>
+          <Btn onClick={() => SETEXPORT("EXCEL")}>导出为 EXCEL</Btn>
+          <Btn primary onClick={() => SETEXPORT("PDF")}>
+            导出为 PDF
+          </Btn>
+        </div>
+      </div>
       <div style={{gridColumn: "1 / -1"}}><TakeoverOutcome taskId={task.id} /></div>
-      {/* 顶部：任务概要 */}
+      {/* 顶部：任务概要（编号与名称并列，便于与列表 / 其它系统对账） */}
       <div className="rd-grid">
         <span>
-          机器人
-          <b>{robot ? `${robot.name}（${robot.id}）` : "—"}</b>
-        </span>
-        <span>
-          地图名称
-          <b>{map?.name || task.mapId}</b>
+          任务ID
+          <b>{task.id}</b>
         </span>
         <span>
           任务名称
           <b>{task.name}</b>
         </span>
         <span>
-          巡检点数
-          <b>{task.items.length} 个</b>
+          机器人
+          <b>{robot ? `${robot.name}（${robot.id}）` : "—"}</b>
         </span>
         <span>
-          巡检点异常数
-          <b className={abnPoints ? "rd-bad" : undefined}>{abnPoints} 个</b>
+          地图
+          <b>{map?.name || task.mapId}</b>
         </span>
         <span>
-          巡检项数量
-          <b>{list.length} 项</b>
+          执行结果
+          <b>
+            <Badge>{task.state}</Badge>
+          </b>
         </span>
         <span>
-          巡检项异常数
-          <b className={abnItems ? "rd-bad" : undefined}>{abnItems} 项</b>
+          巡检点
+          <b className={abnPoints ? "rd-bad" : undefined}>
+            {task.items.length} 个{abnPoints ? ` · 异常 ${abnPoints}` : ""}
+          </b>
+        </span>
+        <span>
+          巡检项
+          <b className={abnItems ? "rd-bad" : undefined}>
+            {list.length} 项{abnItems ? ` · 异常 ${abnItems}` : ""}
+          </b>
         </span>
         <span>
           开始时间
@@ -131,25 +164,17 @@ export function ResultView({ task }: { task: Task }) {
           结束时间
           <b>{fmtTime(task.finishedAt)}</b>
         </span>
-        <span>
-          执行结果
-          <b>
-            <Badge>{task.state}</Badge>
-          </b>
-        </span>
-        <span>
-          终止原因
-          <b>{task.failure || "—"}</b>
-        </span>
+        {task.failure && (
+          <span>
+            终止原因
+            <b>{task.failure}</b>
+          </span>
+        )}
       </div>
       {/* RES-04：地图版本仅作调试参考，移出主信息区，放进可折叠诊断信息 */}
       <details className="rd-diag">
         <summary>诊断信息（调试参考）</summary>
         <div className="rd-grid">
-          <span>
-            任务编号
-            <b>{task.id}</b>
-          </span>
           <span>
             地图版本 / 点集
             <b>
@@ -213,7 +238,6 @@ export function ResultView({ task }: { task: Task }) {
                         <tr>
                           {[
                             "巡检项",
-                            "台账",
                             "原始采集图像",
                             "识别分析后图像",
                             "识别结果",
@@ -234,7 +258,6 @@ export function ResultView({ task }: { task: Task }) {
                           return (
                             <tr key={r.id}>
                               <td>{r.item}</td>
-                              <td>{p?.device || "—"}</td>
                               <td>
                                 <img
                                   className="rd-img"
@@ -257,13 +280,11 @@ export function ResultView({ task }: { task: Task }) {
                               <td>{costOf(r.id)}s</td>
                               <td>
                                 <span
-                                  className={"rd-ai" + (r.abnormal ? " bad" : "")}
+                                  className={
+                                    "rd-ai" + (isAbnormal(r) ? " bad" : "")
+                                  }
                                 >
-                                  {r.status === "待复核"
-                                    ? "待判定"
-                                    : r.abnormal
-                                      ? "异常"
-                                      : "正常"}
+                                  {judgeOf(r)}
                                 </span>
                               </td>
                               <td>
@@ -271,10 +292,10 @@ export function ResultView({ task }: { task: Task }) {
                               </td>
                               <td className="rd-time">{r.time}</td>
                               <td>
-                                {/* 复核：进入该结果自己的内置页（结果详情 / 复核） */}
+                                {/* 复核：就地打开右侧抽屉（证据链路 + 判定与依据） */}
                                 <Btn
                                   primary={r.status === "待复核"}
-                                  title="进入该结果的「结果详情 / 复核」内置页"
+                                  title="打开人工复核抽屉（证据链路 + 判定与依据）"
                                   onClick={() => openReview(r)}
                                 >
                                   复核
@@ -317,7 +338,7 @@ export function ResultView({ task }: { task: Task }) {
           </table>
         </div>
       ) : (
-        /* 复核记录：本任务逐项复核状态与最近结论；点「复核」进入该结果自己的内置页 */
+        /* 复核记录：本任务逐项复核状态与最近结论；点「复核」就地打开抽屉 */
         <Panel
           title="复核记录"
           extra={
@@ -331,7 +352,7 @@ export function ResultView({ task }: { task: Task }) {
           }
         >
           <Note>
-            复核表单与复核历史在该结果自己的内置页（「结果详情 / 复核」）中完成，本页只做汇总与入口。
+            点行内「复核」就地打开右侧抽屉完成判定与依据填写，复核历史同步写回本表；本页只做汇总与入口。
           </Note>
           <Table
             heads={[
@@ -352,7 +373,7 @@ export function ResultView({ task }: { task: Task }) {
                   <small>{r.item}</small>
                 </>,
                 `${r.recognized} → ${r.final} ${r.unit}`,
-                <Badge>{r.status === "待复核" ? "待判定" : r.abnormal ? "异常" : "正常"}</Badge>,
+                <Badge>{judgeOf(r)}</Badge>,
                 <Badge>{r.status}</Badge>,
                 lr
                   ? `${lr.time} / ${lr.conclusion || "确认"} / ${lr.reason}`
@@ -363,27 +384,6 @@ export function ResultView({ task }: { task: Task }) {
           />
         </Panel>
       )}
-
-      {/* 底部操作：任务回溯（进入自己的内置页）/ 导出（演示占位）；返回使用页面顶部返回 */}
-      <div className="rd-actions">
-        <Btn
-          onClick={() =>
-            go("replay-detail", task.id, undefined, {
-              page: "result-view",
-              id: task.id,
-            })
-          }
-        >
-          任务回溯
-        </Btn>
-        <Btn onClick={() => SETEXPORT("EXCEL")}>导出为 EXCEL</Btn>
-        <Btn primary onClick={() => SETEXPORT("PDF")}>
-          导出为 PDF
-        </Btn>
-      </div>
-      <small className="rd-hint">
-        演示环境：图像为离线生成的示意画面；导出按钮为占位提示，不生成真实文件。
-      </small>
 
       {exportKind && (
         <Modal title={`导出为 ${exportKind}`} onClose={() => SETEXPORT(null)}>
@@ -397,6 +397,10 @@ export function ResultView({ task }: { task: Task }) {
             </Btn>
           </div>
         </Modal>
+      )}
+      {/* REV-02：人工复核抽屉 —— 行内「复核」/「复核待处理项」就地打开，本页上下文不丢失 */}
+      {reviewId && (
+        <ResultReviewDrawer id={reviewId} onClose={() => SETREVIEW(null)} />
       )}
     </div>
   );

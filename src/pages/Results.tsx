@@ -1,8 +1,16 @@
 import { ResultRuleEvidence } from "../components/ResultRuleEvidence";
-import { useState } from "react";
+import { ResultReviewDrawer } from "../components/ResultReviewDrawer";
+import { useEffect, useState } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
-import { pointOf, fmtTime, parseTime } from "../data/selectors";
+import {
+  pointOf,
+  fmtTime,
+  parseTime,
+  judgeOf,
+  isAbnormal,
+  isPending,
+} from "../data/selectors";
 import { archiveIdOf } from "../data/deviceMaster";
 import { metricValue } from "../data/metrics";
 import { Btn, Badge, Panel, Table, Field, Note, Steps, Modal } from "../components/UI";
@@ -14,7 +22,6 @@ import { ALARM_CATEGORIES } from "../data/types";
 export function Results({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const [q, Q] = useViewState("results.q", ""),
-    [taskF, TF] = useViewState("results.task", "全部"),
     [robotF, RF] = useViewState("results.robot", "全部"),
     /** 业务状态：全部 / 异常 / 待复核 / 正常（与顶部范围芯片同源） */
     [status, S] = useViewState("results.status", "全部"),
@@ -27,33 +34,25 @@ export function Results({ page, id }: { page: string; id?: string }) {
     [devF, DF] = useViewState("results.device", "全部"),
     /** 视图：按任务（执行视角）/ 按巡检点（设备视角） */
     [group, GR] = useViewState("results.group", "按任务"),
-    /** 更多筛选（任务 / 机器人 / 结果原始状态）折叠 */
-    [more, MO] = useViewState("results.more", false),
-    [raw, RA] = useViewState("results.raw", "全部"),
     [pn, PN] = useViewState("results.page", 1);
-  const [value, V] = useState(""),
-    [reason, R] = useState(""),
-    [conclusion, C] = useState("确认"),
-    [finalState, FS] = useState(""),
-    [evidence, E] = useState("照片");
-  const r = s.results.find((x) => x.id === id) || s.results[0];
-  /**
-   * 提交复核：结论写入结果，并作为审计记录追加到该结果
-   * @returns 无当前结果或未填写依据时不提交
-   */
-  function submitReview() {
-    if (!r || !reason) return;
-    act({
-      type: "REVIEW",
-      id: r.id,
-      value: conclusion === "修正" ? value : r.final,
-      reason,
-      conclusion,
-      finalState: finalState || (r.abnormal ? "异常" : "正常"),
-    });
-  }
+  /** 结果详情（白盒）内置页：采集证据种类切换 */
+  const [evidence, E] = useState("照片");
+  /** 人工复核抽屉：复核入口（工作台待办 / 详情页行内「复核」/ review 深链）统一以抽屉打开 */
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  /** 结果详情（白盒）内置页里发起的人工复核 */
+  const [detailReview, setDetailReview] = useState<string | null>(null);
+  // 深链 / 外部入口直达 review：严格按 URL 上的结果 ID 打开抽屉，
+  // 没有 ID（或 ID 查不到）就不打开，绝不退化成"第一条待复核"
+  useEffect(() => {
+    setReviewId(page === "review" && id ? id : null);
+  }, [page, id]);
+  /** 关闭复核抽屉：从 review 路由进来时退回结果查询列表，避免路由停在已无页面的状态 */
+  const closeReview = () => {
+    setReviewId(null);
+    if (page === "review") go("results");
+  };
 
-  if (page === "results") {
+  if (page === "results" || page === "review") {
     /** 时间范围判定：按采集时间 */
     const inRange = (x: string) => {
       const v = parseTime(x);
@@ -89,38 +88,36 @@ export function Results({ page, id }: { page: string; id?: string }) {
             .includes(q.trim()))
       );
     });
-    /** 结果状态（业务判断三选一）+ 更多筛选（任务 / 机器人 / 原始状态） */
+    /** 结果状态（业务判断三选一）+ 机器人（任务 / 原始状态等低频维度不再单列筛选行） */
     const filtered = scoped.filter((r) => {
       const t = s.tasks.find((x) => x.id === r.taskId);
       return (
         (status === "全部" ||
           (status === "异常"
-            ? r.abnormal
+            ? isAbnormal(r)
             : status === "待复核"
-              ? r.status === "待复核"
-              : !r.abnormal && r.status !== "待复核")) &&
-        (taskF === "全部" || r.taskId === taskF) &&
-        (robotF === "全部" || t?.robotId === robotF) &&
-        (raw === "全部" || r.status === raw)
+              ? isPending(r)
+              : judgeOf(r) === "正常")) &&
+        (robotF === "全部" || t?.robotId === robotF)
       );
     });
-    /** 顶部范围芯片：点一下即作为「结果状态」筛选 */
+    /** 顶部范围芯片：点一下即作为「结果状态」筛选（判定口径与列表、详情页同源） */
     const chips = [
       { key: "全部", label: "检测结果", n: scoped.length },
       {
         key: "异常",
         label: "判定异常",
-        n: scoped.filter((r) => r.abnormal).length,
+        n: scoped.filter(isAbnormal).length,
       },
       {
         key: "待复核",
         label: "待复核",
-        n: scoped.filter((r) => r.status === "待复核").length,
+        n: scoped.filter(isPending).length,
       },
       {
         key: "正常",
         label: "判定正常",
-        n: scoped.filter((r) => !r.abnormal && r.status !== "待复核").length,
+        n: scoped.filter((r) => judgeOf(r) === "正常").length,
       },
     ];
     // 业务对象候选：只列结果里真实出现过的设备 / 区域，避免"选了却查不到数据"
@@ -134,7 +131,7 @@ export function Results({ page, id }: { page: string; id?: string }) {
         ),
       ),
     ];
-    // 更多筛选的候选：仅列出有巡检结果的任务 / 机器
+    // 机器人候选：只列「有巡检结果的任务」实际用到的机器，避免选了却查不到数据
     const taskOptions = s.tasks.filter((t) =>
       s.results.some((r) => r.taskId === t.id),
     );
@@ -143,6 +140,8 @@ export function Results({ page, id }: { page: string; id?: string }) {
     ];
     const robotOptions = s.robots.filter((rb) => robotIds.includes(rb.id));
     // 两种业务视角：按任务（执行视角）/ 按巡检点（设备视角）
+    // filtered 只决定"哪些任务 / 巡检点入列表"；行内统计一律取该对象的**全量**结果，
+    // 否则筛选后列表与「详情」页的数字必然对不上
     const byTask = new Map<string, Result[]>();
     const byPoint = new Map<string, Result[]>();
     for (const r of filtered) {
@@ -153,6 +152,33 @@ export function Results({ page, id }: { page: string; id?: string }) {
       if (b) b.push(r);
       else byPoint.set(r.pointId, [r]);
     }
+    // 全量分组：与「巡检结果详情 / 巡检点详情」页取数完全一致
+    const fullByTask = new Map<string, Result[]>();
+    const fullByPoint = new Map<string, Result[]>();
+    for (const r of s.results) {
+      const a = fullByTask.get(r.taskId);
+      if (a) a.push(r);
+      else fullByTask.set(r.taskId, [r]);
+      const b = fullByPoint.get(r.pointId);
+      if (b) b.push(r);
+      else fullByPoint.set(r.pointId, [r]);
+    }
+    /**
+     * 行内统计与判定：按该任务 / 巡检点的全量结果算，异常只算"已判定异常"
+     * @param key 任务 ID 或巡检点 ID
+     * @param full 全量分组表
+     * @returns 检测数、异常数、待复核数与该行是否整体正常
+     */
+    const rowStat = (key: string, full: Map<string, Result[]>) => {
+      const all = full.get(key) || [];
+      const abn = all.filter(isAbnormal).length;
+      return {
+        total: all.length,
+        abn,
+        pend: all.filter(isPending).length,
+        ok: abn === 0,
+      };
+    };
     const taskGroups = [...byTask.entries()].sort((a, b) =>
       (s.tasks.find((t) => t.id === b[0])?.finishedAt || "").localeCompare(
         s.tasks.find((t) => t.id === a[0])?.finishedAt || "",
@@ -187,12 +213,10 @@ export function Results({ page, id }: { page: string; id?: string }) {
           </div>
         }
       >
-        {/* RES-01：本页定位为「历史查询 / 追溯」，不承担每日待办；并给出 ALM-01 异常 vs 告警口径 */}
-        <Note>
-          本页用于<b>历史查询与追溯</b>（筛选 + 明细 + 导出）；每日待办请到「工作台 · 待我处理」或「告警事件」集中处理，列表不承担待办职责。
-          <br />
-          口径：<b>异常</b> = 机器人判定不确定，需人工复核；<b>告警</b> = 明确触发阈值 / 规则，需处置。
-        </Note>
+        {/* RES-01：本页只做历史查询 / 追溯；异常 vs 告警口径压成一行，不再占整块首屏 */}
+        <p className="res-hint">
+          <b>异常</b> = 机器人判定不确定、需人工复核；<b>告警</b> = 触发阈值 / 规则、需处置。日常待办在「工作台 · 待我处理」，本页只做历史查询与追溯。
+        </p>
         {/* 业务范围芯片：点一下即按该状态筛（计数与下方列表同源，不用二次理解口径） */}
         <div className="result-scope">
           {chips.map((c) => (
@@ -273,6 +297,22 @@ export function Results({ page, id }: { page: string; id?: string }) {
               ))}
             </select>
           </Field>
+          <Field label="机器人">
+            <select
+              value={robotF}
+              onChange={(e) => {
+                RF(e.target.value);
+                PN(1);
+              }}
+            >
+              <option value="全部">全部机器</option>
+              {robotOptions.map((rb) => (
+                <option key={rb.id} value={rb.id}>
+                  {rb.name}（{rb.id}）
+                </option>
+              ))}
+            </select>
+          </Field>
           <Field label="关键词（设备 / 点位 / 检测项）">
             <input
               value={q}
@@ -283,11 +323,9 @@ export function Results({ page, id }: { page: string; id?: string }) {
               placeholder="输入编号或业务名称"
             />
           </Field>
-          <Btn onClick={() => MO(!more)}>{more ? "收起筛选" : "更多筛选"}</Btn>
           <Btn
             onClick={() => {
               Q("");
-              TF("全部");
               RF("全部");
               S("全部");
               RG("全部");
@@ -295,63 +333,12 @@ export function Results({ page, id }: { page: string; id?: string }) {
               TO("");
               AF("全部");
               DF("全部");
-              RA("全部");
               PN(1);
             }}
           >
             重置筛选
           </Btn>
         </div>
-        {/* 更多筛选：任务 / 机器人 / 结果原始状态（日常复核不常用，默认收起） */}
-        {more && (
-          <div className="filter-bar result-query-filters">
-            <Field label="任务">
-              <select
-                value={taskF}
-                onChange={(e) => {
-                  TF(e.target.value);
-                  PN(1);
-                }}
-              >
-                <option value="全部">全部任务</option>
-                {taskOptions.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}（{t.id}）
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="机器人">
-              <select
-                value={robotF}
-                onChange={(e) => {
-                  RF(e.target.value);
-                  PN(1);
-                }}
-              >
-                <option value="全部">全部机器</option>
-                {robotOptions.map((rb) => (
-                  <option key={rb.id} value={rb.id}>
-                    {rb.name}（{rb.id}）
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="结果原始状态">
-              <select
-                value={raw}
-                onChange={(e) => {
-                  RA(e.target.value);
-                  PN(1);
-                }}
-              >
-                {["全部", "待复核", "已确认", "已识别", "无效"].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        )}
         {!total ? (
           <Note>
             没有符合筛选条件的巡检结果，可放宽时间范围或点「重置筛选」。
@@ -360,150 +347,110 @@ export function Results({ page, id }: { page: string; id?: string }) {
           <div className="task-toolbar">
             <span className="muted">
               {group === "按任务"
-                ? `共 ${taskGroups.length} 个任务 · ${filtered.length} 条检测结果`
-                : `共 ${pointGroups.length} 个巡检点 · ${filtered.length} 条检测结果`}
+                ? `共 ${taskGroups.length} 个任务 · 当前筛选命中 ${filtered.length} 条检测结果`
+                : `共 ${pointGroups.length} 个巡检点 · 当前筛选命中 ${filtered.length} 条检测结果`}
             </span>
-            <span className="muted">
-              {group === "按任务"
-                ? "「详情」看该任务的 AI 识别结果与复核"
-                : "「点位详情」看历史结果与判定规则"}
-            </span>
+            <small className="muted">
+              行内数字为该任务 / 巡检点的全量统计，与「详情」页一致
+            </small>
           </div>
         )}
-        {group === "按任务"
-          ? pageTaskGroups.map(([taskId, list]) => {
-          const t = s.tasks.find((x) => x.id === taskId);
-          const abn = list.filter((r) => r.abnormal).length;
-          const pend = list.filter((r) => r.status === "待复核").length;
-          // 任务判断：该任务存在任一异常结果即判为「异常」，否则判为「正常」
-          const ok = abn === 0;
-          return (
-            <div className="task-group" key={taskId}>
-              {/* 任务行只作概要展示：结果明细统一在「详情」弹窗的「表计识别」中查看 */}
-              <div
-                className={"task-group-head" + (ok ? " ok" : " abn")}
-              >
-                <span className={"tg-flag" + (ok ? " ok" : " abn")} />
-                <span className="tg-main">
-                  <span className="tg-title">
-                    <b>{t?.name || taskId}</b>
-                    <span className={"tg-judge" + (ok ? " ok" : " abn")}>
-                      {ok ? "正常" : `异常 ${abn}`}
-                    </span>
-                    {t && <Badge>{t.state}</Badge>}
-                  </span>
-                  <span className="tg-meta">
-                    <span>{taskId}</span>
-                    {t?.robotId && (
-                      <>
-                        <i>·</i>
-                        <span>机器人 {t.robotId}</span>
-                      </>
-                    )}
-                    <i>·</i>
-                    {/* RES-02：列表补开始 / 结束时间 */}
-                    <span>开始 {fmtTime(t?.startedAt || t?.created)}</span>
-                    <i>·</i>
-                    <span>结束 {fmtTime(t?.finishedAt || t?.created)}</span>
-                  </span>
-                </span>
-                <span className="tg-stats">
-                  <span className="tg-stat">
-                    检测 <b>{list.length}</b>
-                  </span>
-                  {/* RES-02：异常数独立成列，客户关注字段 */}
-                  <span className={"tg-stat" + (abn ? " warn" : "")}>
-                    异常 <b>{abn}</b>
-                  </span>
-                  <span className={"tg-stat" + (pend ? " warn" : "")}>
-                    待复核 <b>{pend}</b>
-                  </span>
-                </span>
-                <span
-                  className="tg-detail"
-                  role="button"
-                  title="进入该任务的巡检结果详情内置页（任务概要 + AI 识别结果 + 复核）"
-                  onClick={() =>
-                    go("result-view", taskId, undefined, { page: "results" })
-                  }
-                >
-                  详情
-                </span>
-              </div>
-            </div>
-          );
-        })
-          : pagePointGroups.map(([pid, list]) => {
-              const p = s.points.find((x) => x.id === pid);
-              const abn = list.filter((r) => r.abnormal).length;
-              const pend = list.filter((r) => r.status === "待复核").length;
-              const ok = abn === 0;
-              return (
-                <div className="task-group" key={pid}>
-                  <div className={"task-group-head" + (ok ? " ok" : " abn")}>
-                    <span className={"tg-flag" + (ok ? " ok" : " abn")} />
-                    <span className="tg-main">
-                      <span className="tg-title">
-                        <b>{p?.name || pid}</b>
-                        <span className={"tg-judge" + (ok ? " ok" : " abn")}>
-                          {ok ? "正常" : `异常 ${abn}`}
-                        </span>
-                        {p && <Badge>{p.state}</Badge>}
-                      </span>
-                      <span className="tg-meta">
-                        <span>{pid}</span>
-                        <i>·</i>
-                        <span>{p?.device}</span>
-                        <i>·</i>
-                        <span>最近 {list[0]?.time}</span>
-                      </span>
-                    </span>
-                    <span className="tg-stats">
-                      <span className="tg-stat">
-                        检测 <b>{list.length}</b>
-                      </span>
-                      <span className={"tg-stat" + (pend ? " warn" : "")}>
-                        待复核 <b>{pend}</b>
-                      </span>
-                    </span>
-                    <span
-                      className="tg-detail"
-                      role="button"
-                      title="进入该巡检点详情（最近检测结果）"
-                      onClick={() => go("point", pid)}
-                    >
-                      点位详情
-                    </span>
-                  </div>
-                  {/* 最近 3 条读数：按巡检点看变化，不必逐个点开任务 */}
-                  <div className="point-result-strip">
-                    {list.slice(0, 3).map((r) => (
-                      <span key={r.id}>
-                        {r.time} · {r.final}
-                        {r.unit}{" "}
-                        <Badge>
-                          {r.status === "待复核"
-                            ? "待判定"
-                            : r.abnormal
-                              ? "异常"
-                              : "正常"}
-                        </Badge>
-                        {/* REV-02：复核可见性 —— 一眼看出是否已复核 / 何时复核 */}
-                        {r.status !== "待复核" && (
-                          <span className="muted rev-visible">
-                            已复核
-                            {r.reviews.length
-                              ? ` · ${r.reviews[r.reviews.length - 1].time}`
-                              : ""}
+        {/* 列表只到「任务 / 巡检点」这一层：检测明细、证据链路与人工复核统一进「详情」查看 */}
+        <div className="tg-list">
+          <table className="rt-table">
+            <thead>
+              <tr>
+                {(group === "按任务"
+                  ? ["任务ID", "任务名称", "机器人", "时间", "待复核", "操作"]
+                  : ["巡检点ID", "巡检点名称", "设备", "最近时间", "待复核", "操作"]
+                ).map((h) => (
+                  <th key={h}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {group === "按任务"
+                ? pageTaskGroups.map(([taskId]) => {
+                    const t = s.tasks.find((x) => x.id === taskId);
+                    const { abn, pend, ok } = rowStat(taskId, fullByTask);
+                    return (
+                      <tr key={taskId} className={ok ? "" : "abn"}>
+                        <td className="rt-id">{taskId}</td>
+                        <td>
+                          <span className="rt-title">
+                            <b>{t?.name || taskId}</b>
+                            <span
+                              className={"rt-judge" + (ok ? " ok" : " abn")}
+                            >
+                              {ok ? "正常" : `异常 ${abn}`}
+                            </span>
+                            {t && <Badge>{t.state}</Badge>}
                           </span>
-                        )}
-                      </span>
-                    ))}
-                    <span className="muted">共 {list.length} 条</span>
-                  </div>
-                </div>
-              );
-            })}
+                        </td>
+                        <td className="rt-robot">{t?.robotId || "—"}</td>
+                        {/* RES-02：时间 = 开始 / 结束 */}
+                        <td className="rt-time">
+                          开始 {fmtTime(t?.startedAt || t?.created)} · 结束{" "}
+                          {fmtTime(t?.finishedAt || t?.created)}
+                        </td>
+                        <td className={"rt-pend" + (pend ? " warn" : "")}>
+                          待复核 <b>{pend}</b>
+                        </td>
+                        <td className="rt-actions">
+                          <button
+                            className="rt-link"
+                            title="进入该任务的巡检结果详情（检测明细 + 人工复核）"
+                            onClick={() =>
+                              go("result-view", taskId, undefined, {
+                                page: "results",
+                              })
+                            }
+                          >
+                            详情
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                : pagePointGroups.map(([pid]) => {
+                    const p = s.points.find((x) => x.id === pid);
+                    const { abn, pend, ok } = rowStat(pid, fullByPoint);
+                    return (
+                      <tr key={pid} className={ok ? "" : "abn"}>
+                        <td className="rt-id">{pid}</td>
+                        <td>
+                          <span className="rt-title">
+                            <b>{p?.name || pid}</b>
+                            <span
+                              className={"rt-judge" + (ok ? " ok" : " abn")}
+                            >
+                              {ok ? "正常" : `异常 ${abn}`}
+                            </span>
+                            {p && <Badge>{p.state}</Badge>}
+                          </span>
+                        </td>
+                        <td className="rt-robot">{p?.device || "—"}</td>
+                        <td className="rt-time">
+                          最近 {fullByPoint.get(pid)?.[0]?.time}
+                        </td>
+                        <td className={"rt-pend" + (pend ? " warn" : "")}>
+                          待复核 <b>{pend}</b>
+                        </td>
+                        <td className="rt-actions">
+                          <button
+                            className="rt-link"
+                            title="进入该巡检点详情（历史读数与判定依据）"
+                            onClick={() => go("point", pid)}
+                          >
+                            点位详情
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+            </tbody>
+          </table>
+        </div>
         <Pager
           page={pn}
           count={total}
@@ -512,23 +459,24 @@ export function Results({ page, id }: { page: string; id?: string }) {
           onChange={PN}
         />
       </Panel>
+      {/* 直达 review 路由但没带结果 ID（或该 ID 已不存在）时给出说明，避免"点了入口却没反应" */}
+      {page === "review" && !reviewId && (
+        <Note>
+          未指定要复核的巡检结果（缺少结果 ID），请从「巡检结果查询」列表或工作台待办进入。
+        </Note>
+      )}
+      {reviewId && (
+        <ResultReviewDrawer id={reviewId} onClose={closeReview} />
+      )}
       </>
     );
   }
-  // 「结果详情」内置页 + 「结果详情 / 复核」页（review）：
-  // review 与 result-detail 共用同一套证据 / 值链路 / 复核表单渲染；
-  // 此前 review 无分支处理，侧边栏与「进入复核」按钮进入后为空白页（闭环断链，2026-09-30 修复）。
-  // review 态默认聚焦第一条待复核结果，并可在页头下拉切换。
-  if (page === "result-detail" || page === "review") {
-    const isReview = page === "review";
-    const pending = s.results.filter((x) => x.status === "待复核");
-    const rd = isReview
-      ? s.results.find((x) => x.id === id) || pending[0]
-      : s.results.find((x) => x.id === id);
+  // 「结果详情」内置页（白盒只读）：REV-02 —— 人工复核改为抽屉，
+  // 不再单独开「结果详情 / 复核」内置页（review 路由落到结果查询列表 + 复核抽屉，见上方分支）。
+  if (page === "result-detail") {
+    const rd = s.results.find((x) => x.id === id);
     if (!rd)
-      return isReview ? (
-        <Note>暂无巡检结果可复核。</Note>
-      ) : (
+      return (
         <Note>未找到该巡检结果，请从设备巡检档案或巡检结果列表进入。</Note>
       );
     const p = pointOf(s, rd),
@@ -536,10 +484,10 @@ export function Results({ page, id }: { page: string; id?: string }) {
     return (
       <>
         <div className="context-bar">
-          {/* REV-01：正常结果 = 详情（白盒只读）；异常结果 = 复核（人工判定） */}
-          <b>{isReview ? "人工复核" : "结果详情（白盒）"}</b>
+          {/* REV-01：正常结果 = 详情（白盒只读）；异常 / 待复核 = 人工复核（抽屉内完成判定） */}
+          <b>结果详情（白盒）</b>
           <span className="bc-id">{rd.id}</span>
-          <Badge>{rd.status === "待复核" ? "待判定" : rd.abnormal ? "异常" : "正常"}</Badge>
+          <Badge>{judgeOf(rd)}</Badge>
           <Badge>{rd.status}</Badge>
           <ObjectLink type="archive" id={p && archiveIdOf(s, p.device)}>
             {p?.device}
@@ -552,45 +500,17 @@ export function Results({ page, id }: { page: string; id?: string }) {
           </ObjectLink>
           <ObjectLink type="robot" id={t?.robotId} />
           <span className="muted">采集 {rd.time}</span>
-          {isReview && (
-            <span className="muted">待复核 {pending.length} 条</span>
-          )}
           <div className="actions">
-            {isReview && pending.length > 0 && (
-              <select
-                aria-label="切换待复核结果"
-                value={rd.id}
-                onChange={(e) => go("review", e.target.value)}
-              >
-                {pending.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.id} · {x.item}
-                  </option>
-                ))}
-              </select>
-            )}
-            {/* REV-03：详情可一键查看该任务的完整回溯（任务 → 巡检点 → 巡检项 全量） */}
-            <Btn
-              onClick={() =>
-                go("result-view", rd.taskId, undefined, { page })
-              }
-            >
-              任务回溯（全量）
-            </Btn>
-            {!isReview && (
-              <Btn primary onClick={() => go("review", rd.id)}>
-                进入复核
+            {/* REV-02：复核以抽屉就地打开，本页保持白盒详情上下文 */}
+            {(rd.abnormal || rd.status === "待复核") && (
+              <Btn primary onClick={() => setDetailReview(rd.id)}>
+                人工复核
               </Btn>
             )}
           </div>
         </div>
         <div className="grid two">
           <Panel title="原始采集证据">
-            {/* REV-04：版面优先级 —— 结果明细 / 判定为主区；视频、证据、参数降级为侧栏或折叠区 */}
-            <p className="muted">
-              REV-04：版面优先级 ——「结果链路 · 判定」占主区，视频 / 证据 / 参数等想看频率低的内容
-              降级到折叠区或侧栏，避免最想看的判定被挤出视野。
-            </p>
             <div className="segmented">
               {["照片", "红外", "视频", "音频", "传感器"].map((x) => (
                 <button
@@ -619,10 +539,9 @@ export function Results({ page, id }: { page: string; id?: string }) {
               采集时间 <b>{rd.time}</b>
             </p>
             <p>{rd.source}</p>
-            {/* RES-05：巡检视频留存与回放走工厂 NVR，平台只做回放入口与关键帧截图 */}
+            {/* RES-05：视频留存走工厂 NVR，平台只做回放入口与关键帧截图 */}
             <small>
-              证据为演示示意；原始采集值独立留存。巡检视频留存与回放对接工厂 NVR（一般存 3 个月，按质保 / 覆盖策略），
-              平台不做大规模视频存储，仅提供回放入口与关键帧截图。
+              证据为演示示意；巡检视频留存与回放对接工厂 NVR，平台仅提供回放入口与关键帧截图。
             </small>
           </Panel>
           <Panel title="结果链路 · 原始 → 识别 → 最终">
@@ -648,11 +567,7 @@ export function Results({ page, id }: { page: string; id?: string }) {
               </dd>
               <dt>业务判断</dt>
               <dd>
-                <Badge>{rd.status === "待复核" ? "待判定" : rd.abnormal ? "异常" : "正常"}</Badge>
-              </dd>
-              <dt>复核状态</dt>
-              <dd>
-                <Badge>{rd.status}</Badge>
+                <Badge>{judgeOf(rd)}</Badge>
               </dd>
             </dl>
             <ResultTrend
@@ -694,215 +609,19 @@ export function Results({ page, id }: { page: string; id?: string }) {
             />
           </Panel>
         </div>
-        {/* REV-01：只有异常 / 待复核结果才进入「复核」（可下拉结论 + 依据必填）；正常项只读详情 */}
-        {isReview &&
-          (rd.abnormal || rd.status === "待复核" ? (
-            <Panel title="人工复核 · 判定与依据">
-              <Note>
-                复核结论将追加到该结果的审计记录；原始值与识别值一并保留以便追溯（多次复核形成历史链）。
-              </Note>
-              <Field label="复核结论">
-                <select value={conclusion} onChange={(e) => C(e.target.value)}>
-                  {["确认", "修正", "标记无效"].map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="最终值">
-                <input
-                  value={value}
-                  disabled={conclusion !== "修正"}
-                  placeholder={rd.final}
-                  onChange={(e) => V(e.target.value)}
-                />
-              </Field>
-              <Field label="最终业务状态">
-                <select
-                  value={finalState || (rd.abnormal ? "异常" : "正常")}
-                  onChange={(e) => FS(e.target.value)}
-                >
-                  <option>正常</option>
-                  <option>异常</option>
-                </select>
-              </Field>
-              <Field label="复核依据 / 无效原因（必填）">
-                <textarea value={reason} onChange={(e) => R(e.target.value)} />
-              </Field>
-              <div className="actions">
-                <Btn primary disabled={!reason} onClick={submitReview}>
-                  提交复核
-                </Btn>
-              </div>
-            </Panel>
-          ) : (
-            <Note>该结果判定为正常，仅需查看详情（白盒），无需复核。</Note>
-          ))}
+        {/* REV-02：人工复核改为抽屉，页内不再重复铺一套复核表单 */}
+        {detailReview && (
+          <ResultReviewDrawer
+            id={detailReview}
+            onClose={() => setDetailReview(null)}
+          />
+        )}
       </>
     );
   }
-  if (!r) return <Note>尚无巡检结果</Note>;
-  const p = pointOf(s, r),
-    t = s.tasks.find((t) => t.id === r.taskId);
-  return (
-    <>
-      <div className="context-bar">
-        <ObjectLink type="archive" id={p && archiveIdOf(s, p.device)}>
-          {p?.device}
-        </ObjectLink>
-        <ObjectLink type="point" id={r.pointId}>
-          {p?.name}
-        </ObjectLink>
-        <ObjectLink type="task-detail" id={r.taskId} />
-        <ObjectLink type="robot" id={t?.robotId} />
-        <Badge>{r.status}</Badge>
-        <span className="muted">采集 {r.time}</span>
-      </div>
-      <div className="result-workbench">
-        <Panel title="原始采集证据">
-          <div className="segmented">
-            {["照片", "红外", "视频", "音频", "传感器"].map((x) => (
-              <button
-                key={x}
-                className={evidence === x ? "active" : ""}
-                onClick={() => E(x)}
-              >
-                {x}
-              </button>
-            ))}
-          </div>
-          {evidence === "照片" || evidence === "视频" ? (
-            <Video label={p?.name} live={false} />
-          ) : (
-            <Note>
-              {evidence === "传感器"
-                ? `原始采集值：${r.raw} ${r.unit}`
-                : evidence === "红外"
-                  ? p?.kind === "红外"
-                    ? `热像测温结果 ${r.raw} ${r.unit}（演示数据）`
-                    : "本条结果未关联红外证据。"
-                  : "本条结果未关联音频文件。"}
-            </Note>
-          )}
-          <p>
-            采集时间 <b>{r.time}</b>
-          </p>
-          <p>{r.source}</p>
-          {/* RES-05：视频留存走工厂 NVR */}
-          <small>
-            证据为演示示意；原始采集值独立留存。巡检视频留存与回放对接工厂 NVR，平台仅提供回放入口与关键帧截图。
-          </small>
-        </Panel>
-        <Panel title="结果链路 · 原始 → 识别 → 最终">
-          <dl>
-            <dt>原始采集</dt>
-            <dd>
-              {r.raw} {r.unit}
-            </dd>
-            <dt>机器人本地识别</dt>
-            <dd>
-              {p?.kind}目标 · {p?.targetId}（Mock）
-            </dd>
-            <dt>外部 AI 识别值</dt>
-            <dd>
-              {r.recognized} {r.unit} · 置信度 {Math.round(r.confidence * 100)}%
-            </dd>
-            <dt>平台规则判断依据</dt>
-            <dd><ResultRuleEvidence result={r} /></dd>
-            <dt>最终值</dt>
-            <dd className="big-number">
-              {r.final} {r.unit}
-            </dd>
-            <dt>业务判断</dt>
-            <dd>
-              <Badge>{r.status === "待复核" ? "待判定" : r.abnormal ? "异常" : "正常"}</Badge>
-            </dd>
-            <dt>复核状态</dt>
-            <dd>
-              <Badge>{r.status}</Badge>
-            </dd>
-          </dl>
-          <ResultTrend
-            results={s.results.filter(
-              (x) => x.pointId === r.pointId && x.item === r.item,
-            )}
-          />
-        </Panel>
-        <Panel title="人工复核">
-          <Note>
-            复核结论将追加到该结果的审计记录中，原始值与识别值一并保留以便追溯。
-          </Note>
-          <Field label="复核结论">
-            <select value={conclusion} onChange={(e) => C(e.target.value)}>
-              {["确认", "修正", "标记无效"].map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="最终值">
-            <input
-              value={value}
-              disabled={conclusion !== "修正"}
-              placeholder={r.final}
-              onChange={(e) => V(e.target.value)}
-            />
-          </Field>
-          <Field label="最终业务状态">
-            <select
-              value={finalState || (r.abnormal ? "异常" : "正常")}
-              onChange={(e) => FS(e.target.value)}
-            >
-              <option>正常</option>
-              <option>异常</option>
-            </select>
-          </Field>
-          <Field label="复核依据 / 无效原因（必填）">
-            <textarea value={reason} onChange={(e) => R(e.target.value)} />
-          </Field>
-          <Note>
-            保留原始值与识别值，复核追加审计记录。标记无效会重新计算任务有效检测项。
-          </Note>
-          <div className="actions">
-            <Btn primary disabled={!reason} onClick={submitReview}>
-              提交复核
-            </Btn>
-          </div>
-        </Panel>
-      </div>
-      <div className="grid two">
-        <Panel title="复核历史">
-          <Table
-            heads={["时间", "结论", "最终值 / 状态", "依据"]}
-            rows={r.reviews.map((x) => [
-              x.time,
-              x.conclusion || "确认",
-              `${x.value} / ${x.finalState || "—"}`,
-              x.reason,
-            ])}
-          />
-        </Panel>
-        <Panel title="关联告警">
-          <Table
-            heads={["告警", "状态", "处置"]}
-            rows={s.alarms
-              .filter((a) => a.resultId === r.id)
-              .map((a) => [
-                a.name,
-                <Badge>{a.state}</Badge>,
-                <ObjectLink
-                  type="alarm"
-                  to="alarm"
-                  id={a.id}
-                  from={{ page, id: r.id }}
-                >
-                  处置 →
-                </ObjectLink>,
-              ])}
-          />
-        </Panel>
-      </div>
-    </>
-  );
+  return null;
 }
+
 export function Alarms({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const [note, N] = useState(""),
@@ -1181,7 +900,9 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                           : "—"}
                       </p>
                       <div className="actions">
+                        {/* 严格按 ID 绑定：没有关联结果 / 任务 ID 时按钮置灰，避免跳到"猜出来的"记录 */}
                         <Btn
+                          disabled={!ad.resultId}
                           onClick={() => {
                             setDrawer(null);
                             go("result-detail", ad.resultId);
@@ -1190,6 +911,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                           查看原始结果
                         </Btn>
                         <Btn
+                          disabled={!ad.taskId}
                           onClick={() => {
                             setDrawer(null);
                             go("task-detail", ad.taskId);
@@ -1286,7 +1008,10 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               触发结果：{rd?.raw} {rd?.unit} · {rd?.source}
             </p>
             <div className="actions">
-              <Btn onClick={() => go("result-detail", ad.resultId)}>
+              <Btn
+                disabled={!ad.resultId}
+                onClick={() => go("result-detail", ad.resultId)}
+              >
                 查看原始结果
               </Btn>
             </div>
@@ -1437,7 +1162,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                   <Panel title="结果概要">
                     <Field label="结果 ID">{r.id}</Field>
                     <Field label="判定">
-                      <Badge>{r.abnormal ? "异常" : "正常"}</Badge>
+                      <Badge>{judgeOf(r)}</Badge>
                     </Field>
                     <Field label="状态">{r.status}</Field>
                     <Field label="检测项">{r.item}</Field>

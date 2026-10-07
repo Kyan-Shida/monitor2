@@ -3,7 +3,13 @@ import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { stages } from "../data/types";
-import { stageOf, terminal, minutesLeft, timeAt } from "../data/selectors";
+import {
+  stageOf,
+  terminal,
+  minutesLeft,
+  timeAt,
+  judgeOf,
+} from "../data/selectors";
 import {
   Btn,
   Badge,
@@ -301,7 +307,7 @@ function LiveTaskMonitor({ id }: { id: string }) {
             rows={results.map((x) => [
               x.item,
               `${x.final} ${x.unit}`,
-              <Badge>{x.abnormal ? "异常" : x.status}</Badge>,
+              <Badge>{judgeOf(x)}</Badge>,
               <ObjectLink type="review" id={x.id}>
                 结果证据 →
               </ObjectLink>,

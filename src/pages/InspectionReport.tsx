@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
-import { pointOf, fmtTime } from "../data/selectors";
+import { pointOf, fmtTime, judgeOf } from "../data/selectors";
 import { Btn, Badge, Panel, Table, Field, Note, Empty, Modal } from "../components/UI";
 /**
  * 巡检报表：分析与报表 › 巡检报表
@@ -233,7 +233,7 @@ export function InspectionReport() {
                     </>,
                     `${rr.recognized} → ${rr.final} ${rr.unit}`,
                     <>
-                      <Badge>{rr.abnormal ? "异常" : "正常"}</Badge>
+                      <Badge>{judgeOf(rr)}</Badge>
                       <Badge>{rr.status}</Badge>
                     </>,
                     rr.time,

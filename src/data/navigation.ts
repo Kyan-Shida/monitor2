@@ -99,6 +99,8 @@ const hiddenIds = [
   "device",
   // EQ-01：设备巡检档案并入设备台账（行内入口）；路由保留（含 result-detail/alarm-detail/replay-detail 的父级），仅隐藏菜单
   "archive",
+  // REV-02：人工复核改为抽屉（结果列表 / 结果详情内就地打开），不再作为独立菜单与内置页；路由保留供深链直达
+  "review",
   // EXE-03：人工接管与遥控降为「实时执行监控」的内置页（从现场态势 / 机器人详情进入）；路由保留，仅隐藏菜单
   "manual",
   // ROB-03：运行监测 / 新增机器人 / 机器人能力 降为「机器台账」的内置页
@@ -354,6 +356,31 @@ export const routeMeta = [
     hidden: true,
   },
 ];
+/**
+ * 侧边栏当前应高亮的叶子页面 ID：
+ * 详情 / 内置子页逐级回落到其列表父页；带显式来源（from）时按来源页归属
+ * @param page 当前页面 ID
+ * @param from 显式来源页（入口链接带回）
+ * @returns 侧边栏应高亮的叶子页面 ID
+ */
+export function activeMenuId(page: string, from?: { page: string }): string {
+  const src = from ? routeMeta.find((x) => x.id === from.page) : undefined;
+  return menuIdOf(src ? src.id : page);
+}
+/**
+ * 侧边栏当前应高亮的一级中心分组：以高亮叶子（activeMenuId）所属分组为准，
+ * 而非当前详情页自身的静态归属 —— 否则「执行回溯」等挂在设备档案（资源与地图）下的
+ * 详情页从「结果与异常」进入时，一级中心会错高亮到「资源与地图」
+ * @param page 当前页面 ID
+ * @param from 显式来源页（入口链接带回）
+ * @returns 应高亮的一级中心分组名；无法判定时返回 undefined
+ */
+export function activeGroupOf(
+  page: string,
+  from?: { page: string },
+): string | undefined {
+  return routeMeta.find((x) => x.id === activeMenuId(page, from))?.group;
+}
 export interface Route {
   page: string;
   id?: string;

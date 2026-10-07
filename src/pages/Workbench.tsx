@@ -29,6 +29,7 @@ import {
   pointOf,
   stageOf,
   terminal,
+  judgeOf,
 } from "../data/selectors";
 import { DUE_SOON_MS, metricValue } from "../data/metrics";
 import { canSee, roleOf } from "../data/roles";
@@ -208,7 +209,7 @@ export function Workbench() {
                 <div className="todo-main">
                   <b>
                     {p?.device} · {p?.object} · {r.item}
-                    <Badge>{r.abnormal ? "异常" : "正常"}</Badge>
+                    <Badge>{judgeOf(r)}</Badge>
                   </b>
                   <small className="todo-meta">
                     识别 {r.recognized} → 最终 {r.final} {r.unit} · 置信度{" "}

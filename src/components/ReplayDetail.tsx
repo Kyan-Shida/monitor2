@@ -8,7 +8,7 @@ import { TakeoverOutcome } from "./TakeoverOutcome";
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { useStore } from "../data/store";
-import { fmtTime } from "../data/selectors";
+import { fmtTime, judgeOf } from "../data/selectors";
 import { Badge, Btn, Note, Panel } from "./UI";
 import { MapCanvas } from "./MapCanvas";
 import { Video } from "./Video";
@@ -214,7 +214,7 @@ export function ReplayDetail({
                             </div>
                             <div className="rv-detail-row">
                               <i>判断 / 复核</i>
-                              <Badge>{x.status === "待复核" ? "待判定" : x.abnormal ? "异常" : "正常"}</Badge>
+                              <Badge>{judgeOf(x)}</Badge>
                               <Badge>{x.status}</Badge>
                             </div>
                             <div className="rv-detail-row">

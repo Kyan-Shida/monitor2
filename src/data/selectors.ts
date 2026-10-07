@@ -111,6 +111,27 @@ export const pointOf = (s: State, r: Result) =>
     .find((t) => t.id === r.taskId)
     ?.items.find((p) => p.id === r.pointId) ||
   s.points.find((p) => p.id === r.pointId);
+/**
+ * 单条巡检结果的业务判定（全局唯一口径）
+ * @description `abnormal` 只是「规则判定超限」，不等于「已判为异常」：
+ *   识别无效的结果（status=待复核）即使超阈值也还没人判定，
+ *   若直接按 abnormal 计数就会凭空多出「异常」。故判定顺序固定为
+ *   待复核 → 待判定（未判定，不计入异常）；无效 → 无效；其余才按 abnormal 定异常 / 正常。
+ * @param r 巡检结果
+ * @returns 待判定 / 无效 / 异常 / 正常
+ */
+export const judgeOf = (r: Result): "待判定" | "无效" | "异常" | "正常" =>
+  r.status === "待复核"
+    ? "待判定"
+    : r.status === "无效"
+      ? "无效"
+      : r.abnormal
+        ? "异常"
+        : "正常";
+/** 已判定为异常的结果（供各页统计"异常数"使用，避免把待复核算成异常） */
+export const isAbnormal = (r: Result) => judgeOf(r) === "异常";
+/** 仍需人工复核的结果 */
+export const isPending = (r: Result) => r.status === "待复核";
 export const deviceCode = (name: string) => name.split(" ")[0];
 /**
  * 把任务 / 结果的时间统一显示为「MM-DD HH:mm」

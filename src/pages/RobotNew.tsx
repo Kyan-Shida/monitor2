@@ -72,9 +72,12 @@ export function RobotNew() {
         <b>新增机器人</b>
         <span>
           机器人 = 编码 + 名称 + 机型 + 区域 + 地图 + 采集能力 + 移动能力 + 机型约束；
-          新增后进入「机器台账」，可被计划 / 临时任务调度。
+          新增后进入「机器台账」，可被计划 / 临时任务调度，调度校验（能力 / 电量 / 地图版本）与既有机器人同口径。
         </span>
         <div className="actions">
+          <Btn primary disabled={!valid} onClick={save}>
+            确认新增
+          </Btn>
           <Btn onClick={() => go("robots")}>返回机器台账</Btn>
         </div>
       </div>
@@ -247,15 +250,6 @@ export function RobotNew() {
         </Panel>
       </div>
 
-      <div className="actions toolbar-inline">
-        <Btn primary disabled={!valid} onClick={save}>
-          确认新增
-        </Btn>
-        <Btn onClick={() => go("robots")}>返回机器台账</Btn>
-        <small className="muted">
-          新增后机器人出现在「机器台账」与地图上；调度校验（能力 / 电量 / 地图版本）与既有机器人同口径。
-        </small>
-      </div>
       {err && (
         <p role="alert" className="reference-upload-error">
           {err}
