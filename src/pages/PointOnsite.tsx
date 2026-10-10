@@ -342,7 +342,6 @@ export function PointOnsite({ id }: { id?: string }) {
             title="机器人实时位置 / 跑图"
             extra={<span>{track.length ? `${track.length} 个轨迹点` : "尚未移动"}</span>}
           >
-            {/* 机器人当前所在位置：仅当它同步的就是本张地图时才在图面高亮 */}
             <MapImageCanvas
               image={m?.image}
               markers={markers}
@@ -350,11 +349,6 @@ export function PointOnsite({ id }: { id?: string }) {
               track={track}
               height={380}
               showIds
-              robot={
-                r && m && r.mapId === m.id
-                  ? { x: r.x, y: r.y, label: `X ${r.x} / Y ${r.y}` }
-                  : undefined
-              }
             />
             <div className="actions">
               <Btn primary disabled={!r} onClick={capture}>

@@ -146,16 +146,6 @@ export function InspectItemDrawer({
   };
   const reqOfTarget = (b: BusinessTarget) =>
     requirements.find((r) => r.id === b.requirementId);
-  /**
-   * 中栏条目标题：目标本体（仪表名 / 空间锚点 / 类型）
-   * @description 不再重复「区域 › 设备」前缀——那两层已经在左栏树与右栏详情里表达，
-   *              中栏只回答「检的是什么」，长名字才不至于被挤成省略号
-   */
-  const subjectOf = (b: BusinessTarget) =>
-    insOf(b.instrumentId)?.name || b.anchor || b.targetKind || labelOfBt(b.id);
-  /** 中栏条目副行：归属「设备 · 区域」，两者都取不到时返回空串（该行不渲染） */
-  const belongOf = (b: BusinessTarget) =>
-    [devOfTarget(b)?.name, areaOfTarget(b)].filter(Boolean).join(" · ");
   /** 空间与区域（非装置）台账：树上挂到独立分组 */
   const spaceTargets = useMemo(
     () =>
@@ -257,12 +247,14 @@ export function InspectItemDrawer({
 
         {/*
           目标台账 = 三栏选择器：左「区域 › 设备」树 ／ 中「台账列表」／ 右「台账详情」。
-          三栏等高（左树撑满、中栏列表自滚），点中一条台账即生效
-          （自动按其算法勾选所需上装与原子动作），右栏只读回显口径。
+          点中一条台账即生效（自动按其算法勾选所需上装与原子动作），右栏只读回显口径。
         */}
         <div className="bt-picker">
           <div className="bt-picker-head">
-            <span className="bt-picker-cur">巡检目标台账（检什么 · 怎么判）</span>
+            <span className="bt-picker-cur">
+              巡检目标台账（检什么 · 怎么判）：
+              <b>点中一条即选中</b>，右栏看口径详情
+            </span>
           </div>
           <div className="pick-3col">
             {/* 左栏：与「巡检目标台账」页同一棵树；非装置类挂「空间与区域」分组 */}
@@ -306,11 +298,7 @@ export function InspectItemDrawer({
                       className={"pick" + (draft.targetId === b.id ? " on" : "")}
                       onClick={() => pickTarget(b.id)}
                     >
-                      <span className="pick-body">
-                        <b>{subjectOf(b)}</b>
-                        {req?.name && <i>· {req.name}</i>}
-                        {belongOf(b) && <em>{belongOf(b)}</em>}
-                      </span>
+                      <b>{labelOfBt(b.id)}</b>
                       <small>
                         {req?.capture || "—"}
                         {b.unit ? ` · ${b.unit}` : ""} · {b.algorithm || "—"}
