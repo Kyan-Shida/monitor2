@@ -797,35 +797,6 @@ export function MapCanvas({
           N ↑
         </text>
       </svg>
-      <div className="map-legend">
-        <span>
-          <i className="dot blue" />
-          {cruiseOnly ? "巡检点（地图自带）" : "业务点位"}
-        </span>
-        <span>
-          <i className="dot amber" />
-          {cruiseOnly ? "待确认巡检点" : "待确认目标"}
-        </span>
-        <span>
-          <i className="dot teal" />
-          巡检机器
-        </span>
-        {rails.length > 0 && <span>轨道区段</span>}
-        {chargers.length > 0 && <span>充电桩</span>}
-        {routePaths.some((rt) => rt.pts.length > 1) && (
-          <span>
-            <i className="dot green" />
-            巡检路线
-          </span>
-        )}
-        {network.length > 0 && (
-          <span>
-            <i className="dot orange" />
-            巡检路网
-          </span>
-        )}
-        <span>三维点云示意</span>
-      </div>
     </div>
   );
 }

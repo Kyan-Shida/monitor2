@@ -2,6 +2,7 @@ import { TakeoverOutcome } from "../components/TakeoverOutcome";
 import { FieldControls } from "../components/FieldControls";
 import { useState } from "react";
 import { useStore } from "../data/store";
+import { mapVer } from "../data/versionLabel";
 import { go } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note, Field } from "../components/UI";
 import { MapCanvas } from "../components/MapCanvas";
@@ -41,7 +42,7 @@ export function ControlConsole({ robotId }: { robotId: string }) {
       <div className="context-bar">
         <Badge>{r.state}</Badge>
         <span>
-          电量 {r.battery}% · m{r.mapVersion} / c{r.calibrationVersion}
+          电量 {r.battery}% · {mapVer(r.mapVersion)}
         </span>
         <span>当前任务：{t?.name || "无执行任务"}</span>
         <Badge>{outcome}</Badge>
@@ -55,8 +56,8 @@ export function ControlConsole({ robotId }: { robotId: string }) {
             <div className="manual-readout"><span>当前位置：X {r.x} / Y {r.y}</span><span>云台：水平 {x?.pan || 0}° / 俯仰 {x?.tilt || 0}°</span><span>操作反馈：{logs[0]?.detail || "暂无操作回执"}</span></div>
           </Panel>
           <Panel title="本次接管 · 采集与处理" extra={<Badge>{outcome}</Badge>}>
-            {session ? <><div className="manual-readout"><span>采集证据 <b>{evidence.length}</b> 条</span><span>待复核 <b>{evidence.filter(result => result.status === "待复核").length}</b> 条</span><span>会话 {session.id}</span></div>
-              {evidence.length ? <Table heads={["采集项", "处理状态", "操作"]} rows={evidence.slice(0,3).map(result => [result.item, <Badge>{result.status}</Badge>, <Btn onClick={() => go("review", result.id)}>查看与复核</Btn>])}/> : <p className="muted">本次尚未采集证据。人工采集结果独立留档，不覆盖自主结果。</p>}
+            {session ? <><div className="manual-readout"><span>采集证据 <b>{evidence.length}</b> 条</span><span>会话 {session.id}</span></div>
+              {evidence.length ? <Table heads={["采集项", "处理状态", "操作"]} rows={evidence.slice(0,3).map(result => [result.item, <Badge>{result.status}</Badge>, <Btn onClick={() => go("result-detail", result.id)}>查看结果</Btn>])}/> : <p className="muted">本次尚未采集证据。人工采集结果独立留档，不覆盖自主结果。</p>}
               {latest?.resumedAt && !x && <p>原任务已于 {new Date(latest.resumedAt).toLocaleTimeString("zh-CN")} 恢复自主执行。</p>}
             </> : <p className="muted">申请接管后，这里展示本次采集证据和处理状态。</p>}
             <details className="manual-history"><summary>查看完整接管记录、证据与操作回执</summary><TakeoverOutcome robotId={r.id}/></details>
@@ -175,7 +176,7 @@ export function ControlConsole({ robotId }: { robotId: string }) {
               <Note>
                 当前任务 {t?.name || "无"}；已完成 {t?.done.length || 0} 项 /
                 剩余 {(t?.items.length || 0) - (t?.done.length || 0)}{" "}
-                项。实际版本 m{r.mapVersion}/c{r.calibrationVersion}。
+                项。实际版本 {mapVer(r.mapVersion)}。
               </Note>
               <Field label="恢复核对">
                 <label>

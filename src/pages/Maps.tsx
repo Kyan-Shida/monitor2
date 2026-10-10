@@ -26,8 +26,8 @@ import { Pager } from "../components/Business";
 import { MapOnboarding } from "../components/MapOnboarding";
 import { MapSurveyPanel } from "../components/MapSurveyPanel";
 import { SAMPLE_MAP_FILE, SAMPLE_MAP_IMAGE } from "../data/sampleMap";
-import { calibrationVersionOf } from "../data/mapCalibration";
 import { MAP_IMAGE_MAX_SIZE } from "../data/types";
+import { areaOptions } from "../data/deviceMaster";
 
 /**
  * 旧深链保留分支（不在工具栏暴露，仅由 URL `?tab=` 进入）
@@ -48,8 +48,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const m = s.maps.find((x) => x.id === id) || s.maps[0];
   const [modal, M] = useState(""),
     [name, N] = useState("罐区补充采集地图"),
-    /** MAP-02：点云来源（机器人实采 / 背包 SLAM / 手持云台 / 客户既有点云文件） */
-    [source, SRC] = useState("机器人实采"),
+    /** 地图所属区域：既可从既有区域下拉选择，也允许用户输入新区域 */
+    [region, RG] = useState("一期罐区"),
     [file, F] = useState(""),
     [cloud, C] = useState(""),
     [video, V] = useState(""),
@@ -58,7 +58,9 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     [importErr, ER] = useState(""),
     [note, NO] = useState(""),
     [kind, K] = useState("仅业务属性变更"),
-    [pid, P] = useState("P002");
+    [pid, P] = useState("P002"),
+    /** 导入地图前的二次确认开关 */
+    [confirmImport, CI] = useState(false);
   const [query, Q] = useViewState("maps.query", ""),
     [regionF, RF] = useViewState("maps.filter.region", "全部"),
     [stateF, SF] = useViewState("maps.filter.state", "全部"),
@@ -72,6 +74,23 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     IMG(SAMPLE_MAP_IMAGE);
     C("sample-multimodal.pcd");
     V("sample-video.mp4");
+  }
+  /** 二次确认通过后真正执行导入：把表单内容创建为一张「未发布」地图 */
+  function doImport() {
+    if (
+      act({
+        type: "IMPORT",
+        name,
+        region,
+        file: file || "map-" + Date.now().toString(36) + ".map",
+        image,
+        cloud,
+        video,
+      })
+    ) {
+      CI(false);
+      M("");
+    }
   }
   /** 选择本地地图图片：读为底图（地图是纯点云，上传不携带任何点位 / 业务信息） */
   async function pickImage(file?: File) {
@@ -202,8 +221,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     );
 
   const regions = ["全部", ...new Set(s.maps.map((x) => x.region))];
-  // 平台不区分试验版 / 正式版：状态只有 草稿（内容未定版）与 已发布（已定版）
-  const states = ["全部", "草稿", "已发布"];
+  // 状态是派生值：未发布 = 当前版本还没下发给所有旧版本机器（新图从未下发也算）；已发布 = 已下发到位
+  const states = ["全部", "未发布", "已发布"];
   const kw = query.trim();
   const list = s.maps.filter(
     (x) =>
@@ -257,68 +276,23 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         title="地图列表"
         extra={<span>{list.length} 张</span>}
       >
-        <p className="muted">
-          地图就是<b>纯点云</b>：只记录"机器人能走哪"，<b>不含任何定位ID与巡检点</b>。
-          <br />
-          现场<b>一趟采集、产出两件</b>：① 点云地图文件（本页导入）② <b>巡检点标定文件</b>
-          （到「巡检点管理 › 巡检点导入」导入）。两件<b>存储两份、上传两处</b>，
-          平台侧<b>两个模块</b>通过地图上的<b>定位 ID</b>绑定。
-          发布后进入「地图下发」同步给设备。
-        </p>
-        {/* SYS-01：地图更新策略（方案，先登记；自动化对比后置） */}
-        <Note>
-          <b>地图更新策略（SYS-01）</b>：临时性变化（人员 / 杂物等噪声）不更新地图；
-          <b>永久性变化</b>（工艺 / 仪表变更、通行路径变化）由<b>厂商介入</b>重新采集并版本化 + 登记变更记录；
-          自动对比更新为低频事件，<b>后置</b>，本轮只做版本与变更登记。
-        </Note>
         <Table
-          heads={[
-            "地图 / 区域",
-            "版本",
-            "内容",
-            "下发情况",
-            "状态",
-            "操作",
-          ]}
-          rows={rows.map((x) => {
+          heads={["地图名称", "所属区域", "更新时间", "地图版本", "状态", "操作"]}
+          rows={rows.map((x) => [
             // 版本一致性只看"地图空间版本 + 独立标定数据版本"（地图上已无标定数据版本）
-            const aligned = s.robots.filter(
-              (r) =>
-                r.mapId === x.id &&
-                r.mapVersion === x.version &&
-                r.calibrationVersion === calibrationVersionOf(s, x.id),
-            ).length;
-            return [
-              <b>
-                {x.name}
-                <small>
-                  {x.id} · {x.region}
-                </small>
-              </b>,
-              <>
-                m{x.version}
-                <small>更新 {x.history[0] || "—"}</small>
-              </>,
-              <>
-                {x.image ? "点云底图已上传" : "点云底图缺失"}
-                <small>
-                  {x.cloud || "原始点云未提供"} · {x.video || "原始视频未提供"}
-                </small>
-              </>,
-              <>
-                {aligned} / {s.robots.length} 台地图与标定一致
-                <small>
-                  {x.state === "草稿" ? "内容未定版（下发时自动定版）" : "已定版，可下发"}
-                </small>
-              </>,
+
+              <b>{x.name}</b>,
+              x.region,
+              x.updatedAt || "—",
+              `V${x.version}`,
               <Badge>{x.state}</Badge>,
               <div className="actions">
                 <Btn primary onClick={() => go("map-detail", x.id)}>
                   详情
                 </Btn>
               </div>,
-            ];
-          })}
+            ]
+          )}
         />
         <Pager page={cur} count={list.length} size={PAGE_SIZE} onChange={PG} />
       </Panel>
@@ -326,33 +300,9 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
       {modal === "import" && (
         <Modal
           title="导入地图"
-          drawer
-          drawerWidth={780}
+          wide
           onClose={() => M("")}
         >
-          {/* MAP-02：采集一趟、产出两件；本向导只导入其中的「点云地图文件」 */}
-          <Note>
-            <b>这一步只导入「① 点云地图文件」</b>——机器人能走哪、需要巡检哪就扫哪；
-            上传后地图<b>不含任何定位ID、巡检点与业务信息</b>。
-            <br />
-            上传一张<b>地图图片（底图）</b>即可完成导入。
-            <br />
-            同一次采集还产出<b>② 巡检点标定文件</b>（点位坐标 / 定位 ID / 姿态 / 上装参数，
-            不含业务目标与告警阈值），请到「<b>巡检点管理 › 巡检点导入</b>」导入，
-            两件按<b>定位 ID</b>绑定。<b>现场只需采集一趟</b>，只是两件产出分开上传。
-            <br />
-            点云来源不限于现场机器人实采：背包 SLAM、手持云台、<b>工厂现有的点云数据</b>均可导入；
-            建图不必全量，<b>按机器人可达范围分区建图</b>（"二楼不巡检就不扫二楼"），多张分区图属正常形态。
-          </Note>
-          <Field label="点云来源（MAP-02）">
-            <select value={source} onChange={(e) => SRC(e.target.value)}>
-              {["机器人实采", "背包 SLAM", "手持云台", "工厂既有点云数据"].map(
-                (x) => (
-                  <option key={x}>{x}</option>
-                ),
-              )}
-            </select>
-          </Field>
           <Field label="地图名称">
             <input
               value={name}
@@ -361,7 +311,12 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             />
           </Field>
           <Field label="区域">
-            <input value="一期罐区" readOnly />
+            {/* 区域取自「后台管理」的区域主数据：只允许下拉选择，不允许手填 */}
+            <select value={region} onChange={(e) => RG(e.target.value)}>
+              {areaOptions(s).map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
           </Field>
           <Field label="地图图片（底图）">
             <input
@@ -394,53 +349,42 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               {importErr}
             </p>
           )}
-          {image ? (
+          {image && (
             <>
               <img
                 className="map-import-preview"
                 src={image}
                 alt="地图底图预览"
               />
-              <p className="muted">
-                底图已上传 —— 地图<b>不含任何定位ID与巡检点</b>；
-                同批采集的<b>巡检点标定文件</b>请到「巡检点管理」导入，并按定位 ID 绑定。
-              </p>
             </>
-          ) : (
-            <p className="muted">
-              {file || "尚未选择图片"} —— 选择图片或点「使用示例点云地图」。
-            </p>
           )}
-          <details className="map-import-extra">
-            <summary>补充原始资料（可后补，不填也能导入）</summary>
-            <Field label="原始点云">
-              <input value={cloud} onChange={(e) => C(e.target.value)} />
-            </Field>
-            <Field label="原始视频">
-              <input value={video} onChange={(e) => V(e.target.value)} />
-            </Field>
-            <Note>缺少资料允许暂存草稿，但不能正式发布。</Note>
-          </details>
           <div className="modal-actions">
             <Btn onClick={() => M("")}>取消</Btn>
             <Btn
               primary
               disabled={!image || !name.trim()}
-              onClick={() => {
-                if (
-                  act({
-                    type: "IMPORT",
-                    name,
-                    file: file || "map-" + Date.now().toString(36) + ".map",
-                    image,
-                    cloud,
-                    video,
-                  })
-                )
-                  M("");
-              }}
+              onClick={() => CI(true)}
             >
               导入地图
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
+      {modal === "import" && confirmImport && (
+        <Modal title="确认导入地图" onClose={() => CI(false)}>
+          <Table
+            heads={["项目", "内容"]}
+            rows={[
+              ["地图名称", name || "—"],
+              ["区域", region || "—"],
+              ["底图", image ? "已上传" : "未上传"],
+            ]}
+          />
+          <div className="modal-actions">
+            <Btn onClick={() => CI(false)}>返回修改</Btn>
+            <Btn primary onClick={doImport}>
+              确认导入
             </Btn>
           </div>
         </Modal>
@@ -457,11 +401,10 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           modal === "change"
             ? "登记现场变化"
             : modal === "revision"
-              ? "修订地图与点位版本"
+              ? "修订地图版本"
               : "原始资料归档"
         }
-        drawer
-        drawerWidth={780}
+        wide
         onClose={() => M("")}
       >
         {modal === "change" ? (

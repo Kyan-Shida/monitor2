@@ -35,7 +35,7 @@ export function SystemAlarmParameters() {
         ))}
       </div>
       <div className="actions">
-        <Badge>v{saved.version}</Badge>
+        <Badge>第 {saved.version} 版</Badge>
         <Btn
           primary
           onClick={() => act({ type: "SAVE_SYSTEM_RULES", rules: draft })}

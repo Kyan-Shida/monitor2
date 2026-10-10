@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note } from "../components/UI";
-import { calibrationVersionOf } from "../data/mapCalibration";
 import { profileOf } from "../data/deviceProfile";
 import { capabilityMatrix } from "../data/robotCapabilities";
 import { ObjectLink, Kpis, EventTimeline, Pager } from "../components/Business";
@@ -13,12 +12,9 @@ import { ControlConsole } from "./Execution";
 import {
   currentTask,
   queueFor,
-  robotAvailability,
+  robotQueue,
   stageOf,
-  minutesLeft,
-  timeAt,
   fmtTime,
-  schedule,
   robotColors,
   terminal,
 } from "../data/selectors";
@@ -73,7 +69,6 @@ export function Operations({
               ),
             )}
           </select>
-          <span>实时状态 · 模拟通信</span>
           {/* ROB-01：新增机器人入口放在台账列表内（robot-new 为内置页，带返回）；
               ROB-03：台账固定为列表视图，运行视图（卡片）已下线 */}
           <Btn primary onClick={() => go("robot-new")}>
@@ -85,50 +80,25 @@ export function Operations({
         <Panel title="机器人实时状态">
           <Table
             heads={[
-              "机器人",
-              "机型",
-              "区域 / 状态",
-              "电量 / 控制",
-              "当前任务 / 阶段",
-              "待执行 / 预计可用",
-              "能力摘要",
-              "版本 / 健康",
+              "机器名称",
+              "当前状态",
+              "电量",
+              "待执行",
               "操作",
             ]}
             rows={rows.slice((pn - 1) * 6, pn * 6).map((r) => [
               <ObjectLink type="robot" id={r.id}>
                 {r.name}
               </ObjectLink>,
-              <Badge>{r.deviceType}</Badge>,
-              <>
-                {r.region}
-                <small>
-                  <Badge>{r.state}</Badge>
-                </small>
-              </>,
-              `${r.battery}% / ${r.state === "人工接管" ? "MANUAL" : "AUTO"}`,
-              <>
-                <ObjectLink type="execution" id={r.current} />
-                <small>{stageOf(currentTask(s, r))}</small>
-              </>,
-              <ObjectLink type="queue" id={r.id}>
-                {queueFor(s, r.id).length} 个 / {robotAvailability(s, r)}
-              </ObjectLink>,
-              // ROB-02：台账直出能力（可用 / 缺失 / 未接入）；带 to 才是真入口，不传 to 只渲染纯展示 span
-              <ObjectLink type="health" id={r.id} to="health">
-                <small>
-                  {(() => {
-                    const cm = capabilityMatrix(r);
-                    const n = (k: string) =>
-                      cm.filter((c) => c.availability === k).length;
-                    return `可用 ${n("可用")} / 缺失 ${n("缺失")} / 未接入 ${n("未接入")}`;
-                  })()}
-                </small>
-              </ObjectLink>,
-              `m${r.mapVersion} / c${r.calibrationVersion} · ${
-                r.battery < r.constraints.minBattery ? "低电量" : "正常"
-              } · 健康 ${r.health}`,
-              // ROB-03：运行监测 / 机器人能力已收为内置页（菜单隐藏），入口只保留在本列按钮上
+              <Badge>{r.state}</Badge>,
+              `${r.battery}%`,
+              queueFor(s, r.id).length ? (
+                <ObjectLink type="queue" id={r.id}>
+                  {queueFor(s, r.id).length} 个
+                </ObjectLink>
+              ) : (
+                <span className="muted">—</span>
+              ),
               <div className="actions">
                 <Btn onClick={() => go("robot", r.id)}>详情</Btn>
                 <Btn onClick={() => go("health", r.id)}>能力</Btn>
@@ -156,7 +126,7 @@ export function Operations({
         <div>
           <h2>{cur.name}</h2>
           <span>
-            {cur.deviceType} · {cur.region}
+            {cur.deviceType} · {cur.region || "未分配区域"}
           </span>
         </div>
         <select
@@ -174,23 +144,17 @@ export function Operations({
     );
     // 「机器人能力」合并页：能力与健康 / 地图与版本 / 机型专项 三个 Tab（原三个二级页面合并而来）
     if (page === "health") {
-      const capTab = ["ability", "map", "device"].includes(tab || "")
+      const capTab = ["ability", "map"].includes(tab || "")
         ? tab!
         : "ability";
       return (
         <>
           {common}
-          {/* ROB-02：能力不是与台账并列的"筛选维度"，而是台账直出 + 详情 Tab；本页从台账行「能力摘要」进入 */}
-          <Note>
-            机器人能力<b>不再是独立筛选维度</b>：台账列表已直出能力摘要（可用 / 缺失 / 未接入），
-            本页用于从台账详情查看能力明细（能力与健康 / 地图与版本 / 机型专项）。
-          </Note>
           <div className="object-tabs">
             {(
               [
                 ["ability", "能力与健康"],
                 ["map", "地图与版本"],
-                ["device", "机型专项"],
               ] as const
             ).map(([k, n]) => (
               <button
@@ -204,12 +168,13 @@ export function Operations({
           </div>
           {capTab === "ability" && (
             <Panel title="能力、组件与业务影响">
-              {/* 可用性口径来自 data/robotCapabilities，与计划绑定机器人页共用 */}
+              {/* 可用性与「配备上装」口径来自 data/robotCapabilities（关联后台上装主数据），与计划绑定机器人页共用 */}
               <Table
-                heads={["能力 / 组件", "可用性", "业务影响"]}
-                rows={capabilityMatrix(cur).map((c) => [
+                heads={["能力 / 组件", "可用性", "配备上装", "业务影响"]}
+                rows={capabilityMatrix(s, cur).map((c) => [
                   c.key,
                   <Badge key={c.key}>{c.availability}</Badge>,
+                  c.payload || <span className="muted">—</span>,
                   c.impact,
                 ])}
               />
@@ -225,9 +190,7 @@ export function Operations({
                   </ObjectLink>
                 </dd>
                 <dt>空间版本</dt>
-                <dd>m{cur.mapVersion}</dd>
-                <dt>点位版本</dt>
-                <dd>c{cur.calibrationVersion}</dd>
+                <dd>V{cur.mapVersion}</dd>
                 <dt>最近同步</dt>
                 <dd>
                   <Badge>
@@ -239,36 +202,6 @@ export function Operations({
               <Btn onClick={() => go("map-detail", cur.mapId, "sync")}>
                 版本同步工作台
               </Btn>
-            </Panel>
-          )}
-          {capTab === "device" && (
-            <Panel title={`${cur.deviceType}机型专项 · 差异配置`}>
-              <Note>{profileOf(cur.deviceType).summary}</Note>
-              <Table
-                heads={["配置维度", "本机型内容"]}
-                rows={[
-                  ["移动能力", cur.mobility.join(" / ")],
-                  [
-                    "机型约束",
-                    `最低派单电量 ${cur.constraints.minBattery}%` +
-                      (cur.constraints.railSectionId
-                        ? ` · 所在区段 ${cur.constraints.railSectionId}`
-                        : "") +
-                      (cur.constraints.maxSpeed
-                        ? ` · 限速 ${cur.constraints.maxSpeed} m/s`
-                        : ""),
-                  ],
-                  [
-                    "详情关注项",
-                    profileOf(cur.deviceType).detailTabs.join(" / "),
-                  ],
-                  ["地图图层", profileOf(cur.deviceType).mapLayers.join(" / ")],
-                  ["操控重点", profileOf(cur.deviceType).controlPanel.join(" / ")],
-                  ["告警类型", profileOf(cur.deviceType).alarmTypes.join(" / ")],
-                  ["任务约束", profileOf(cur.deviceType).taskConstraints.join(" / ")],
-                  ["健康度 / 固件", `${cur.health} · ${cur.firmware}`],
-                ]}
-              />
             </Panel>
           )}
         </>
@@ -287,9 +220,7 @@ export function Operations({
                 </ObjectLink>
               </dd>
               <dt>空间版本</dt>
-              <dd>m{cur.mapVersion}</dd>
-              <dt>点位版本</dt>
-              <dd>c{cur.calibrationVersion}</dd>
+              <dd>V{cur.mapVersion}</dd>
               <dt>最近同步</dt>
               <dd>
                 <Badge>
@@ -320,7 +251,6 @@ export function Operations({
             <Table
               heads={["配置维度", "本机型内容"]}
               rows={[
-                ["移动能力", cur.mobility.join(" / ")],
                 [
                   "机型约束",
                   `最低派单电量 ${cur.constraints.minBattery}%` +
@@ -351,7 +281,7 @@ export function Operations({
           <div>
             <h2>{r.name}</h2>
             <span>
-              {r.deviceType} · {r.region} ·{" "}
+              {r.deviceType} · {r.region || "未分配区域"} ·{" "}
               {r.state === "离线" ? "离线" : "在线"}
             </span>
           </div>
@@ -362,12 +292,6 @@ export function Operations({
           </span>
           <span>
             当前任务 <ObjectLink type="execution" id={t?.id} />
-          </span>
-          <span>
-            m{r.mapVersion} / c{r.calibrationVersion}
-          </span>
-          <span>
-            预计可用 <b>{robotAvailability(s, r)}</b>
           </span>
         </div>
         <div className="object-tabs">
@@ -389,7 +313,7 @@ export function Operations({
           <>
             <div className="workbench-surface robot-live">
               <section>
-                <h3>实时位置 / {r.region}</h3>
+                <h3>实时位置 / {r.region || "未分配区域"}</h3>
                 <MapCanvas
                   points={s.points.filter((p) => p.mapId === r.mapId)}
                   robots={[r]}
@@ -426,8 +350,6 @@ export function Operations({
                   <dd>
                     {t?.done.length || 0} / {t?.items.length || 0}
                   </dd>
-                  <dt>预计结束</dt>
-                  <dd>{t ? timeAt(minutesLeft(t)) : "—"}</dd>
                   <dt>排队</dt>
                   <dd>
                     <ObjectLink type="queue" id={r.id}>
@@ -443,8 +365,6 @@ export function Operations({
                   >
                     进入实时执行监控
                   </Btn>
-                  {/* EXE-03：人工接管与遥控已降为内置页，从机器人详情进入 */}
-                  <Btn onClick={() => go("manual", r.id)}>人工操作与遥控</Btn>
                 </div>
               </section>
             </div>
@@ -458,21 +378,17 @@ export function Operations({
                 <Btn onClick={() => go("queue", r.id)}>管理机器人未来队列</Btn>
               }
             >
-              {/* 与「设备巡检任务」列表同口径（任务 / 来源 / 状态），并保留队列专属的优先级、完成度、预计时段 */}
+              {/* 与「设备巡检任务」列表同口径（任务 / 来源 / 状态），并保留队列专属的完成度 */}
               <Table
-                heads={["任务", "来源", "优先级", "状态", "完成度", "预计时段"]}
-                rows={schedule(s, r)
-                  .filter((w) => w.task)
-                  .map((w) => [
-                    <ObjectLink type="task-detail" id={w.task!.id}>
-                      {w.task!.name}
-                    </ObjectLink>,
-                    w.task!.source,
-                    w.task!.priority,
-                    <Badge>{w.task!.state}</Badge>,
-                    `${w.task!.done.length}/${w.task!.items.length}`,
-                    `${timeAt(w.start)}—${timeAt(w.end)}`,
-                  ])}
+                heads={["任务", "来源", "状态", "完成度"]}
+                rows={robotQueue(s, r).map((x) => [
+                  <ObjectLink type="task-detail" id={x.id}>
+                    {x.name}
+                  </ObjectLink>,
+                  x.source,
+                  <Badge>{x.state}</Badge>,
+                  `${x.done.length}/${x.items.length}`,
+                ])}
               />
             </Panel>
             <Panel title="历史任务">
@@ -540,9 +456,11 @@ export function Operations({
           value={region}
           onChange={(e) => REG(e.target.value)}
         >
-          {["全部区域", ...new Set(s.robots.map((r) => r.region))].map((x) => (
-            <option key={x}>{x}</option>
-          ))}
+          {["全部区域", ...new Set(s.robots.map((r) => r.region).filter(Boolean))].map(
+            (x) => (
+              <option key={x}>{x}</option>
+            ),
+          )}
         </select>
         <span>当前机器人反馈与业务待办 · Mock</span>
       </div>
@@ -680,7 +598,7 @@ export function Operations({
                     {r.id} ·{" "}
                     {r.state === "离线" ? "通信离线" : "电量低于调度门槛"}
                   </b>
-                  <small>{r.region} · 查看能力与健康</small>
+                  <small>{r.region || "未分配区域"} · 查看能力与健康</small>
                 </div>
                 <span>→</span>
               </button>
@@ -688,11 +606,7 @@ export function Operations({
           {robots
             .filter((r) => {
               const m = s.maps.find((m) => m.id === r.mapId);
-              return (
-                m &&
-                (r.mapVersion !== m.version ||
-                  r.calibrationVersion !== calibrationVersionOf(s, r.mapId))
-              );
+              return m && r.mapVersion !== m.version;
             })
             .map((r) => (
               <button
@@ -702,7 +616,7 @@ export function Operations({
               >
                 <i className="severity amber" />
                 <div>
-                  <b>{r.id} 地图 / 点位版本不一致</b>
+                  <b>{r.id} 地图版本不一致</b>
                   <small>需要安排同步维护窗口</small>
                 </div>
                 <span>→</span>
@@ -720,27 +634,6 @@ export function Operations({
                 <div>
                   <b>{t.failure || "任务执行失败"}</b>
                   <small>{t.name}</small>
-                </div>
-                <span>→</span>
-              </button>
-            ))}
-          {s.results
-            .filter(
-              (r) =>
-                r.status === "待复核" && tasks.some((t) => t.id === r.taskId),
-            )
-            .map((r) => (
-              <button
-                className="attention"
-                key={r.id}
-                onClick={() => go("review", r.id)}
-              >
-                <i className="severity blue" />
-                <div>
-                  <b>{r.item} · 等待人工复核</b>
-                  <small>
-                    {r.pointId} / {r.taskId}
-                  </small>
                 </div>
                 <span>→</span>
               </button>
@@ -802,7 +695,6 @@ export function Operations({
                   }{" "}
                   异常
                 </Badge>
-                <small>预计 {timeAt(minutesLeft(t))} 结束</small>
               </div>
               <Btn primary onClick={() => go("execution-monitor", t.id)}>
                 执行监控 →

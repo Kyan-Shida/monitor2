@@ -6,9 +6,11 @@ import { Pager } from "../components/Business";
 import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
 import { PlanRobotBinding } from "../components/PlanRobotBinding";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
+import { PointPicker } from "../components/PointPicker";
 import { fmtTime } from "../data/selectors";
 import { actionsOfPoint, captureKindsOfPoint } from "../data/deviceMaster";
-import { targetsOf, calibrationVersionOf } from "../data/mapCalibration";
+import { targetsOf } from "../data/mapCalibration";
+import { constraints } from "../data/engine";
 import type { Task } from "../data/types";
 export function Planning({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
@@ -17,7 +19,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     [templateEdit, TE] = useState<string>(),
     [name, N] = useState(initial?.name || ""),
     [selected, SE] = useState<string[]>(s.templates[0].points),
-    [priority, PR] = useState("普通"),
     [tstate, TS] = useState<"启用" | "停用">("启用"),
     [tplOpen, setTplOpen] = useState(false),
     [pickQuery, PQ] = useState(""),
@@ -28,10 +29,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     [time, TM] = useState(initial?.time || "10:00"),
     [query, Q] = useViewState("planning." + page + ".query", ""),
     [srcFilter, SF] = useViewState<string>("planning.tasks.srcFilter", "全部"),
-    [prioFilter, PF] = useViewState<string>(
-      "planning.tasks.prioFilter",
-      "全部",
-    ),
     [statusFilter, STF] = useViewState<string>(
       "planning.tasks.statusFilter",
       "全部",
@@ -44,12 +41,24 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     [timeRange, TR] = useViewState<string>("planning.tasks.timeRange", "今日"),
     [srcPage, SP] = useState(1),
     [quickOpen, setQuickOpen] = useState(false),
-    /** TASK-03：按计划 / 按天批量取消任务的弹窗与选择 */
-    [cancelOpen, setCancelOpen] = useState(false),
-    [cancelPlan, setCancelPlan] = useState("全部"),
-    [cancelDay, setCancelDay] = useState(""),
+    /** TASK-04：派单（未分配任务选机器人一键派单） */
+    [dispatchTask, setDispatchTask] = useState<Task>(),
+    [dispatchRobot, setDispatchRobot] = useState(""),
+    /** TASK-05：多选删除（勾选后点击「删除」二次确认） */
+    [picked, setPicked] = useState<string[]>([]),
+    /**
+     * 选择态：列表常态不显示复选框列，点击「删除」进入选择态后才出现
+     * @description 常态每行长驻复选框会抢占操作列的视觉焦点，改为按需展开
+     */
+    [pickMode, setPickMode] = useState(false),
     [planOpen, setPlanOpen] = useState(false),
-    [planEditingId, setPlanEditingId] = useState<string | undefined>();
+    [planEditingId, setPlanEditingId] = useState<string | undefined>(),
+    /** 计划操作的二次确认：取消 / 开始 共用一个确认弹窗 */
+    [confirm, setConfirm] = useState<{
+      title: string;
+      text: string;
+      run: () => void;
+    } | null>(null);
   /** 任务列表「详情」抽屉中的任务：就地查看完整详情，不打断列表上下文 */
   const [taskPeek, setTaskPeek] = useState<Task>();
   const [boundRobot, BR] = useState(initial?.robotId || "");
@@ -94,22 +103,36 @@ export function Planning({ page, id }: { page: string; id?: string }) {
   const [pickStateF, PSF] = useViewState<string>("planning.picker.state", "全部");
   const [pickMapF, PMF] = useViewState<string>("planning.picker.map", "全部");
   const PICK_SIZE = 6;
-  const pickFiltered = s.points.filter(
+  /** 目录树之外的前置筛选（搜索 / 状态 / 地图）：目录树二级结构在此结果上再裁剪 */
+  const pickCandidates = s.points.filter(
     (p) =>
       (p.id + p.name + p.device).includes(pickQuery.trim()) &&
       (pickStateF === "全部" || p.state === pickStateF) &&
       (pickMapF === "全部" || p.mapId === pickMapF),
-  );
-  const pickRows = pickFiltered.slice(
-    (pickPage - 1) * PICK_SIZE,
-    pickPage * PICK_SIZE,
   );
   /**
    * 已配置巡检点勾选表（数据源 s.points 来自「巡检点管理」页，平台预先配置好）
    * 模板/临时任务**以巡检点为最小单位**勾选（不选业务目标：业务目标是巡检项内部的事）
    */
   const pickerTable = (
-    <>
+    <PointPicker
+      points={pickCandidates}
+      selected={selected}
+      onToggle={toggle}
+      onClear={() => SE([])}
+    >
+      {(rows) => {
+        // 目录树裁剪后重算页数：切节点 / 改筛选不会停在空页
+        const page = Math.min(
+          pickPage,
+          Math.max(1, Math.ceil(rows.length / PICK_SIZE)),
+        );
+        const pageRows = rows.slice(
+          (page - 1) * PICK_SIZE,
+          page * PICK_SIZE,
+        );
+        return (
+          <>
       <div className="filter-bar">
         <input
           aria-label="巡检点搜索"
@@ -150,7 +173,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           )}
         </select>
         <span>
-          共 {pickFiltered.length} 个 · 已选 {selected.length} 个
+          共 {rows.length} 个 · 已选 {selected.length} 个
         </span>
       </div>
       <Table
@@ -163,7 +186,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           "覆盖设备",
           "版本 / 状态",
         ]}
-        rows={pickRows.map((p) => {
+        rows={pageRows.map((p) => {
           const mp = targetsOf(s, p.mapId).find((t) => t.id === p.targetId);
           const specs = p.inspectItems || [];
           return [
@@ -220,14 +243,21 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               })()}
             </>,
             <>
-              <span>v{p.version} </span>
               <Badge>{p.state}</Badge>
             </>,
           ];
         })}
       />
-      <Pager page={pickPage} count={pickFiltered.length} onChange={PP} />
-    </>
+      <Pager
+        page={page}
+        count={rows.length}
+        size={PICK_SIZE}
+        onChange={PP}
+      />
+          </>
+        );
+      }}
+    </PointPicker>
   );
   if (page === "quick")
     return (
@@ -243,7 +273,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       TE(undefined);
       N("");
       SE([]);
-      PR("普通");
       TS("启用");
       setTplOpen(true);
     };
@@ -252,16 +281,10 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       TE(t.id);
       N(t.name);
       SE(t.points);
-      PR(t.priority);
       TS(t.state);
       setTplOpen(true);
     };
     const closeTpl = () => setTplOpen(false);
-    const removeTemplate = (tid: string) => {
-      if (!window.confirm("确认删除该巡检模板？删除后不可恢复。")) return;
-      if (act({ type: "DELETE_TEMPLATE", id: tid }) && templateEdit === tid)
-        closeTpl();
-    };
     const saveTemplate = () => {
       if (
         act({
@@ -269,7 +292,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           id: templateEdit,
           name,
           points: selected,
-          priority,
           state: tstate,
           end: "返航",
         })
@@ -282,9 +304,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           title="巡检模板"
           extra={
             <>
-              <span className="head-hint">
-                组合巡检点位与业务要求，供巡检计划 / 临时任务引用
-              </span>
               <div className="actions">
                 <Btn primary onClick={openNew}>
                   ＋ 新建模板
@@ -294,24 +313,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           }
         >
           <Table
-            heads={["模板 / 编号", "优先级", "巡检点", "版本", "状态", "操作"]}
+            heads={["模板 / 编号", "巡检点", "版本", "状态", "操作"]}
             rows={s.templates.map((t) => [
               <>
                 <b>{t.name}</b>
                 <small className="cell-muted">{t.id}</small>
               </>,
-              <span
-                className={
-                  "badge " +
-                  (t.priority === "紧急"
-                    ? "red"
-                    : t.priority === "高"
-                      ? "amber"
-                      : "")
-                }
-              >
-                {t.priority}
-              </span>,
               `${t.points.length} 个`,
               <span className="ver">v{t.version}</span>,
               <span className={"badge " + (t.state === "启用" ? "green" : "")}>
@@ -321,12 +328,34 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 <Btn onClick={() => openEdit(t)}>编辑</Btn>
                 <Btn
                   onClick={() =>
-                    act({ type: "TOGGLE_TEMPLATE_STATE", id: t.id })
+                    setConfirm({
+                      title: t.state === "启用" ? "停用模板" : "启用模板",
+                      text:
+                        t.state === "启用"
+                          ? `确认停用模板「${t.name}」？停用后计划将不再引用该模板生成任务。`
+                          : `确认启用模板「${t.name}」？`,
+                      run: () => act({ type: "TOGGLE_TEMPLATE_STATE", id: t.id }),
+                    })
                   }
                 >
                   {t.state === "启用" ? "停用" : "启用"}
                 </Btn>
-                <Btn danger onClick={() => removeTemplate(t.id)}>
+                <Btn
+                  danger
+                  onClick={() =>
+                    setConfirm({
+                      title: "删除模板",
+                      text: `确认删除模板「${t.name}」？删除后不可恢复。`,
+                      run: () => {
+                        if (
+                          act({ type: "DELETE_TEMPLATE", id: t.id }) &&
+                          templateEdit === t.id
+                        )
+                          closeTpl();
+                      },
+                    })
+                  }
+                >
                   删除
                 </Btn>
               </div>,
@@ -340,8 +369,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 ? `编辑模板 · ${editing.id} · v${editing.version}`
                 : "新建模板"
             }
-            drawer
-            drawerWidth={700}
+            wide
             onClose={closeTpl}
             footer={
               <>
@@ -360,13 +388,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                   placeholder="输入模板名称"
                 />
               </Field>
-              <Field label="优先级">
-                <select value={priority} onChange={(e) => PR(e.target.value)}>
-                  <option>普通</option>
-                  <option>高</option>
-                  <option>紧急</option>
-                </select>
-              </Field>
               <Field label="状态">
                 <select
                   value={tstate}
@@ -380,10 +401,29 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 <input readOnly value="返航" />
               </Field>
             </div>
-            <Note>
-              巡检点从平台已配置的「巡检点管理」中勾选；机器人按各巡检项的机器操作内容执行采集。保存即生成新版本；停用的模板不参与计划生成；已被计划引用的模板不可删除。
-            </Note>
             {pickerTable}
+          </Modal>
+        )}
+        {confirm && (
+          <Modal
+            title={confirm.title}
+            onClose={() => setConfirm(null)}
+            footer={
+              <>
+                <Btn onClick={() => setConfirm(null)}>取消</Btn>
+                <Btn
+                  primary
+                  onClick={() => {
+                    confirm.run();
+                    setConfirm(null);
+                  }}
+                >
+                  确认
+                </Btn>
+              </>
+            }
+          >
+            <p>{confirm.text}</p>
           </Modal>
         )}
       </>
@@ -409,25 +449,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           }
         >
           {/* PLAN-01：信息架构补「巡检规划（路线 / 频次）」一步；有效期须明确，避免"无限期"观感 */}
-          <Note>
-            <b>巡检规划（路线 / 频次）→ 任务分配</b>：先按巡检目标与巡检点设计巡检路线与频次（模板 + 计划），
-            再由计划按时生成任务。计划<b>有效期必须明确起止</b>（到期不再生成），并非无限期。
-          </Note>
           <Table
             heads={[
               "计划名称",
-              <>
-                模板
-                <span className="th-note">通过模板，实现计划 / 任务复用</span>
-              </>,
-              <>
-                周期 / 时间
-                <span className="th-note">自动下发计划任务</span>
-              </>,
-              <>
-                执行机器人
-                <span className="th-note">计划任务创建即绑定，按时自动执行</span>
-              </>,
+              "模板",
+              "周期 / 时间",
+              "执行机器人",
               "有效期",
               "版本 / 状态",
               "操作",
@@ -436,19 +463,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               p.name,
               s.templates.find((t) => t.id === p.templateId)?.name,
               `${p.cycle} ${p.time}`,
-              <>
-                <b>{p.robotId || "待绑定"}</b>
-                <small>
-                  {p.generationError ||
-                    (p.robotId
-                      ? "按时自动执行 · 异常转人工调度"
-                      : "请先绑定机器人")}
-                </small>
-              </>,
+              p.robotId || "待绑定",
               `${p.start} 至 ${p.end}`,
-              <>
-                v{p.version} <Badge>{p.state}</Badge>
-              </>,
+              <Badge tone={p.state === "停用" ? "amber" : undefined}>
+                {p.state}
+              </Badge>,
               <div className="actions">
                 <Btn
                   onClick={() => {
@@ -461,12 +480,39 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 </Btn>
                 <Btn
                   primary
+                  disabled={p.state !== "启用"}
                   onClick={() => {
                     if (act({ type: "GENERATE", id: p.id })) go("tasks");
                   }}
                 >
                   模拟当前时刻到点
                 </Btn>
+                {p.state === "启用" ? (
+                  <Btn
+                    danger
+                    onClick={() =>
+                      setConfirm({
+                        title: "停用计划",
+                        text: `确认停用计划「${p.name}」？停用后停止后续自动生成任务。`,
+                        run: () => act({ type: "STOP_PLAN", id: p.id }),
+                      })
+                    }
+                  >
+                    停用
+                  </Btn>
+                ) : (
+                  <Btn
+                    onClick={() =>
+                      setConfirm({
+                        title: "启用计划",
+                        text: `确认启用计划「${p.name}」？将恢复按时自动生成任务。`,
+                        run: () => act({ type: "START_PLAN", id: p.id }),
+                      })
+                    }
+                  >
+                    启用
+                  </Btn>
+                )}
               </div>,
             ])}
           />
@@ -499,6 +545,28 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             templates={s.templates}
             act={act}
           />
+        )}
+        {confirm && (
+          <Modal
+            title={confirm.title}
+            onClose={() => setConfirm(null)}
+            footer={
+              <>
+                <Btn onClick={() => setConfirm(null)}>取消</Btn>
+                <Btn
+                  primary
+                  onClick={() => {
+                    confirm.run();
+                    setConfirm(null);
+                  }}
+                >
+                  确认
+                </Btn>
+              </>
+            }
+          >
+            <p>{confirm.text}</p>
+          </Modal>
         )}
       </>
     );
@@ -625,7 +693,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 type: "CREATE_TASK",
                 name: name || "临时巡检",
                 points: selected,
-                priority,
               })
             )
               go("dispatch");
@@ -636,15 +703,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       </>
     );
   const t = s.tasks.find((t) => t.id === id);
-  /** 任务列表：搜索词 + 来源/优先级/状态/机器人四字段筛选 + 分页（每页 5 条） */
+  /** 任务列表：搜索词 + 来源/状态/机器人三字段筛选 + 分页（每页 5 条） */
   const TASK_PAGE_SIZE = 5;
   /** 从任务数据动态派生下拉选项，避免硬编码与种子数据不同步 */
   const sourceOpts = ["全部", ...new Set(s.tasks.map((x) => x.source))];
-  const prioOpts = [
-    "全部",
-    ...new Set(s.tasks.map((x) => x.priority || "普通")),
-  ];
-  const statusOpts = ["全部", ...new Set(s.tasks.map((x) => x.state))];
+  /** 状态筛选：只留常用决策状态（完整状态仍由行内 Badge 表达，避免下拉过长） */
+  const statusOpts = ["全部", "取消", "已分配", "超期", "暂停", "待调度"];
   const robotOpts = [
     "全部",
     "未分配",
@@ -674,8 +738,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     const rows = s.tasks.filter((t) => {
       if ((t.name + t.id).includes(query) === false) return false;
       if (srcFilter !== "全部" && t.source !== srcFilter) return false;
-      if (prioFilter !== "全部" && (t.priority || "普通") !== prioFilter)
-        return false;
       if (statusFilter !== "全部" && t.state !== statusFilter) return false;
       if (robotFilter !== "全部" && (t.robotId || "未分配") !== robotFilter)
         return false;
@@ -717,20 +779,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 }}
               >
                 {sourceOpts.map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-filter">
-              <span>优先级：</span>
-              <select
-                value={prioFilter}
-                onChange={(e) => {
-                  PF(e.target.value);
-                  resetPage();
-                }}
-              >
-                {prioOpts.map((o) => (
                   <option key={o}>{o}</option>
                 ))}
               </select>
@@ -789,18 +837,33 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             <Btn primary onClick={() => setQuickOpen(true)}>
               ＋ 临时巡检任务
             </Btn>
-            {/* TASK-03：建错的任务支持按计划 / 按天批量取消 */}
-            <Btn onClick={() => setCancelOpen(true)}>按计划 / 按天批量取消</Btn>
+            {/* TASK-05：点「删除」进入选择态（复选框列出现），勾选后再次点击即二次确认删除 */}
+            <Btn
+              danger
+              onClick={() => {
+                if (!pickMode) return setPickMode(true);
+                if (!picked.length) return setPickMode(false);
+                setConfirm({
+                  title: "删除任务",
+                  text: `确认删除所选 ${picked.length} 条任务？删除后不可恢复。`,
+                  run: () => {
+                    picked.forEach((id) => act({ type: "DELETE_TASK", id }));
+                    setPicked([]);
+                    setPickMode(false);
+                  },
+                });
+              }}
+            >
+              {!pickMode
+                ? "删除"
+                : picked.length
+                  ? `删除（${picked.length}）`
+                  : "退出选择"}
+            </Btn>
           </div>
         }
       >
         {/* TASK-01：任务生成规则说明；DSP-01：计划任务直接绑定机器人、临时任务走调度 */}
-        <Note>
-          <b>任务生成规则（TASK-01）</b>：周期计划按「到期滚动窗口」逐次生成（只生成到点前后窗口内的下一个时点，并按计划 + 时刻去重，<b>不预生成整年</b>），默认按天、当日任务默认展示。
-          <br />
-          <b>调度口径（DSP-01）</b>：<b>计划任务</b>创建时即绑定执行机器人（按时自动执行，异常转人工调度）；
-          <b>临时任务</b>不预选机器人，进入待调度，由调度中心按空闲度人工分配。
-        </Note>
         {allFiltered.length === 0 && (
           <Note>
             当前时间范围（{timeRange}）内没有任务。可放宽到「近 7 天 / 近 30 天」，或核对来源 / 状态等筛选条件。
@@ -808,37 +871,66 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         )}
         <Table
           heads={[
+            // 选择态下才渲染复选框列（含表头全选）
+            ...(pickMode
+              ? [
+                  <input
+                    type="checkbox"
+                    aria-label="全选任务"
+                    checked={
+                      !!pageRows.length &&
+                      pageRows.every((t) => picked.includes(t.id))
+                    }
+                    onChange={(e) =>
+                      setPicked(
+                        e.target.checked
+                          ? [
+                              ...new Set([
+                                ...picked,
+                                ...pageRows.map((t) => t.id),
+                              ]),
+                            ]
+                          : picked.filter(
+                              (id) => !pageRows.some((t) => t.id === id),
+                            ),
+                      )
+                    }
+                  />,
+                ]
+              : []),
             "任务 / 来源",
-            "优先级",
             "状态",
             "机器人",
-            "版本快照",
             "完成",
             "时间（生成 / 结束）",
             "操作",
           ]}
           rows={pageRows.map((t) => [
+            // 选择态下才渲染行复选框
+            ...(pickMode
+              ? [
+                  <input
+                    type="checkbox"
+                    aria-label={`选择任务 ${t.id}`}
+                    checked={picked.includes(t.id)}
+                    onChange={() =>
+                      setPicked(
+                        picked.includes(t.id)
+                          ? picked.filter((x) => x !== t.id)
+                          : [...picked, t.id],
+                      )
+                    }
+                  />,
+                ]
+              : []),
             <b>
               {t.name}
               <small>
                 {t.id} · {t.source}
               </small>
             </b>,
-            <span
-              className={
-                "badge " +
-                (t.priority === "紧急"
-                  ? "red"
-                  : t.priority === "高"
-                    ? "amber"
-                    : "")
-              }
-            >
-              {t.priority || "普通"}
-            </span>,
             <Badge>{t.state}</Badge>,
             t.robotId || "未分配",
-            `m${t.mapVersion} / c${t.calibrationVersion}`,
             `${t.done.length}/${t.items.length}`,
             <>
               <span>{fmtTime(t.created)}</span>
@@ -847,6 +939,33 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               </small>
             </>,
             <div className="actions">
+              {/* TASK-04：未分配机器人的待调度 / 超期任务选机器人一键派单（超期只做高亮，不冻结操作） */}
+              {!t.robotId && ["待调度", "超期"].includes(t.state) && (
+                <Btn
+                  primary
+                  onClick={() => {
+                    setDispatchTask(t);
+                    setDispatchRobot("");
+                  }}
+                >
+                  派单
+                </Btn>
+              )}
+              {/* TASK-05：单条取消（点击二次确认，确认即终止该任务） */}
+              {!["完成", "失败", "部分完成", "取消"].includes(t.state) && (
+                <Btn
+                  danger
+                  onClick={() =>
+                    setConfirm({
+                      title: "取消任务",
+                      text: `确认取消任务「${t.name}」？取消后不可自动恢复。`,
+                      run: () => act({ type: "STOP", id: t.id }),
+                    })
+                  }
+                >
+                  取消
+                </Btn>
+              )}
               <Btn onClick={() => setTaskPeek(t)}>详情</Btn>
             </div>,
           ])}
@@ -857,20 +976,16 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           size={TASK_PAGE_SIZE}
           onChange={(n) => SP(n)}
         />
-        <Note>
-          任务来源分两类：计划自动生成（周期计划到点下发）与人工临时下发；优先级为紧急
-          / 高的任务建议优先派单。
-        </Note>
       </Panel>
       {t && (
         <Panel title={`${t.name} · 不可变任务快照`}>
           <Table
-            heads={["点位", "目标身份", "检测要求", "点位 / 地图版本"]}
+            heads={["点位", "目标身份", "检测要求", "地图版本"]}
             rows={t.items.map((p) => [
               p.name,
               p.targetId,
               p.requirement,
-              `v${p.version} / m${p.mapVersion}`,
+              `V${p.mapVersion}`,
             ])}
           />
           <p>
@@ -886,78 +1001,72 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           onCreated={(id) => go("dispatch", id)}
         />
       )}
-      {/* TASK-03：按计划 / 按天批量取消（二次确认） */}
-      {cancelOpen && (
+      {/* TASK-04：派单弹窗（按调度约束列出适配机器人，选其一即可一键派单） */}
+      {dispatchTask && (
         <Modal
-          title="按计划 / 按天批量取消任务"
-          onClose={() => setCancelOpen(false)}
+          title={`派单 · ${dispatchTask.name}`}
+          wide
+          onClose={() => setDispatchTask(undefined)}
           footer={
             <>
-              <Btn onClick={() => setCancelOpen(false)}>取消</Btn>
+              <Btn onClick={() => setDispatchTask(undefined)}>取消</Btn>
               <Btn
-                danger
-                disabled={!cancelDay}
+                primary
+                disabled={!dispatchRobot}
                 onClick={() => {
-                  const planned = s.tasks.filter(
-                    (t) =>
-                      t.state !== "完成" &&
-                      t.state !== "取消" &&
-                      t.state !== "失败" &&
-                      t.state !== "部分完成" &&
-                      (cancelPlan === "全部" || t.planId === cancelPlan) &&
-                      (t.created || "").slice(0, 10) === cancelDay,
-                  );
                   if (
-                    !planned.length ||
-                    !window.confirm(
-                      `将取消 ${planned.length} 条任务（计划：${cancelPlan}，日期：${cancelDay}），确认？`,
-                    )
+                    act({
+                      type: "ASSIGN",
+                      id: dispatchTask.id,
+                      robotId: dispatchRobot,
+                    })
                   )
-                    return;
-                  planned.forEach((t) =>
-                    act({ type: "STOP", id: t.id }),
-                  );
-                  setCancelOpen(false);
-                  setCancelDay("");
+                    setDispatchTask(undefined);
                 }}
               >
-                批量取消
+                一键派单
               </Btn>
             </>
           }
         >
-          <Note>
-            用于「任务创建错了、一天的任务要整体取消」的场景。按计划 + 生成日期筛选，
-            仅取消未结束（未完成 / 未取消）的任务，取消后不可自动恢复。
-          </Note>
-          <Field label="巡检计划">
-            <select
-              value={cancelPlan}
-              onChange={(e) => setCancelPlan(e.target.value)}
-            >
-              <option value="全部">全部计划 / 临时任务</option>
-              {s.plans.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="生成日期（按天）">
-            <input
-              type="date"
-              value={cancelDay}
-              onChange={(e) => setCancelDay(e.target.value)}
-            />
-          </Field>
+          <Table
+            heads={["选择", "机器人", "状态", "适配校验"]}
+            rows={s.robots.map((rb) => {
+              // 与 ASSIGN 同源校验：地图版本待同步可在派单后同步，不作为拦截项
+              const reasons = constraints(s, dispatchTask, rb).filter(
+                (x) => x !== "地图版本待同步",
+              );
+              return [
+                <input
+                  type="radio"
+                  name="dispatch-robot"
+                  aria-label={`派单给 ${rb.id}`}
+                  disabled={!!reasons.length}
+                  checked={dispatchRobot === rb.id}
+                  onChange={() => setDispatchRobot(rb.id)}
+                />,
+                <b>
+                  {rb.id} · {rb.name}
+                  <small>
+                    电量 {rb.battery}% · V{rb.mapVersion}
+                  </small>
+                </b>,
+                <Badge>{rb.state}</Badge>,
+                reasons.length ? (
+                  <Badge tone="red">{reasons.join("；")}</Badge>
+                ) : (
+                  <Badge tone="green">适配</Badge>
+                ),
+              ];
+            })}
+          />
         </Modal>
       )}
       {/* 任务详情抽屉：列表里就地看完整详情（与「任务详情」内置页共用 TaskDetailPanel），主操作由面板内按钮提供 */}
       {taskPeek && (
         <Modal
           title={`任务详情 · ${taskPeek.id}`}
-          drawer
-          drawerWidth={760}
+          wide
           onClose={() => setTaskPeek(undefined)}
           footer={<Btn onClick={() => setTaskPeek(undefined)}>关闭</Btn>}
         >
@@ -965,6 +1074,29 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             task={taskPeek}
             onAfterNav={() => setTaskPeek(undefined)}
           />
+        </Modal>
+      )}
+      {/* 操作二次确认（单条取消 / 批量删除）：列表内的危险操作统一走这一个确认弹窗 */}
+      {confirm && (
+        <Modal
+          title={confirm.title}
+          onClose={() => setConfirm(null)}
+          footer={
+            <>
+              <Btn onClick={() => setConfirm(null)}>取消</Btn>
+              <Btn
+                primary
+                onClick={() => {
+                  confirm.run();
+                  setConfirm(null);
+                }}
+              >
+                确认
+              </Btn>
+            </>
+          }
+        >
+          <p>{confirm.text}</p>
         </Modal>
       )}
     </>
@@ -1032,8 +1164,7 @@ function PlanModal({
   return (
     <Modal
       title={editingId ? "编辑计划 · 新版本仅影响未来任务" : "新建周期巡检计划"}
-      drawer
-      drawerWidth={760}
+      wide
       onClose={onClose}
       footer={
         <>
@@ -1139,10 +1270,6 @@ function PlanModal({
           />
         </Field>
       </div>
-      <Note>
-        页面打开时，系统提前生成任务，到计划时间自动执行；重复触发同一时段不会重复建任务。每班按设定时间每隔
-        8 小时执行，按周以开始日期的星期为准。
-      </Note>
     </Modal>
   );
 }

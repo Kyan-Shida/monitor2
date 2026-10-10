@@ -4,19 +4,15 @@ import { constraints } from "../data/engine";
 import { go, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note, Modal, Field } from "../components/UI";
 import { ObjectLink, Kpis } from "../components/Business";
-import { ScheduleTimeline } from "../components/ScheduleTimeline";
-import { calibrationVersionOf } from "../data/mapCalibration";
+import { QueueStrip } from "../components/QueueStrip";
+import { mapVer } from "../data/versionLabel";
 import {
   queueFor,
   currentTask,
-  minutesLeft,
-  robotAvailability,
+  robotQueue,
   checks,
-  schedule,
-  timeAt,
   queueStates,
 } from "../data/selectors";
-import type { Task } from "../data/types";
 export function Scheduling({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const [selected, SEL] = useViewState(
@@ -36,22 +32,21 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
     page + ".robot." + (id || "all"),
     id && s.robots.some((r) => r.id === id) ? id : "R01",
   );
-  const [hours, H] = useViewState(page + ".hours", 4);
   const [q, Q] = useViewState(page + ".query", "");
   const [modal, M] = useState(""),
-    [summary, SU] = useState<Task>(),
     [reassign, RA] = useState("R02"),
     [mode, SETMODE] = useState<"queue" | "now">("queue");
   const t = s.tasks.find((t) => t.id === selected) || s.tasks[0],
     r = s.robots.find((r) => r.id === rid) || s.robots[0];
   const cur = currentTask(s, r);
   const check = checks(s, t, r);
-  const window = schedule(s, r).find((w) => w.id === t.id);
-  const start = window?.start ?? (schedule(s, r).at(-1)?.end || 0);
   // 待调度任务池只列「尚未分派」的任务；已分配 / 已下发等进入执行流程的任务不再占据调度池
   const pending = s.tasks.filter((t) => t.state === "待调度");
   const ts = queueFor(s, r.id);
   const ix = ts.findIndex((x) => x.id === t.id);
+  /** 选中任务在该机器人队列里的位置（平台不估算耗时，只说先后） */
+  const queuePos =
+    t.id === cur?.id ? "执行中" : ix >= 0 ? `第 ${ix + 1} 位` : "未入列";
   const canAssign = ["待调度", "已分配"].includes(t.state);
   // 一次派单：引擎侧将 分配→下发→接收→启动 收敛为原子动作，避免工作台逐点手动分步
   function dispatchTask() {
@@ -73,14 +68,6 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
             value: s.tasks.filter((t) => t.state === "待调度").length,
             group: "任务",
             hint: "口径：状态为「待调度」的任务数，等待分配机器人",
-          },
-          {
-            label: "高 / 紧急",
-            value: s.tasks.filter(
-              (t) => t.state === "待调度" && t.priority !== "普通",
-            ).length,
-            group: "任务",
-            hint: "口径：待调度任务中优先级为「高」或「紧急」的数量，需优先派单",
           },
           {
             label: "即将超期",
@@ -116,13 +103,11 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
             value: s.robots.filter((r) => {
               const m = s.maps.find((m) => m.id === r.mapId);
               return (
-                m &&
-                (m.version !== r.mapVersion ||
-                  calibrationVersionOf(s, r.mapId) !== r.calibrationVersion)
+                m && m.version !== r.mapVersion
               );
             }).length,
             group: "机器人",
-            hint: "口径：地图版本 m 或点位版本 p 与机器人激活版本不一致的机器人数量，需先同步才能下发",
+            hint: "口径：地图版本与机器人激活版本不一致的机器人数量，需先同步才能下发",
           },
         ]}
       />
@@ -156,7 +141,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
         <Btn
           primary
           disabled={
-            constraints(s, t, r).filter((x) => x !== "地图/标定版本待同步")
+            constraints(s, t, r).filter((x) => x !== "地图版本待同步")
               .length > 0
           }
           onClick={dispatchTask}
@@ -193,7 +178,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
       {["已分配", "待执行"].includes(t.state) && (
         <Btn onClick={() => act({ type: "REORDER", id: t.id })}>置于队首</Btn>
       )}
-      {t.priority !== "普通" && cur && cur.id !== t.id && (
+      {cur && cur.id !== t.id && (
         <Btn danger onClick={() => M("preempt")}>
           任务抢占
         </Btn>
@@ -245,15 +230,6 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
           </div>
         ))}
       </div>
-      <div className="schedule-estimate">
-        <span>
-          预计开始 <b>{timeAt(start)}</b>
-        </span>
-        <span>
-          预计结束 <b>{timeAt(start + t.duration)}</b>
-        </span>
-        <small>依据当前进度和队列估算，实际下发前复核</small>
-      </div>
     </>
   );
   return (
@@ -285,20 +261,8 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
                       key={t.id}
                       onClick={() => SEL(t.id)}
                     >
-                      {/* 主行：优先级 + 任务名 + 状态，便于快速扫读排序 */}
+                      {/* 主行：任务名 + 状态，便于快速扫读 */}
                       <div className="pool-task-head">
-                        <span
-                          className={
-                            "badge " +
-                            (t.priority === "紧急"
-                              ? "red"
-                              : t.priority === "高"
-                                ? "amber"
-                                : "")
-                          }
-                        >
-                          {t.priority || "普通"}
-                        </span>
                         <h4>{t.name}</h4>
                         <Badge>{t.state}</Badge>
                         {/* 点开看细节：跳转任务完整详情页（阻止冒泡，避免误改选中） */}
@@ -322,7 +286,6 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
                         <span>
                           {t.items.length} 点 / {t.items.length} 检测项
                         </span>
-                        <span>预计 {t.duration} 分钟</span>
                       </div>
                       {/* 次要信息：默认隐藏，选中该卡时展开；用标签—值网格对齐，避免长句连排 */}
                       <div className="pool-task-detail">
@@ -335,7 +298,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
                           <dd>{t.expectedAt || "尽快 / 调度窗口内"}</dd>
                           <dt>版本</dt>
                           <dd>
-                            m{t.mapVersion} / c{t.calibrationVersion}
+                            {mapVer(t.mapVersion)}
                           </dd>
                           <dt>原子动作</dt>
                           <dd>
@@ -355,9 +318,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
               </div>
             </section>
             <section className="resource-pool">
-              <h3>
-                机器人资源池 <small>面向未来可用时间</small>
-              </h3>
+              <h3>机器人资源池</h3>
               {s.robots.map((r) => {
                 const c = currentTask(s, r),
                   reasons = constraints(s, t, r);
@@ -392,13 +353,12 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
                         详情
                       </button>
                     </div>
-                    {/* 决策摘要：区域 / 电量 / 可用时间 */}
+                    {/* 决策摘要：区域 / 电量 */}
                     <div className="resource-meta">
                       <span>{r.region}</span>
                       <span className={r.battery < 40 ? "warn" : ""}>
                         电量 {r.battery}%
                       </span>
-                      <span>可用 {robotAvailability(s, r)}</span>
                     </div>
                     {/* 合格性始终一行可见，不满足时只给条数，明细悬停展开再看 */}
                     <div
@@ -422,7 +382,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
                         <dd>{queueFor(s, r.id).length} 个待执行</dd>
                         <dt>版本</dt>
                         <dd>
-                          m{r.mapVersion} / c{r.calibrationVersion}
+                          {mapVer(r.mapVersion)}
                         </dd>
                         {reasons.length > 0 && (
                           <>
@@ -439,8 +399,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
                             value={c.done.length || 0}
                           />
                           <small>
-                            {c.done.length}/{c.items.length} 有效检测项 · 约{" "}
-                            {timeAt(minutesLeft(c))} 结束
+                            {c.done.length}/{c.items.length} 有效检测项
                           </small>
                         </div>
                       )}
@@ -459,7 +418,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
       ) : (
         <section className="robot-schedule-block">
           <div className="robot-schedule-head">
-            <b>机器人未来排程管理</b>
+            <b>机器人队列管理</b>
             <select
               aria-label="队列机器人"
               value={rid}
@@ -482,35 +441,18 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
             <span>可拖动未下发任务调整顺序；已接收任务需撤回确认</span>
           </div>
           <div className="robot-schedule-body">
-            <Panel
-              title="机器人行 · 当前任务与未来队列"
-              extra={
-                <div className="segmented">
-                  {[4, 8].map((n) => (
-                    <button
-                      key={n}
-                      className={hours === n ? "active" : ""}
-                      onClick={() => H(n)}
-                    >
-                      未来 {n} 小时
-                    </button>
-                  ))}
-                </div>
-              }
-            >
-              <ScheduleTimeline
-                hours={hours}
+            <Panel title="机器人 · 当前任务与队列顺序">
+              <QueueStrip
                 selected={selected}
                 onSelect={(task) => {
                   SEL(task.id);
                   if (task.robotId) R(task.robotId);
-                  SU(task);
                 }}
                 draggable={true}
               />
             </Panel>
             <Panel
-              title={`${r.id} · 队列顺序与预计窗口`}
+              title={`${r.id} · 队列顺序`}
               extra={
                 <ObjectLink type="robot" id={r.id}>
                   机器人监测 →
@@ -518,84 +460,66 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
               }
             >
               <div className="queue-drag-list">
-                {schedule(s, r).map((w, i) => (
+                {robotQueue(s, r).map((x, i) => (
                   <div
                     className={
-                      "queue-line " + (w.id === selected ? "selected" : "")
+                      "queue-line " + (x.id === selected ? "selected" : "")
                     }
-                    key={w.id}
-                    draggable={w.task?.state === "已分配"}
+                    key={x.id}
+                    draggable={x.id !== cur?.id && x.state === "已分配"}
                     onDragStart={(e) =>
-                      e.dataTransfer.setData("text/plain", w.id)
+                      e.dataTransfer.setData("text/plain", x.id)
                     }
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
                       e.preventDefault();
-                      if (w.task)
-                        act({
-                          type: "REORDER",
-                          id: e.dataTransfer.getData("text/plain"),
-                          beforeId: w.id,
-                        });
+                      act({
+                        type: "REORDER",
+                        id: e.dataTransfer.getData("text/plain"),
+                        beforeId: x.id,
+                      });
                     }}
-                    onClick={() => {
-                      if (w.task) SEL(w.id);
-                    }}
+                    onClick={() => SEL(x.id)}
                   >
                     <span className="drag-handle">⠿</span>
-                    <b>{i + 1}</b>
+                    {/* 当前任务不占队列序号 */}
+                    <b>{x.id === cur?.id ? "当前" : i + (cur ? 0 : 1)}</b>
                     <div>
-                      <ObjectLink type="task-detail" id={w.task?.id}>
-                        {w.label}
+                      <ObjectLink type="task-detail" id={x.id}>
+                        {x.name}
                       </ObjectLink>
                       <small>
-                        {timeAt(w.start)}—{timeAt(w.end)} · {w.end - w.start}分钟
+                        {x.id === cur?.id
+                          ? `${x.done.length}/${x.items.length} 检测项`
+                          : x.blockedReason || "队列等待"}
                       </small>
                     </div>
-                    <Badge>{w.task?.priority || "维护"}</Badge>
-                    <Badge>{w.task?.state || "计划窗口"}</Badge>
-                    {w.task && <Btn onClick={() => SEL(w.id)}>选中</Btn>}
+                    <Badge>{x.state}</Badge>
+                    <Btn onClick={() => SEL(x.id)}>选中</Btn>
                   </div>
                 ))}
               </div>
-              {!schedule(s, r).length && (
-                <Note>机器人未来队列为空，可从调度工作台分配任务。</Note>
+              {!robotQueue(s, r).length && (
+                <Note>机器人队列为空，可从调度工作台分配任务。</Note>
               )}
             </Panel>
           </div>
         </section>
       )}
       {page === "dispatch" && (
-        <Panel
-          title="未来任务时间轴"
-          extra={
-            <div className="segmented">
-              {[4, 8].map((n) => (
-                <button
-                  key={n}
-                  className={hours === n ? "active" : ""}
-                  onClick={() => H(n)}
-                >
-                  未来 {n} 小时
-                </button>
-              ))}
-            </div>
-          }
-        >
-          <ScheduleTimeline
-            hours={hours}
+        <Panel title="各机器人队列">
+          <QueueStrip
             selected={selected}
             onSelect={(task) => {
               SEL(task.id);
               if (task.robotId) R(task.robotId);
-              SU(task);
             }}
             draggable={true}
           />
         </Panel>
       )}
       {page === "queue" && (
-        <Panel title="队列管理与排程决策">
+        <Panel title="队列管理与决策">
           <div className="impact-grid">
             <div>
               前置任务<b>{ix > 0 ? ts[ix - 1].id : cur?.id || "无"}</b>
@@ -604,7 +528,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
               后续任务<b>{ix >= 0 ? ts[ix + 1]?.id || "无" : "待加入队列"}</b>
             </div>
             <div>
-              队首插入影响<b>后续预计延后 {t.duration} 分钟</b>
+              队列位置<b>{queuePos}</b>
             </div>
           </div>
           {detail}
@@ -648,25 +572,6 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
           />
         </Panel>
       )}
-      {summary && (
-        <Modal title="时间轴任务摘要" onClose={() => SU(undefined)}>
-          <h3>{summary.name}</h3>
-          <p>
-            {summary.id} · {summary.state} · {summary.priority}
-          </p>
-          <p>
-            {summary.items.length} 检测项 · m{summary.mapVersion}/p
-            {summary.calibrationVersion} · 预计{summary.duration}分钟
-          </p>
-          <div className="actions">
-            <Btn primary onClick={() => go("task-detail", summary.id)}>
-              任务详情
-            </Btn>
-            <Btn onClick={() => go("execution-monitor", summary.id)}>执行监控</Btn>
-            <Btn onClick={() => SU(undefined)}>在工作台调整</Btn>
-          </div>
-        </Modal>
-      )}
       {modal && (
         <Modal
           title={modal === "preempt" ? "确认抢占影响" : "撤回确认与改派"}
@@ -676,8 +581,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
             <>
               <Note>
                 原任务 {cur?.name} 将暂停。已完成 {cur?.done.length}/
-                {cur?.items.length} 项保留，新任务预计占用 {t.duration}{" "}
-                分钟。完成后需明确恢复原任务。
+                {cur?.items.length} 项保留。完成后需明确恢复原任务。
               </Note>
               <Btn
                 danger

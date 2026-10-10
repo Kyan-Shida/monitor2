@@ -7,15 +7,12 @@
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
-import {
-  atomicActionCapability,
-  taskTypeOfActions,
-  type AtomicAction,
-} from "../data/types";
+import { taskTypeOfActions, type AtomicAction } from "../data/types";
 import { actionsOfPoint } from "../data/deviceMaster";
 import { targetsOf } from "../data/mapCalibration";
-import { Modal, Field, Btn, Badge, Note } from "./UI";
+import { Modal, Field, Btn, Badge } from "./UI";
 import { Pager } from "./Business";
+import { PointPicker } from "./PointPicker";
 
 export function QuickTaskDrawer({
   robotId = "",
@@ -32,8 +29,7 @@ export function QuickTaskDrawer({
   const { s, act } = useStore();
   const [name, N] = useState("现场临时巡检"),
     [rid, R] = useState(robotId),
-    [points, P] = useState<string[]>(pointIds || []),
-    [priority, PR] = useState("普通");
+    [points, P] = useState<string[]>(pointIds || []);
   /** 巡检点列表：搜索 / 筛选 / 分页 */
   const [q, Q] = useState(""),
     [mapF, MF] = useState("全部"),
@@ -48,7 +44,9 @@ export function QuickTaskDrawer({
       (p.id + p.name + p.device).includes(q.trim()) &&
       (mapF === "全部" || p.mapId === mapF),
   );
-  const rows = filtered.slice((pn - 1) * SIZE, pn * SIZE);
+  /** 单点勾选 / 取消（目录树整组勾选同样落到这里） */
+  const togglePoint = (id: string) =>
+    P(points.includes(id) ? points.filter((x) => x !== id) : [...points, id]);
   /** 已勾选的巡检点 */
   const picked = points
     .map((pid) => s.points.find((p) => p.id === pid))
@@ -59,161 +57,96 @@ export function QuickTaskDrawer({
   ];
   /** 任务类型：由指令集反推（单一能力 → 对应类型，多种 → 综合巡检任务） */
   const type = taskTypeOfActions(actions);
-  /** 当前机器人不具备的能力（仅提示） */
-  const missing = robot
-    ? [
-        ...new Set(
-          actions
-            .map((a) => atomicActionCapability[a])
-            .filter((c) => !robot.capabilities.includes(c)),
-        ),
-      ]
-    : [];
   return (
-    <Modal title="新建临时任务" drawer drawerWidth={680} onClose={onClose}>
+    <Modal title="新建临时任务" wide onClose={onClose}>
         <div className="form-grid">
           <Field label="任务名称">
             <input value={name} onChange={(e) => N(e.target.value)} />
           </Field>
-          <Field label="优先级">
-            <select value={priority} onChange={(e) => PR(e.target.value)}>
-              {["普通", "高", "紧急"].map((p) => (
-                <option key={p}>{p}</option>
-              ))}
-            </select>
-          </Field>
-          {/* DSP-01：临时任务默认不预选机器人 → 进入待调度，由调度中心按空闲度人工分配 */}
-          <Field label="执行机器人（可选 · 默认稍后调度）">
-            <select
-              value={rid}
-              onChange={(e) => {
-                R(e.target.value);
-                // 机器人不同 → 地图不同，已选巡检点作废
-                P([]);
-              }}
-            >
-              <option value="">稍后调度（推荐 · 由调度中心分配）</option>
-              {s.robots.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.id} · {r.name} · {r.state}
-                </option>
-              ))}
-            </select>
-          </Field>
         </div>
-        <Note>
-          临时任务<b>默认不预选机器人</b>：创建后进入「待调度」，由调度中心按机器人空闲度人工分配；
-          仅在现场已明确执行机时才预先指定。计划任务则不同，创建时即绑定机器人、按时自动执行。
-        </Note>
         <h4>巡检点</h4>
-        <p className="muted">
-          临时任务以<b>巡检点</b>为最小单位：勾选巡检点即可，
-          机器人到点后按各巡检项的机器操作内容（原子动作 / 云台视角）逐项执行。
-        </p>
-        <div className="filter-bar">
-          <input
-            aria-label="巡检点搜索"
-            placeholder="搜索巡检点 / 编码 / 设备"
-            value={q}
-            onChange={(e) => {
-              Q(e.target.value);
-              PN(1);
-            }}
-          />
-          <select
-            aria-label="按地图筛选"
-            value={mapF}
-            onChange={(e) => {
-              MF(e.target.value);
-              PN(1);
-            }}
-          >
-            <option value="全部">全部地图</option>
-            {s.maps.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-          <span>
-            共 {filtered.length} 个 · 已选 {points.length} 个
-          </span>
-        </div>
-        <div className="quick-point-list">
-          {rows.map((p) => {
-            const mp = targetsOf(s, p.mapId).find((t) => t.id === p.targetId);
-            const specs = p.inspectItems || [];
-            return (
-              <label key={p.id}>
-                <input
-                  type="checkbox"
-                  checked={points.includes(p.id)}
-                  onChange={() =>
-                    P(
-                      points.includes(p.id)
-                        ? points.filter((x) => x !== p.id)
-                        : [...points, p.id],
-                    )
-                  }
-                />
-                <b>{p.name}</b>
-                <span>
-                  {mp?.externalId ? `定位ID ${mp.externalId} · ` : ""}
-                  {specs.length
-                    ? `${specs.length} 个巡检项 · ${specs.map((x) => x.name).join(" / ")}`
-                    : `${p.item} · ${p.unit}`}
-                </span>
-                <Badge>{p.state}</Badge>
-              </label>
+        <PointPicker
+          points={filtered}
+          selected={points}
+          onToggle={togglePoint}
+          onClear={() => P([])}
+        >
+          {(treeRows) => {
+            // 目录树裁剪后重算页数，避免停在空页
+            const page = Math.min(
+              pn,
+              Math.max(1, Math.ceil(treeRows.length / SIZE)),
             );
-          })}
-        </div>
-        <Pager page={pn} count={filtered.length} onChange={PN} />
-        {/* 指令集只读展示：原子动作来自巡检点，不需要手工勾选 */}
-        <section className="atomic-action-section">
-          <div className="split">
-            <h4>本次指令集</h4>
-            <Badge>
-              来自巡检点 · {actions.length} 项 · {type}
-            </Badge>
-          </div>
-          <p className="muted">
-            指令集由所选巡检点的巡检项决定，无需手工选择。
-            {robot
-              ? `当前机器人能力：${robot.capabilities.join(" / ")}`
-              : "稍后调度时校验机器人能力。"}
-          </p>
-          <div className="actions">
-            {actions.length ? (
-              actions.map((a) => (
-                <Badge
-                  key={a}
-                  tone={
-                    robot && !robot.capabilities.includes(atomicActionCapability[a])
-                      ? "red"
-                      : "blue"
-                  }
-                >
-                  {a}（需 {atomicActionCapability[a]}）
-                </Badge>
-              ))
-            ) : (
-              <span className="muted">先勾选巡检点，这里会显示它要求的原子动作。</span>
-            )}
-          </div>
-          {!!missing.length && (
-            <p className="muted">
-              当前机器人缺少 <b>{missing.join(" / ")}</b> 能力：下发会被调度校验拦截，
-              可改派具备该能力的机器人。
-            </p>
-          )}
-        </section>
-        <p className="muted">
-          {rid
-            ? "下发后加入目标机器人的待执行队列，保留当前任务断点。"
-            : "创建后进入调度中心，选择符合条件的机器人。"}
-          机器人按巡检点逐个停靠并执行巡检项。
-        </p>
+            return (
+              <>
+                <div className="filter-bar">
+                  <input
+                    aria-label="巡检点搜索"
+                    placeholder="搜索巡检点 / 编码 / 设备"
+                    value={q}
+                    onChange={(e) => {
+                      Q(e.target.value);
+                      PN(1);
+                    }}
+                  />
+                  <select
+                    aria-label="按地图筛选"
+                    value={mapF}
+                    onChange={(e) => {
+                      MF(e.target.value);
+                      PN(1);
+                    }}
+                  >
+                    <option value="全部">全部地图</option>
+                    {s.maps.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span>
+                    共 {treeRows.length} 个 · 已选 {points.length} 个
+                  </span>
+                </div>
+                <div className="quick-point-list">
+                  {treeRows
+                    .slice((page - 1) * SIZE, page * SIZE)
+                    .map((p) => {
+                      const mp = targetsOf(s, p.mapId).find(
+                        (t) => t.id === p.targetId,
+                      );
+                      const specs = p.inspectItems || [];
+                      return (
+                        <label key={p.id}>
+                          <input
+                            type="checkbox"
+                            checked={points.includes(p.id)}
+                            onChange={() => togglePoint(p.id)}
+                          />
+                          <b>{p.name}</b>
+                          <span>
+                            {mp?.externalId ? `定位ID ${mp.externalId} · ` : ""}
+                            {specs.length
+                              ? `${specs.length} 个巡检项 · ${specs
+                                  .map((x) => x.name)
+                                  .join(" / ")}`
+                              : `${p.item} · ${p.unit}`}
+                          </span>
+                          <Badge>{p.state}</Badge>
+                        </label>
+                      );
+                    })}
+                </div>
+                <Pager
+                  page={page}
+                  count={treeRows.length}
+                  size={SIZE}
+                  onChange={PN}
+                />
+              </>
+            );
+          }}
+        </PointPicker>
         <div className="modal-actions">
           <Btn onClick={onClose}>取消</Btn>
           <Btn
@@ -225,7 +158,6 @@ export function QuickTaskDrawer({
                   type: rid ? "QUICK_DISPATCH" : "CREATE_TASK",
                   name,
                   points,
-                  priority,
                   taskType: type,
                   // 指令集来自巡检点：提交时显式带上，与引擎推导一致
                   atomicActions: actions,

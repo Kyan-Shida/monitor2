@@ -5,6 +5,7 @@ import { transition as run } from "./engine";
 import { parse, parentOf, menuIdOf, pages } from "./navigation";
 import { defaultRequirementOfInstrument } from "./deviceMaster";
 import { rulesOf } from "./alarmRules";
+import { kindOfTarget, templateFor } from "./alarmTemplates";
 
 /** 便捷取巡检目标台账 */
 const bt = (s: ReturnType<typeof seed>, id: string) =>
@@ -14,11 +15,10 @@ test("工厂树三层齐全：区域 → 设备 → 仪表，且仪表归属可�
   const s = seed();
   assert.ok((s.areas || []).length > 0);
   assert.ok((s.requirements || []).length >= 4);
-  // 仪表来自「已通过审核」设备的检测目标（待审核 / 已驳回清单不进工厂树）
+  // 仪表来自设备清单的检测目标
   assert.equal(s.instruments!.length, 13);
-  const passed = (s.devices || []).filter((d) => d.reviewState === "已通过");
-  const passedItems = passed.reduce((n, d) => n + d.items.length, 0);
-  assert.equal(s.instruments!.length, passedItems);
+  const listed = (s.devices || []).reduce((n, d) => n + d.items.length, 0);
+  assert.equal(s.instruments!.length, listed);
   for (const ins of s.instruments!) {
     const dev = s.devices!.find((d) => d.id === ins.deviceId);
     assert.ok(dev, `仪表 ${ins.id} 必须挂在设备上`);
@@ -73,7 +73,7 @@ test("巡检目标台账 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标�
 
 test("仪表只是资产：新增巡检目标台账需要巡检要求 + 算法 + 合法判定参数", () => {
   const s = seed();
-  // 仪表不存在（未通过审核的清单不进工厂树）
+  // 仪表不存在（清单里没有该检测目标）
   assert.throws(
     () =>
       run(s, {
@@ -229,43 +229,124 @@ test("导航调整：路线管理目录下线；原「点位标注与验证工�
   assert.equal(menuIdOf("point-edit"), "annotation");
 });
 
-test("告警设置只在巡检目标台账上：点位规则按目标的阈值 / 等级 / 开关生效", () => {
+test("告警设置只在巡检目标台账上：点位规则按目标的阈值 / 等级 / 是否巡检生效", () => {
   let s = seed();
   // P001 的巡检项绑定 BT-II-V001-P：等级与开关来自业务目标（而不是点位自己）
-  assert.equal(rulesOf(s).find((r) => r.pointId === "P001")!.level, "重要");
-  // 业务目标与业务要求随种子落地（留空时也由引擎兜底生成）
+  assert.equal(rulesOf(s).find((r) => r.pointId === "P001")!.level, "二级");
+  // 业务目标与业务要求不再手填：台账创建时由引擎按「仪表 + 判定方式 / 巡检要求说明」自动生成
   assert.ok(bt(s, "BT-II-V001-P").goal?.includes("出口压力表"));
   assert.ok(bt(s, "BT-II-V001-P").require);
-  // 改成「紧急 + 通知值班长」：规则与产生的告警都跟着变
+  // 改成「一级 + 通知值班长」：规则与产生的告警都跟着变
   s = run(s, {
     type: "UPDATE_BUSINESS_TARGET",
     id: "BT-II-V001-P",
-    alarm: { on: true, level: "紧急", notify: ["设备岗", "值班长"] },
+    alarm: { level: "一级", notify: ["设备岗", "值班长"] },
   });
-  assert.equal(rulesOf(s).find((r) => r.pointId === "P001")!.level, "紧急");
-  // 清掉种子里的历史告警：确保本次超限会**新建**一条告警（而不是并入未闭环的旧告警）
+  assert.equal(rulesOf(s).find((r) => r.pointId === "P001")!.level, "一级");
+  // 清掉种子里的历史告警：确保本次超限会**新建**一条告警（而不是并入未标注的旧告警）
   s.alarms = [];
   s.tasks.find((t) => t.id === "T009")!.stage = 6;
   s = run(s, { type: "TICK", id: "T009", abnormal: true });
   const al = s.alarms[0];
   assert.ok(al, "超限读数应产生告警");
-  assert.equal(al.level, "紧急");
+  assert.equal(al.level, "一级");
   assert.ok(
     al.notes.some((n) => n.includes("值班长")),
     "通知对象应随告警记录带出",
   );
-  // 关掉告警：只记录结果与证据，不再产生告警
+  // 平台没有「告警开关」：判定异常即告警，不存在"关掉告警"
+  // 要停止判定只能关台账的「是否巡检」——关后该目标退出采集，只保留历史结果
   s = run(s, {
     type: "UPDATE_BUSINESS_TARGET",
     id: "BT-II-V001-P",
-    alarm: { on: false },
+    inspect: false,
   });
-  const before = s.alarms.length;
-  const task = s.tasks.find((t) => t.id === "T009")!;
-  task.stage = 6;
-  // 回退到同一个巡检点（items[0] = P001）再采一次
-  task.index = 0;
-  const off = run(s, { type: "TICK", id: "T009", abnormal: true });
-  assert.equal(off.alarms.length, before);
-  assert.equal(off.results[0].status, "待复核");
+  assert.equal(
+    rulesOf(s).find((r) => r.pointId === "P001")!.enabled,
+    false,
+    "关掉「是否巡检」后该点位不再判定",
+  );
+  s = run(s, {
+    type: "UPDATE_BUSINESS_TARGET",
+    id: "BT-II-V001-P",
+    inspect: true,
+  });
+  assert.equal(rulesOf(s).find((r) => r.pointId === "P001")!.enabled, true);
+});
+
+test("环境 / 区域类目标也走主数据：巡检要求 → 算法 → 告警模板（检测类型不再靠单位猜）", () => {
+  const s = seed();
+  const reqs = s.requirements || [];
+  // 每条巡检要求都要声明适用目标类型与采集方式（页面按它过滤候选、带出采集方式）
+  for (const r of reqs) {
+    assert.ok(r.targetKinds.length > 0, `${r.id} 需要声明适用目标类型`);
+    assert.ok(
+      ["可见光", "红外", "气体", "声音"].includes(r.capture),
+      `${r.id} 需要声明采集方式`,
+    );
+  }
+  // 要求的默认算法必须来自「后台管理 › 算法模板管理」的清单（页面上不能自造算法名）
+  const algos = new Set((s.algoConfigs || []).map((a) => a.name));
+  for (const r of reqs)
+    assert.ok(algos.has(r.algorithm), `${r.id} 的默认算法应来自算法清单`);
+
+  // 区域气体：要求声明检测类型 = 气体浓度 + 单位 ppm → 命中 ppm 口径的模板（不是探头 %LEL 那条）
+  const gas = bt(s, "BT-ENV-GAS");
+  assert.equal(gas.requirementId, "REQ-GAS-AREA");
+  assert.equal(kindOfTarget(s, gas.requirementId, gas.unit), "气体浓度");
+  assert.equal(
+    templateFor(
+      s,
+      kindOfTarget(s, gas.requirementId, gas.unit),
+      gas.unit,
+      gas.alarm?.templateId,
+    )?.id,
+    "TPL-06",
+  );
+  // 没有量纲的环境类目标：靠巡检要求的 detectKind 命中模板，而不是落到「阀门状态」
+  assert.equal(
+    templateFor(s, "声纹", "")?.id,
+    "TPL-08",
+    "声纹应有专门的告警模板",
+  );
+  assert.equal(templateFor(s, "不安全行为", "")?.id, "TPL-09");
+  assert.equal(templateFor(s, "外观", "")?.id, "TPL-10");
+  // 区域红外：台账显式关联区域高温模板（℃ 0–120），与探头测温的 TPL-02 区分开
+  assert.equal(bt(s, "BT-ENV-IR").alarm?.templateId, "TPL-07");
+});
+
+test("告警规则来源二选一：选择现有模板 / 手动输入（手填口径落库并随快照带出）", () => {
+  let s = seed();
+  // 种子台账按检测类型带出了模板 → 模板来源：触发逻辑 / 声光报警 / 处置流程都取模板值
+  const byTpl = rulesOf(s).find((r) => r.pointId === "P001")!;
+  assert.equal(byTpl.templateId, "TPL-01");
+  assert.equal(byTpl.triggerMode, "单次即触发");
+  assert.equal(byTpl.alarmSeconds, 10);
+  assert.ok(byTpl.flow.length > 0, "模板来源应带上模板的处置流程");
+  // 切成手动输入：用台账自己的判定口径 + 手填的触发逻辑 / 声光 / 处置流程
+  s = run(s, {
+    type: "UPDATE_BUSINESS_TARGET",
+    id: "BT-II-V001-P",
+    alarm: {
+      source: "手动",
+      triggerMode: "连续确认",
+      consecutive: 2,
+      alarmSeconds: 5,
+      flow: ["现场确认压力表读数", "复测确认恢复正常"],
+    },
+  });
+  const manual = rulesOf(s).find((r) => r.pointId === "P001")!;
+  assert.equal(manual.templateId, undefined, "手动来源不再引用模板");
+  assert.equal(manual.triggerMode, "连续确认");
+  assert.equal(manual.consecutive, 2);
+  assert.equal(manual.alarmSeconds, 5);
+  assert.deepEqual(manual.flow, ["现场确认压力表读数", "复测确认恢复正常"]);
+  // 手动来源的「连续确认」至少要 2 次，填 1 次直接拒绝
+  assert.throws(() =>
+    run(s, {
+      type: "UPDATE_BUSINESS_TARGET",
+      id: "BT-II-V001-P",
+      alarm: { source: "手动", triggerMode: "连续确认", consecutive: 1 },
+    }),
+  );
 });

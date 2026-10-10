@@ -4,7 +4,7 @@
  *              最终落到「巡检点管理」。
  *              MAP-02 口径：采集一趟、产出两件；存储两份、上传两处；模块两个、ID 一绑。
  *              标定数据含点位坐标 / 定位 ID / 姿态 / 上装参数，**不含业务目标与告警阈值**；
- *              独立存储（data/mapCalibration.ts），自带版本 c{n}，与地图空间版本 m{n} 解耦。
+ *              独立存储（data/mapCalibration.ts），自带版本 c{n}，与地图空间版本 V{n} 解耦。
  * @interaction 由「巡检点管理」（pages/InspectionPoints.tsx）的「巡检点导入」入口打开；
  *              导入走 engine action `IMPORT_POINT_CALIBRATION`
  */
@@ -14,6 +14,7 @@ import {
   parsePointCalibration,
   type CalibrationParseResult,
 } from "../data/mapCalibration";
+import { readCalibrationWorkbook } from "../data/excel";
 import { Btn, Field, Note, Panel, Table } from "./UI";
 
 /**
@@ -26,13 +27,6 @@ export function PointCalibration({ mapId }: { mapId?: string }) {
   const m = s.maps.find((x) => x.id === curId) || s.maps[0];
   return (
     <>
-      <Note>
-        <b>巡检点导入：现场采集的数据上传后，最终落到「巡检点管理」。</b>
-        <br />
-        先确认数据属于哪台机器人（机器狗），再从机器人拉取或上传表格文件。
-        标定数据（坐标 / 定位 ID / 姿态 / 上装参数）<b>与地图分开存储</b>，
-        通过地图上的<b>定位 ID</b>绑定，<b>不含业务目标与告警阈值</b>。
-      </Note>
       {s.pendingCalibration && <PendingBar />}
       <div className="toolbar">
         <div className="actions">
@@ -83,10 +77,6 @@ function BatchImport({ mapId }: { mapId?: string }) {
   return (
     <>
       <Panel title="批量文件上传">
-        <Note>
-          上传前请先确认这批数据属于<b>哪台机器人（机器狗）</b>：
-          同一台机器人采集的机身位姿与上装参数才会成套对齐，导入后按<b>定位 ID</b>与地图绑定。
-        </Note>
         <Field label="数据来源机器人">
           <select
             value={robotId}
@@ -103,9 +93,7 @@ function BatchImport({ mapId }: { mapId?: string }) {
             ))}
           </select>
         </Field>
-        {!robotId ? (
-          <Note>请先选择数据来源机器人，再选择下方的导入方式。</Note>
-        ) : (
+        {robotId && (
           <>
             <div className="actions">
               <Btn onClick={pullFromRobot}>从机器人拉取数据</Btn>
@@ -185,7 +173,12 @@ function TableUploadPanel({
     ERR("");
     SETFILE(f.name);
     try {
-      RESULT(parsePointCalibration(await f.text()));
+      const isXlsx =
+        /\.xlsx$/i.test(f.name) || f.type.includes("spreadsheetml");
+      const res = isXlsx
+        ? await readCalibrationWorkbook(f)
+        : parsePointCalibration(await f.text());
+      RESULT(res);
     } catch {
       RESULT(null);
       ERR("文件无法读取，请重新选择。");
@@ -195,15 +188,10 @@ function TableUploadPanel({
   const points = result?.points || [];
   return (
     <Panel title="上传表格文件（同批采集的第二件产出）">
-      <Note>
-        支持 CSV / TXT（`定位ID, x, y[, 类型][, 水平角, 俯仰角, 变焦]`，可带表头）与 JSON。
-        导入按<b>定位 ID 合并</b>：同 ID 覆盖坐标（这就是<b>地图重传后的重绑</b>），新 ID 追加为标定点。
-        定位 ID 只是<b>来源绑定键</b>，平台巡检点主键另行生成。
-      </Note>
       <Field label="巡检点标定文件">
         <input
           type="file"
-          accept=".csv,.txt,.json,text/plain,application/json"
+          accept=".csv,.txt,.json,.xlsx,text/plain,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           aria-label="选择巡检点标定文件"
           onChange={(e) => {
             void pick(e.target.files?.[0]);

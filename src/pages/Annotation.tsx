@@ -12,7 +12,8 @@ import { Btn, Badge, Panel, Field, Note, Table, Modal } from "../components/UI";
 import { MapImageCanvas } from "../components/MapImageCanvas";
 import { MapBaseUpload } from "../components/MapBaseUpload";
 import { rulesOf } from "../data/alarmRules";
-import { targetsOf, calibrationVersionOf } from "../data/mapCalibration";
+import { targetsOf } from "../data/mapCalibration";
+import { mapVer } from "../data/versionLabel";
 import {
   deviceOf,
   defaultInspectItemName,
@@ -71,10 +72,8 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
   /** 巡检点来自**独立标定数据**（与地图分开放），地图本身不含任何点位 */
   const targets = targetsOf(s, m.id);
   const first = s.points.find((p) => p.targetId === targets[0]?.id);
-  /** 可标注的设备：必须已通过审核且在用（设备主数据是"巡检什么"的唯一来源） */
-  const usable = (s.devices || []).filter(
-    (d) => d.reviewState === "已通过" && d.state !== "停用",
-  );
+  /** 可标注的设备：必须在用（设备主数据是"巡检什么"的唯一来源） */
+  const usable = (s.devices || []).filter((d) => d.state !== "停用");
   const [target, T] = useState(targets[0]?.id || ""),
     [name, N] = useState(first?.name || ""),
     [device, D] = useState(""),
@@ -189,7 +188,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
           ))}
         </select>
         <span>
-          m{m.version} · 标定 c{calibrationVersionOf(s, m.id)}
+          {mapVer(m.version)}
         </span>
         <Badge>{m.state}</Badge>
         <Btn onClick={() => go("map-detail", m.id)}>地图详情 →</Btn>
@@ -223,7 +222,6 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
           <Btn onClick={() => act({ type: "ADD_TARGET", mapId: m.id })}>
             ＋ 人工新增目标
           </Btn>
-          <p className="muted">也可双击地图补充目标位置。</p>
         </Panel>
         <div className="annotation-scene">
           <Panel title={preview ? "候选目标参考图像" : "点位标注画布"} extra={<div className="actions"><Btn onClick={() => setPreview(!preview)}>{preview ? "查看地图" : "参考图像"}</Btn><Btn disabled={!candidate || uploading} onClick={() => upload.current?.click()}>{uploading ? "上传中…" : candidate?.referenceImage ? "替换参考图像" : "上传参考图像"}</Btn><MapBaseUpload mapId={m.id} /><Btn onClick={() => setRecords(true)}>版本与验证记录</Btn></div>}>
@@ -231,7 +229,6 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
             {uploadError && <p role="alert" className="reference-upload-error">{uploadError}</p>}
             {preview ? <div className="annotation-reference">
               {candidate?.referenceImage ? <><img src={candidate.referenceImage.dataUrl} alt={`${p?.name || candidate.id}的人工参考图像`} /><small>人工上传 · {candidate.referenceImage.name} · {new Date(candidate.referenceImage.uploadedAt).toLocaleString("zh-CN")}</small></> : <div className="empty">暂无参考图像，请选择目标后上传现场照片。</div>}
-              <small>用于辅助确认目标身份，不作为巡检结果。演示图片仅保存在当前浏览器（单张 ≤ 500 KB）。</small>
             </div> : (
             <MapImageCanvas
               image={m.image}
@@ -252,7 +249,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
             <>
               <p>
                 {candidate.kind} · {candidate.id}
-                {p && <> <Badge>{p.state}</Badge> 点位 v{p.version}</>}
+                {p && <> <Badge>{p.state}</Badge></>}
               </p>
 
               <div className="ana-h">① 身份</div>
@@ -286,7 +283,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
               )}
               <div className="actions">
                 <Btn onClick={() => setCreating(true)}>＋ 快速新建设备</Btn>
-                <Btn onClick={() => go("equipment")}>设备主数据（导入 / 审核）</Btn>
+                <Btn onClick={() => go("equipment")}>设备主数据</Btn>
               </div>
 
               <div className="ana-h">② 看什么（可多选，一次停靠覆盖多个目标）</div>
@@ -305,8 +302,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
                       <b>{it.target}</b>
                       <small>
                         {it.kind}
-                        {it.unit ? ` · ${it.unit}` : ""} · {it.cycle}
-                        {it.inspect ? "" : " · 已关闭巡检"}
+                        {it.unit ? ` · ${it.unit}` : ""}
                       </small>
                     </label>
                   ))}
@@ -492,13 +488,12 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
           )}
         </Panel>
       </div>
-      {records && <Modal title="点位版本与验证记录" onClose={() => setRecords(false)}>
+      {records && <Modal title="验证记录" onClose={() => setRecords(false)}>
         <Table
-          heads={["业务点位", "设备 / 检测项", "版本", "状态", "验证证据"]}
+          heads={["业务点位", "设备 / 检测项", "状态", "验证证据"]}
           rows={pts.map((p) => [
             p.name,
             `${p.device} / ${p.item}`,
-            `v${p.version}`,
             <Badge>{p.state}</Badge>,
             p.validated || "待验证",
           ])}
@@ -520,7 +515,6 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
                   const code = nd.id.trim();
                   const ok = act({
                     type: "IMPORT_DEVICES",
-                    approved: true,
                     devices: [
                       {
                         id: code,
@@ -596,9 +590,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
               onChange={(e) => ND({ ...nd, unit: e.target.value })}
             />
           </Field>
-          <Note>
-            人工新增的设备直接生效、不走批量审核，仅用于现场补录；批量维护与审核请到设备主数据页。
-          </Note>
+          <Note>人工新增的设备直接生效，仅用于现场补录。</Note>
         </Modal>
       )}
     </>

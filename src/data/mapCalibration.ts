@@ -11,19 +11,17 @@
 import type { Candidate, PTZ } from "./types";
 
 /**
- * TODO（待开发 · 统一坐标系）：当前标定点坐标是**底图百分比投影（x, y）**，
- *   无 z、无大地坐标系，也没有与大地坐标互转的转换层。
- *   目标口径：所有地图巡检点以**通用 XYZ** 存储（可转大地坐标系），**地图 ID 仅作参考键**。
- *   落地需：① `Candidate` / `ParsedCalibrationPoint` 增加 `z` 与坐标系元数据
- *             （`LOCAL_XYZ` / `WGS84` / `GCJ02` + 原点 / 基准参数）；
- *           ② 新增 `xyzToGeo()` / `geoToXyz()` 纯函数转换层；
- *           ③ 解析时兼容"直接给经纬度"的标定文件格式。
- *   影响面（均依赖底图百分比坐标，改动需联动）：`MapSpatialPreview` / `Annotation` /
- *             `PointEdit` / `engine`（下发与机器人同步）。
+ * 统一坐标系（已部分落地）：`Candidate` / `ParsedCalibrationPoint` 已增加 `world?`（全厂 XYZ 米），
+ *   标定导入（CSV 可选 world 列 / JSON `world`）与现场采集（`CAPTURE_ONSITE_POINT`）均会写入 `world`；
+ *   `PointEdit` 画布优先按 `world` 定位，任务快照 `Snapshot` 已携带 `world` 下发。
+ *   演示环境 `world` 按底图 1:1（z=0）初始化；真实项目由标定文件直接给 XYZ 或机器人位姿换算。
+ * 待补齐（见 docs/统一坐标系实现.md）：① `MapAsset.geoRef` 地理配准 + `geo.ts` 的
+ *   `worldToPixel/pixelToWorld` 纯函数转换层；② 解析兼容"经纬度 / 大地坐标"并互转；
+ *   ③ 底图重标定后 `world` 与百分比的再对齐。
  */
 
 /**
- * 巡检点标定文件：一张地图对应一份，与地图分开放、版本各自独立
+ * 巡检点标定文件：一张地图对应一份，与地图分开放（标定数据不设独立版本）
  * @description 地图重传 / 删除不会连带影响标定数据（关联靠 mapId，非隶属）
  */
 export interface MapCalibration {
@@ -31,8 +29,6 @@ export interface MapCalibration {
   id: string;
   /** 关联地图 id（**仅关联，非隶属**；地图重传后按定位 ID 匹配重绑） */
   mapId: string;
-  /** 标定数据自有版本（c1 起）：标定内容变更时自增，不改变地图空间版本 */
-  version: number;
   /** 标定点（= 地图位置 + 定位ID，无业务信息、无巡检项） */
   targets: Candidate[];
   /** 来源标定文件名（采集时与点云地图同批产出） */
@@ -56,6 +52,8 @@ export interface ParsedCalibrationPoint {
   /** 底图投影坐标（百分比） */
   x: number;
   y: number;
+  /** 统一坐标系坐标（米，可选；标定文件直接给 XYZ 时优先用，否则由 x/y 换算） */
+  world?: { x: number; y: number; z: number };
   /** 采集方式 / 类型（可选） */
   kind?: string;
   /** 上装姿态（水平 / 俯仰 / 变焦，可选） */
@@ -96,10 +94,19 @@ export function parsePointCalibration(text: string): CalibrationParseResult {
         const y = Number(it.y);
         if (!externalId || !Number.isFinite(x) || !Number.isFinite(y)) return;
         const ptz = (it.ptz || {}) as PTZ;
+        const w = (it.world ?? {}) as { x?: unknown; y?: unknown; z?: unknown };
+        const wx = Number(w.x ?? it.wx);
+        const wy = Number(w.y ?? it.wy);
+        const wz = Number(w.z ?? it.wz);
+        const world =
+          Number.isFinite(wx) && Number.isFinite(wy)
+            ? { x: wx, y: wy, z: Number.isFinite(wz) ? wz : 0 }
+            : undefined;
         points.push({
           externalId,
           x,
           y,
+          world,
           kind: it.kind ? String(it.kind) : undefined,
           ptz: Number.isFinite(ptz.pan) ? ptz : undefined,
         });
@@ -127,10 +134,18 @@ export function parsePointCalibration(text: string): CalibrationParseResult {
     const pan = Number(cells[4]);
     const tilt = Number(cells[5]);
     const zoom = Number(cells[6]);
+    const wx = Number(cells[7]);
+    const wy = Number(cells[8]);
+    const wz = Number(cells[9]);
+    const world =
+      Number.isFinite(wx) && Number.isFinite(wy)
+        ? { x: wx, y: wy, z: Number.isFinite(wz) ? wz : 0 }
+        : undefined;
     points.push({
       externalId,
       x,
       y,
+      world,
       kind: cells[3] || undefined,
       ptz:
         Number.isFinite(pan) && Number.isFinite(tilt) && Number.isFinite(zoom)
@@ -178,18 +193,8 @@ export function targetsOf(s: HasCalibrations, mapId: string): Candidate[] {
 }
 
 /**
- * 取某张地图的标定数据版本（c{n}）
- * @param s 状态
- * @param mapId 地图 id
- * @returns 标定版本号；未标定时为 0
- */
-export function calibrationVersionOf(s: HasCalibrations, mapId: string): number {
-  return calibrationOf(s, mapId)?.version || 0;
-}
-
-/**
  * 取得（不存在则创建）某张地图的标定文件
- * @description 供 engine 在写入巡检点时调用；新建时版本从 1 起算
+ * @description 供 engine 在写入巡检点时调用
  * @param s 可变状态
  * @param mapId 地图 id
  * @returns 该地图的标定文件（**可变引用**）
@@ -204,7 +209,6 @@ export function ensureCalibration(
     cal = {
       id: `CAL-${mapId}`,
       mapId,
-      version: 1,
       targets: [],
       updatedAt: new Date().toLocaleString("zh-CN"),
     };
@@ -249,6 +253,7 @@ export function mergeCalibrationPoints(
     if (existed) {
       existed.x = p.x;
       existed.y = p.y;
+      if (p.world) existed.world = p.world;
       if (p.kind) existed.kind = p.kind;
       if (p.ptz) existed.recommended = { ...(existed.recommended || {}), ptz: p.ptz };
       rebound++;
@@ -261,6 +266,8 @@ export function mergeCalibrationPoints(
       kind: p.kind || "可见光",
       x: p.x,
       y: p.y,
+      // 统一坐标系：优先用标定文件给的 world，否则按演示口径由底图坐标 1:1 初始化（z=0）
+      world: p.world || { x: p.x, y: p.y, z: 0 },
       state: "待确认",
       recommended: p.ptz ? { ptz: p.ptz } : undefined,
     });

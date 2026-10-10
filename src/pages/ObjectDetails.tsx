@@ -3,7 +3,6 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { ObjectLink, Pager } from "../components/Business";
 import { ReplayDetail } from "../components/ReplayDetail";
-import { ResultReviewDrawer } from "../components/ResultReviewDrawer";
 import { ResultView } from "../components/ResultView";
 import { Panel, Table, Badge, Btn, Note } from "../components/UI";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
@@ -22,8 +21,8 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
   const [replayFrom, setReplayFrom] = useState("");
   const [replayTo, setReplayTo] = useState("");
   const [replayPage, setReplayPage] = useState(1);
-  /** REV-02：人工复核抽屉（复核不再单独成页，就地打开） */
-  const [reviewId, SETREVIEW] = useState<string | null>(null);
+  /** 单条结果关联的告警事件：异常即告警（按结果 ID 精确匹配） */
+  const alarmOf = (rid: string) => s.alarms.find((a) => a.resultId === rid);
   if (page === "point") {
     const p = s.points.find((p) => p.id === id);
     if (!p) return <Note>请选择具体巡检点。</Note>;
@@ -48,9 +47,6 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
               <i>巡检项</i>
               {p.inspectItems?.length || 1} 项
             </span>
-            <span>
-              <i>点位版本</i>v{p.version}
-            </span>
           </span>
           <div className="actions os-actions">
             <Btn onClick={() => go("point-edit", p.id)}>编辑巡检点</Btn>
@@ -63,7 +59,7 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
         >
           {results.length ? (
             <Table
-              heads={["任务", "时间", "结果", "判定", "操作"]}
+              heads={["任务", "时间", "结果", "判定", "关联告警"]}
               rows={results.slice(0, 10).map((r) => [
                 <ObjectLink
                   type="replay"
@@ -74,24 +70,22 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
                 r.time,
                 r.final + r.unit,
                 <Badge>{judgeOf(r)}</Badge>,
-                <Btn
-                  title="打开人工复核抽屉（证据链路 + 判定与依据）"
-                  onClick={() => SETREVIEW(r.id)}
-                >
-                  {r.abnormal || r.status === "待复核" ? "复核" : "查看"}
-                </Btn>,
+                (() => {
+                  const al = alarmOf(r.id);
+                  return al ? (
+                    <ObjectLink type="alarm" to="alarm" id={al.id}>
+                      {al.id}
+                    </ObjectLink>
+                  ) : (
+                    <span className="muted">无</span>
+                  );
+                })(),
               ])}
             />
           ) : (
             <Note>该巡检点还没有检测结果。</Note>
           )}
         </Panel>
-        {reviewId && (
-          <ResultReviewDrawer
-            id={reviewId}
-            onClose={() => SETREVIEW(null)}
-          />
-        )}
       </>
     );
   }

@@ -2,9 +2,10 @@
  * @file TaskPeekDrawer.tsx
  * @description 调度中心的「任务详情」抽屉：就地展示调度决策所需的最小信息集（来源/优先级/点位快照/排队位置/阻塞原因），
  *              不打断调度上下文；需要派单历史与结果下钻时再跳「完整任务详情」内置页
- * @interaction DispatchDesk.tsx（待执行队列与待安排的「详情」按钮、未来时间轴点击块）
+ * @interaction DispatchDesk.tsx（待执行队列与待安排的「详情」按钮、队列顺序条点击块）
  */
 import { useStore } from "../data/store";
+import { mapVer } from "../data/versionLabel";
 import { go } from "../data/navigation";
 import { Btn, Badge, Table, Modal } from "./UI";
 import { queueFor, stageOf, fmtTime } from "../data/selectors";
@@ -42,18 +43,17 @@ export function TaskPeekDrawer({
   const itemState = (id: string) =>
     t.done.includes(id) ? "已完成" : t.skipped.includes(id) ? "已跳过" : "待执行";
   return (
-    <Modal title={`任务详情 · ${t.id}`} drawer onClose={onClose}>
+    <Modal title={`任务详情 · ${t.id}`} wide onClose={onClose}>
         <div className="peek-head">
           <b>{t.name}</b>
           <Badge>{t.state}</Badge>
-          <Badge>{t.priority}</Badge>
         </div>
         <dl className="peek-facts">
           <dt>来源</dt>
           <dd>
             {t.source}
             {/* 计划版本仅在任务由计划生成时追加，避免与来源文案冲突 */}
-            {t.planId ? ` · ${t.planId} v${t.planVersion ?? "—"}` : ""}
+            {t.planId ? ` · ${t.planId} 第 ${t.planVersion ?? "—"} 版` : ""}
           </dd>
           <dt>任务类型</dt>
           <dd>
@@ -75,7 +75,7 @@ export function TaskPeekDrawer({
           </dd>
           <dt>地图版本</dt>
           <dd>
-            m{t.mapVersion} / c{t.calibrationVersion}
+            {mapVer(t.mapVersion)}
           </dd>
           <dt>阻塞 / 校验</dt>
           <dd>

@@ -185,13 +185,7 @@ export function EventTimeline({
   );
 }
 
-const ABNORMAL_ACTIONS = [
-  "FAIL",
-  "STOP",
-  "SKIP",
-  "ALARM_ACK",
-  "EMERGENCY_STOP",
-];
+const ABNORMAL_ACTIONS = ["FAIL", "STOP", "SKIP", "EMERGENCY_STOP"];
 
 function TimelineRow({ l }: { l: import("../data/types").Log }) {
   const [zoom, setZoom] = useState(false);

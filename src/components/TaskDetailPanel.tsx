@@ -1,19 +1,15 @@
 /**
  * @file TaskDetailPanel.tsx
- * @description 任务详情内容：概要头（主操作随状态切换）+ 任务摘要 / 任务控制与版本约束 + 派单历史 +
+ * @description 任务详情内容：概要头（主操作随状态切换）+ 任务摘要 + 派单历史 +
  *              「点位 + 动作序列」快照与结果
  * @interaction ObjectDetails.tsx（「任务详情」内置页）、Planning.tsx（任务列表「详情」抽屉）——两处共用同一实现，避免口径漂移
  */
 import { useStore } from "../data/store";
+import { mapVer } from "../data/versionLabel";
 import { go } from "../data/navigation";
 import { Badge, Btn, Panel, Table, Note } from "./UI";
 import { ObjectLink } from "./Business";
-import {
-  stageOf,
-  fmtTime,
-  queueFor,
-  terminal,
-} from "../data/selectors";
+import { stageOf, fmtTime, queueFor } from "../data/selectors";
 import { archiveIdOf } from "../data/deviceMaster";
 import type { PointActionPlan, Snapshot, Task } from "../data/types";
 
@@ -129,14 +125,14 @@ export function TaskDetailPanel({
           </strong>
           <Badge>{t.state}</Badge>
         </div>
-        {/* 元信息带标签：裸编码（R01、m3 / p7）业务人员看不懂，需标注含义 */}
+        {/* 元信息带标签：裸编码（R01、V3 / c7）业务人员看不懂，需标注含义 */}
         <span className="os-meta">
           <span>
             <i>机器人</i>
             <ObjectLink type="robot" id={t.robotId} />
           </span>
           <span>
-            <i>版本</i>m{t.mapVersion} / c{t.calibrationVersion}
+            <i>版本</i>{mapVer(t.mapVersion)}
           </span>
           <span>
             <i>当前阶段</i>
@@ -167,7 +163,7 @@ export function TaskDetailPanel({
             </dd>
             <dt>计划版本</dt>
             <dd>
-              {t.planId || "临时任务"} / v{t.planVersion || "—"}
+              {t.planId || "临时任务"} / 第 {t.planVersion || "—"} 版
             </dd>
             <dt>调度编号</dt>
             <dd>{t.dispatchId || "尚未下发"}</dd>
@@ -177,8 +173,6 @@ export function TaskDetailPanel({
             <dd>{fmtTime(t.startedAt)}</dd>
             <dt>结束时间</dt>
             <dd>{fmtTime(t.finishedAt)}</dd>
-            <dt>优先级</dt>
-            <dd>{t.priority}</dd>
             <dt>业务完成</dt>
             <dd>
               {t.done.length} / {t.items.length} 有效检测项，失败{" "}
@@ -189,20 +183,6 @@ export function TaskDetailPanel({
               <ObjectLink type="alarm" id={t.alarmId} />
             </dd>
           </dl>
-        </Panel>
-        <Panel title="任务控制与版本约束">
-          <Note>
-            任务引用创建时的业务快照，地图或点位维护不会回写历史要求。机器人任务结束回报后，平台仍按有效检测项判定完整性。
-          </Note>
-          {terminal.includes(t.state) && (
-            <Btn
-              onClick={() =>
-                jump("replay-detail", t.id, { page: "tasks", id: t.id })
-              }
-            >
-              执行回溯与接管记录
-            </Btn>
-          )}
         </Panel>
       </div>
       {/* 派单历史：就地展示该任务的选择内容与下发情况，随任务状态改变 */}
@@ -238,8 +218,6 @@ export function TaskDetailPanel({
                   <dd>{fmtTime(t.finishedAt)}</dd>
                 </>
               )}
-              <dt>优先级</dt>
-              <dd>{t.priority}</dd>
               <dt>派单来源</dt>
               <dd>{t.source}</dd>
             </dl>
@@ -271,7 +249,7 @@ export function TaskDetailPanel({
               {p.actions?.join(" / ") || "按检测项执行"}
               <small>{viewSummary(p)}</small>
             </>,
-            `m${p.mapVersion} / 点位 v${p.version}`,
+            `${mapVer(p.mapVersion)}`,
             s.results
               .filter((r) => r.taskId === t.id && r.pointId === p.id)
               .map((r) => (

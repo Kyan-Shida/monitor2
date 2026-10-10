@@ -2,14 +2,8 @@ import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import { stages } from "../data/types";
-import {
-  stageOf,
-  terminal,
-  minutesLeft,
-  timeAt,
-  judgeOf,
-} from "../data/selectors";
+import { stages, type Robot, type Task } from "../data/types";
+import { stageOf, terminal, judgeOf } from "../data/selectors";
 import {
   Btn,
   Badge,
@@ -23,23 +17,44 @@ import {
 import { ObjectLink, Kpis, EventTimeline } from "../components/Business";
 import { MapCanvas } from "../components/MapCanvas";
 import { Video } from "../components/Video";
+/**
+ * 任务是否属于「今日排期」
+ * @description 以计划时间（notBefore）判定；临时任务没有计划时间则取生成时间。
+ *              时间不可解析时按今日处理，避免整条任务被静默吞掉
+ * @param t 任务
+ * @returns 计划 / 生成时间是否落在当天
+ */
+function isToday(t: Task): boolean {
+  const ts = Date.parse(t.notBefore || t.created);
+  if (Number.isNaN(ts)) return true;
+  const d = new Date(ts);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export function Execution() {
   const { s } = useStore();
   /**
    * EXE-02（P0-阻断）：执行监控首页为「任务维度总览」——以任务为中心（不再先选机器人），
-   * 异常项优先置顶；点「监控」进入**内置页**（`execution-monitor`）看单任务现场态势。
+   * 异常项优先置顶；每一行都给「监控」入口（含未运行任务：进入后展示机器人实时地图/视频/状态），
+   * 行内查看任务详情由「当前任务」列的对象链接承担。
    */
-  const ACTIVE = ["待调度", "已分配", "下发中", "待执行", "执行中", "已被接管", "暂停"];
   const overview = s.tasks
-    .filter((t) => !terminal.includes(t.state))
+    // EXE-02：只显示今日排期任务（计划时间缺省取生成时间），明天/后天的排期不进执行总览
+    .filter((t) => !terminal.includes(t.state) && isToday(t))
     .map((t) => {
       const res = s.results.filter((r) => r.taskId === t.id);
       return {
         t,
         robot: s.robots.find((x) => x.id === t.robotId),
         abn: res.filter((r) => r.abnormal).length,
-        pend: res.filter((r) => r.status === "待复核").length,
-        done: res.filter((r) => r.status !== "待复核").length,
+        /** 未处理告警：异常即告警，与告警事件页同源 */
+        pend: s.alarms.filter((a) => a.taskId === t.id && !a.handledAt).length,
+        done: res.length,
       };
     })
     .sort((a, b) => {
@@ -57,12 +72,12 @@ export function Execution() {
   return (
     <Panel
       title={`执行总览 · 任务维度（${overview.length}）`}
-      extra={<span className="muted">异常优先 · 点「监控」进入单任务现场态势</span>}
+      extra={<></>}
     >
       {overview.length ? (
         <Table
-          heads={["机器人", "当前任务", "状态", "检测 / 异常 / 待复核", "操作"]}
-          rows={overview.map(({ t, robot: rb, abn, pend, done }) => [
+          heads={["机器人", "当前任务", "状态", "操作"]}
+          rows={overview.map(({ t, robot: rb }) => [
             rb ? (
               <ObjectLink type="robot" id={rb.id}>
                 {rb.name}
@@ -74,18 +89,9 @@ export function Execution() {
               {t.name}
             </ObjectLink>,
             <Badge>{t.state}</Badge>,
-            <span className={abn ? "rd-bad" : undefined}>
-              {done} / {abn} / {pend}
-            </span>,
-            ACTIVE.includes(t.state) ? (
-              <Btn primary onClick={() => go("execution-monitor", t.id)}>
-                监控
-              </Btn>
-            ) : (
-              <ObjectLink type="task-detail" id={t.id}>
-                查看
-              </ObjectLink>
-            ),
+            <Btn primary onClick={() => go("execution-monitor", t.id)}>
+              监控
+            </Btn>,
           ])}
         />
       ) : (
@@ -120,49 +126,84 @@ export function ExecutionMonitor({ id }: { id?: string }) {
     liveTasks[0];
   return (
     <>
-      <div className="live-robot-selector">
-        <label>
-          <span>单机视角 · 监控机器人</span>
-          <select
-            aria-label="监控机器人"
-            value={robotId}
-            onChange={(event) => setRobotId(event.target.value)}
-          >
-            {s.robots.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name} · {item.id} · {item.state}
-              </option>
-            ))}
-          </select>
-        </label>
-        {robot && (
-          <>
-            <Badge>{robot.state}</Badge>
-            <span>
-              {robot.region} · 电量 {robot.battery}%
-            </span>
-            <ObjectLink type="robot" id={robot.id}>
-              机器人详情
-            </ObjectLink>
-            {/* EXE-03：人工接管与遥控已降为内置页，从现场态势进入 */}
-            <Btn onClick={() => go("manual", robot.id)}>人工操作与遥控</Btn>
-          </>
-        )}
-      </div>
       {task ? (
         <LiveTaskMonitor key={task.id} id={task.id} />
       ) : (
-        <Panel title="当前任务">
-          <div className="live-idle-state">
-            <b>暂无执行任务</b>
-            <p>
-              {robot
-                ? `${robot.name}当前没有执行中或暂停的任务。`
-                : "暂无可监控的机器人。"}
-            </p>
-            <p className="muted">
-              任务开始执行后将自动显示该机器人的地图、视频与检测项进度。
-            </p>
+        <RobotIdleMonitor robot={robot} task={linkedTask} />
+      )}
+    </>
+  );
+}
+/**
+ * 机器人实时状况：即使没有正在执行的任务，也展示机器人地图、现场视频与状态，
+ * 满足「点击任务即可查看实时状况（未运行也可监控）」。
+ */
+function RobotIdleMonitor({ robot, task }: { robot?: Robot; task?: Task }) {
+  return (
+    <Panel title="机器人实时状况">
+      {task && (
+        <div className="execution-summary">
+          <div className="execution-summary-primary">
+            <Badge>{task.state}</Badge>
+            <ObjectLink type="robot" id={robot?.id}>
+              {robot?.name || "未分配机器人"}
+            </ObjectLink>
+            <ObjectLink type="task-detail" id={task.id}>
+              {task.name}（任务详情）
+            </ObjectLink>
+          </div>
+        </div>
+      )}
+      <div className="live-workspace">
+        <section className="live-scene">
+          <div className="live-scene-tabs">
+            <b>现场态势</b>
+          </div>
+          <div className="live-visual live-dual-view">
+            <Panel title="巡检地图 · 当前业务点位">
+              <MapCanvas
+                points={[]}
+                robots={robot ? [robot] : []}
+                onRobot={(id) => go("robot", id)}
+              />
+            </Panel>
+            <Panel title="现场视频 · 机器人自主观测">
+              <Video robotId={robot?.id} />
+              {!task && robot && (
+                <p className="muted">
+                  {robot.name}
+                  当前没有执行中或暂停的任务，可实时查看其地图与现场视频。
+                </p>
+              )}
+            </Panel>
+          </div>
+        </section>
+        <aside className="live-control-column">
+          <Panel
+            title="机器人状态"
+            extra={robot ? <Badge>{robot.state}</Badge> : undefined}
+          >
+            {robot ? (
+              <div className="execution-facts">
+                <span>
+                  <small>所属区域</small>
+                  {robot.region}
+                </span>
+                <span>
+                  <small>电量</small>
+                  {robot.battery}%
+                </span>
+                <span>
+                  <small>机型</small>
+                  {robot.deviceType}
+                </span>
+                <span>
+                  <small>地图版本</small>V{robot.mapVersion}
+                </span>
+              </div>
+            ) : (
+              <p className="muted">暂无可监控的机器人。</p>
+            )}
             <div className="actions">
               <Btn primary onClick={() => go("dispatch")}>
                 前往调度中心
@@ -173,10 +214,10 @@ export function ExecutionMonitor({ id }: { id?: string }) {
                 </Btn>
               )}
             </div>
-          </div>
-        </Panel>
-      )}
-    </>
+          </Panel>
+        </aside>
+      </div>
+    </Panel>
   );
 }
 function LiveTaskMonitor({ id }: { id: string }) {
@@ -221,14 +262,13 @@ function LiveTaskMonitor({ id }: { id: string }) {
         </div>
         <div className="execution-summary-meta">
           <span>
-            <small>执行窗口</small>
+            <small>开始时间</small>
             {t.startedAt
               ? new Date(t.startedAt).toLocaleTimeString()
               : t.created}
-            <i>→</i> {timeAt(minutesLeft(t))}
           </span>
           <span>
-            <small>版本</small>m{t.mapVersion} / c{t.calibrationVersion}
+            <small>版本</small>V{t.mapVersion}
           </span>
           <span>
             <small>任务类型</small>
@@ -243,7 +283,7 @@ function LiveTaskMonitor({ id }: { id: string }) {
       {!liveStates.includes(t.state) && <Note>当前没有执行中或暂停的任务。<Btn onClick={() => go("dispatch")}>前往调度中心</Btn></Note>}
       <div className="live-workspace">
         <section className="live-scene">
-          <div className="live-scene-tabs"><b>现场态势</b><span>当前点位：{p?.name || "无"}</span></div>
+          <div className="live-scene-tabs"><b>现场态势</b></div>
           <div className="live-visual live-dual-view">
         <Panel title="巡检地图 · 当前业务点位">
           <MapCanvas
@@ -267,21 +307,6 @@ function LiveTaskMonitor({ id }: { id: string }) {
             }
             onRobot={(id) => go("robot", id)}
           />
-          <div className="map-legend">
-            ● 待执行　● 蓝色当前目标　● 绿色完成　● 红色异常 / 失败
-          </div>
-          <p>
-            当前目标{" "}
-            <ObjectLink type="point" id={p?.id}>
-              {p?.name}
-            </ObjectLink>
-          </p>
-          <p>
-            设备{" "}
-            <ObjectLink type="archive" id={p?.device.split(" ")[0]}>
-              {p?.device}
-            </ObjectLink>
-          </p>
         </Panel>
         <Panel title="现场视频 · 机器人自主观测">
           <Video label={p?.name} robotId={r?.id} />
@@ -296,9 +321,6 @@ function LiveTaskMonitor({ id }: { id: string }) {
               采集要求 <b>{p?.requirement || "完成当前检测项"}</b>
             </span>
           </div>
-          <Note>
-            机器人自主寻找目标、调整观测位置并完成采集；此处展示阶段回报和业务结果。
-          </Note>
         </Panel>
           </div>
         <Panel title="实时结果">
@@ -374,7 +396,7 @@ function LiveTaskMonitor({ id }: { id: string }) {
           <Panel title="任务进度与控制" extra={<Badge>{t.state}</Badge>}>
             <div className="live-progress"><b>{stageOf(t)}</b><span>已完成 {t.done.length} / {t.items.length} 个检测项</span></div>
             <progress aria-label="任务完成进度" value={t.done.length} max={Math.max(1,t.items.length)} />
-            <div className="live-counts"><span>待复核 <b>{results.filter(x => x.status === "待复核").length}</b></span><span>异常 <b>{results.filter(x => x.abnormal).length}</b></span><span>失败 / 跳过 <b>{t.skipped.length}</b></span></div>
+            <div className="live-counts"><span>未处理告警 <b>{s.alarms.filter(a => a.taskId === t.id && !a.handledAt).length}</b></span><span>异常 <b>{results.filter(x => x.abnormal).length}</b></span><span>失败 / 跳过 <b>{t.skipped.length}</b></span></div>
       <div className="live-task-controls">
 
         <Btn primary onClick={() => setQuickOpen(true)}>

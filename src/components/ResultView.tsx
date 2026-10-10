@@ -2,31 +2,35 @@ import { TakeoverOutcome } from "./TakeoverOutcome";
 /**
  * @file ResultView.tsx
  * @description 「巡检结果详情」内置页：顶部任务概要 + 检测项明细（按巡检点分组、
- *              任务 → 巡检点 → 巡检项 三级可折叠）+ 执行记录 + 复核记录；
- *              复核入口与复核数据留在本页，点行内「复核」就地打开人工复核抽屉。
- * @interaction 由 pages/ObjectDetails.tsx 的 result-view 分支渲染；复核在 components/ResultReviewDrawer.tsx 抽屉内提交
+ *              任务 → 巡检点 → 巡检项 三级可折叠）+ 执行记录；纯展示页，无复核动作，
+ *              异常即告警：异常检测项直接给出关联告警事件入口。
+ * @interaction 由 pages/ObjectDetails.tsx 的 result-view 分支渲染；告警处置在 pages/Results.tsx 的告警页
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import { fmtTime, isAbnormal, judgeOf } from "../data/selectors";
+import {
+  fmtTime,
+  hasAlarm,
+  aiStateOf,
+  riskReasonOf,
+  readingOf,
+  isAbnormal,
+  judgeOf,
+} from "../data/selectors";
 import { Badge, Btn, Modal, Note, Panel, Table } from "./UI";
-import { ResultReviewDrawer } from "./ResultReviewDrawer";
+import { ObjectLink } from "./Business";
 import { analyzedPhoto, costOf, rawPhoto } from "../data/evidence";
-import type { Result, Task } from "../data/types";
+import type { Alarm, Result, Task } from "../data/types";
 
 export function ResultView({ task }: { task: Task }) {
   const { s } = useStore();
-  /** 分页：表计识别 / 执行记录 / 复核记录 */
-  const [tab, SETTAB] = useState<"检测项" | "执行记录" | "复核记录">(
-    "检测项",
-  );
+  /** 分页：检测项明细 / 执行记录 */
+  const [tab, SETTAB] = useState<"检测项" | "执行记录">("检测项");
   /** 导出为演示占位提示 */
   const [exportKind, SETEXPORT] = useState<"EXCEL" | "PDF" | null>(null);
   /** RES-03：巡检点分组折叠状态（默认全部展开） */
   const [collapsed, SETCOL] = useState<Set<string>>(() => new Set());
-  /** REV-02：人工复核抽屉（就地打开，不再跳「结果详情 / 复核」内置页） */
-  const [reviewId, SETREVIEW] = useState<string | null>(null);
   const togglePoint = (pid: string) =>
     SETCOL((old) => {
       const n = new Set(old);
@@ -38,37 +42,25 @@ export function ResultView({ task }: { task: Task }) {
   const map = s.maps.find((m) => m.id === task.mapId);
   const list = s.results.filter((r) => r.taskId === task.id);
   const pointOf = (pid: string) => s.points.find((p) => p.id === pid);
-  /** 待复核结果数 */
-  const pendings = list.filter((r) => r.status === "待复核");
-  /** 巡检点异常数：存在"已判定异常"结果（待复核不计）的点位个数 */
-  const abnPoints = new Set(
-    list.filter(isAbnormal).map((r) => r.pointId),
-  ).size;
-  const abnItems = list.filter(isAbnormal).length;
-  /** 识别结果文案：未判定 / 异常 / 温度读数 / 场景正常 */
-  const resultText = (r: Result) =>
-    r.status === "待复核"
-      ? "待复核，尚未确认有效结论"
-      : r.abnormal
-        ? `${r.item}异常：${r.final} ${r.unit}（超出阈值）`
-        : r.item.includes("温度")
-          ? `最高温度: ${r.final}${r.unit}`
-          : "场景正常";
+  /**
+   * 检测项对应的告警事件：异常即告警，按结果 ID 精确匹配（不做"按点位猜告警"的模糊回退）
+   * @param r 检测结果
+   * @returns 关联告警；正常检测项返回 undefined
+   */
+  const alarmOf = (r: Result) => s.alarms.find((a) => a.resultId === r.id);
+  // 只有 AI 状态异常 / 风险信息异常的检测项才有告警：正常项即使残留关联也不展示告警
+  const alarms = list.filter(hasAlarm).map(alarmOf).filter(Boolean);
+  /** 告警涉及的巡检点个数（异常即告警，口径与告警事件列表一致） */
+  const alarmPoints = new Set(alarms.map((a) => a!.pointId)).size;
+  /** 识别结果 = 机器读取到的数据；风险信息 = 正常 / 异常（原因），两者分列展示 */
+  const alarmOfRow = (r: Result) => (hasAlarm(r) ? alarmOf(r) : undefined);
   // 展示已有任务事件，不按结果行数生成预置位或控制回执。
   const camRows = s.logs.filter(log => log.object === task.id).map(log => ({
     time: log.time, point: task.id, action: `${log.action} · ${log.detail}`,
   }));
-  /** 最近一次复核记录 */
-  const lastReview = (r: Result) => r.reviews[r.reviews.length - 1];
-  /**
-   * 打开人工复核抽屉：复核表单与复核历史都在抽屉内，本页上下文不丢失
-   * @param r 目标结果
-   * @returns 结果不存在时不打开
-   */
-  const openReview = (r: Result) => r && SETREVIEW(r.id);
   /**
    * RES-03：将检测结果按「巡检点」分组，形成 任务 → 巡检点（可折叠）→ 巡检项 三级层级；
-   * 异常巡检点优先置顶，便于一眼看出哪个巡检点有问题。
+   * 有告警的巡检点优先置顶，便于一眼看出哪个巡检点有问题。
    */
   const pointGroups = (() => {
     const order = task.items.map((it) => it.id);
@@ -84,13 +76,18 @@ export function ResultView({ task }: { task: Task }) {
         name: p?.name || pid,
         device: p?.device || "—",
         rs,
-        abn: rs.filter(isAbnormal).length,
+        /** 该巡检点下的告警事件（异常即告警：AI 状态异常 / 风险信息异常才有） */
+        alarms: rs
+          .filter(hasAlarm)
+          .map(alarmOf)
+          .filter(Boolean) as Alarm[],
         order: order.indexOf(pid),
       };
     });
     arr.sort(
       (a, b) =>
-        (b.abn > 0 ? 1 : 0) - (a.abn > 0 ? 1 : 0) || a.order - b.order,
+        (b.alarms.length > 0 ? 1 : 0) - (a.alarms.length > 0 ? 1 : 0) ||
+        a.order - b.order,
     );
     return arr;
   })();
@@ -99,9 +96,6 @@ export function ResultView({ task }: { task: Task }) {
     <div className="rd">
       {/* RES：原底部动作栏上移 —— 顶部操作条（说明在左 / 任务回溯·导出在右）；返回仍用页面顶部返回 */}
       <div className="rd-top">
-        <small className="rd-hint">
-          演示环境：图像为离线生成的示意画面；导出按钮为占位提示，不生成真实文件。
-        </small>
         <div className="rd-actions">
           <Btn
             onClick={() =>
@@ -113,7 +107,6 @@ export function ResultView({ task }: { task: Task }) {
           >
             任务回溯
           </Btn>
-          <Btn onClick={() => SETEXPORT("EXCEL")}>导出为 EXCEL</Btn>
           <Btn primary onClick={() => SETEXPORT("PDF")}>
             导出为 PDF
           </Btn>
@@ -146,14 +139,14 @@ export function ResultView({ task }: { task: Task }) {
         </span>
         <span>
           巡检点
-          <b className={abnPoints ? "rd-bad" : undefined}>
-            {task.items.length} 个{abnPoints ? ` · 异常 ${abnPoints}` : ""}
+          <b className={alarmPoints ? "rd-bad" : undefined}>
+            {task.items.length} 个{alarmPoints ? ` · 告警 ${alarmPoints}` : ""}
           </b>
         </span>
         <span>
           巡检项
-          <b className={abnItems ? "rd-bad" : undefined}>
-            {list.length} 项{abnItems ? ` · 异常 ${abnItems}` : ""}
+          <b className={alarms.length ? "rd-bad" : undefined}>
+            {list.length} 项{alarms.length ? ` · 告警 ${alarms.length}` : ""}
           </b>
         </span>
         <span>
@@ -171,32 +164,12 @@ export function ResultView({ task }: { task: Task }) {
           </span>
         )}
       </div>
-      {/* RES-04：地图版本仅作调试参考，移出主信息区，放进可折叠诊断信息 */}
-      <details className="rd-diag">
-        <summary>诊断信息（调试参考）</summary>
-        <div className="rd-grid">
-          <span>
-            地图版本 / 点集
-            <b>
-              m{task.mapVersion} / p{task.calibrationVersion}
-            </b>
-          </span>
-          <span>
-            版本快照
-            <b>
-              v{task.items[0]?.version ?? "—"}
-            </b>
-          </span>
-        </div>
-      </details>
-
       <h4 className="rd-h">巡检结果明细（任务 → 巡检点 → 巡检项）</h4>
       <div className="rv-tabs">
         {(
           [
             ["检测项", `检测项明细（${list.length}）`],
             ["执行记录", "执行记录"],
-            ["复核记录", `复核记录（待复核 ${pendings.length}）`],
           ] as const
         ).map(([k, label]) => (
           <button
@@ -218,7 +191,7 @@ export function ResultView({ task }: { task: Task }) {
             {pointGroups.map((pg) => (
               <section className="rd-point" key={pg.id}>
                 <header
-                  className={"rd-point-head" + (pg.abn ? " bad" : "")}
+                  className={"rd-point-head" + (pg.alarms.length ? " bad" : "")}
                   onClick={() => togglePoint(pg.id)}
                 >
                   <span className="rd-point-caret">
@@ -226,9 +199,6 @@ export function ResultView({ task }: { task: Task }) {
                   </span>
                   <b>{pg.name}</b>
                   <Badge>{pg.rs.length} 项</Badge>
-                  {pg.abn > 0 && (
-                    <span className="rd-point-bad">异常 {pg.abn} 项</span>
-                  )}
                   <small className="rd-point-target">关联：{pg.device}</small>
                 </header>
                 {!collapsed.has(pg.id) && (
@@ -243,9 +213,9 @@ export function ResultView({ task }: { task: Task }) {
                             "识别结果",
                             "识别耗时",
                             "AI 状态",
-                            "复核状态",
-                            "时间",
-                            "操作",
+                            "风险信息",
+                            "关联告警",
+                            "采集时间",
                           ].map((h) => (
                             <th key={h}>{h}</th>
                           ))}
@@ -276,31 +246,42 @@ export function ResultView({ task }: { task: Task }) {
                                   alt={`${name} 识别分析后图像`}
                                 />
                               </td>
-                              <td className="rd-result">{resultText(r)}</td>
+                              {/* 识别结果 = 机器读取到的数据（不做判定表述） */}
+                              <td className="rd-result">{readingOf(r)}</td>
                               <td>{costOf(r.id)}s</td>
                               <td>
                                 <span
                                   className={
-                                    "rd-ai" + (isAbnormal(r) ? " bad" : "")
+                                    "rd-ai" + (r.aiAbnormal ? " bad" : "")
                                   }
                                 >
-                                  {judgeOf(r)}
+                                  {aiStateOf(r)}
+                                </span>
+                              </td>
+                              {/* 风险信息 = 正常 / 异常（原因） */}
+                              <td>
+                                <span
+                                  className={
+                                    "rd-risk" + (r.abnormal ? " bad" : "")
+                                  }
+                                >
+                                  {riskReasonOf(r)}
                                 </span>
                               </td>
                               <td>
-                                <Badge>{r.status}</Badge>
+                                {/* 异常即告警：只有 AI 状态异常 / 风险信息异常的检测项才有告警 */}
+                                {(() => {
+                                  const al = alarmOfRow(r);
+                                  return al ? (
+                                    <ObjectLink type="alarm" to="alarm" id={al.id}>
+                                      {al.id}
+                                    </ObjectLink>
+                                  ) : (
+                                    <span className="muted">无</span>
+                                  );
+                                })()}
                               </td>
                               <td className="rd-time">{r.time}</td>
-                              <td>
-                                {/* 复核：就地打开右侧抽屉（证据链路 + 判定与依据） */}
-                                <Btn
-                                  primary={r.status === "待复核"}
-                                  title="打开人工复核抽屉（证据链路 + 判定与依据）"
-                                  onClick={() => openReview(r)}
-                                >
-                                  复核
-                                </Btn>
-                              </td>
                             </tr>
                           );
                         })}
@@ -337,59 +318,13 @@ export function ResultView({ task }: { task: Task }) {
             </tbody>
           </table>
         </div>
-      ) : (
-        /* 复核记录：本任务逐项复核状态与最近结论；点「复核」就地打开抽屉 */
-        <Panel
-          title="复核记录"
-          extra={
-            <Btn
-              primary
-              disabled={!pendings.length}
-              onClick={() => openReview(pendings[0])}
-            >
-              复核待处理项
-            </Btn>
-          }
-        >
-          <Note>
-            点行内「复核」就地打开右侧抽屉完成判定与依据填写，复核历史同步写回本表；本页只做汇总与入口。
-          </Note>
-          <Table
-            heads={[
-              "结果",
-              "巡检点 / 检测项",
-              "识别 → 最终值",
-              "AI 判断",
-              "复核状态",
-              "最近复核（时间 / 结论 / 依据）",
-              "操作",
-            ]}
-            rows={list.map((r) => {
-              const lr = lastReview(r);
-              return [
-                r.id,
-                <>
-                  {pointOf(r.pointId)?.name}
-                  <small>{r.item}</small>
-                </>,
-                `${r.recognized} → ${r.final} ${r.unit}`,
-                <Badge>{judgeOf(r)}</Badge>,
-                <Badge>{r.status}</Badge>,
-                lr
-                  ? `${lr.time} / ${lr.conclusion || "确认"} / ${lr.reason}`
-                  : "—",
-                <Btn onClick={() => openReview(r)}>复核</Btn>,
-              ];
-            })}
-          />
-        </Panel>
-      )}
+      ) : null}
 
       {exportKind && (
         <Modal title={`导出为 ${exportKind}`} onClose={() => SETEXPORT(null)}>
           <Note>
             演示环境暂不生成真实文件。生产环境将按该任务导出「巡检结果详情」（
-            {exportKind}），含任务概要、逐巡检点检测项、原始采集图像、AI 识别后图像与复核结论。
+            {exportKind}），含任务概要、逐巡检点检测项、原始采集图像、AI 识别后图像与关联告警。
           </Note>
           <div className="actions">
             <Btn primary onClick={() => SETEXPORT(null)}>
@@ -397,10 +332,6 @@ export function ResultView({ task }: { task: Task }) {
             </Btn>
           </div>
         </Modal>
-      )}
-      {/* REV-02：人工复核抽屉 —— 行内「复核」/「复核待处理项」就地打开，本页上下文不丢失 */}
-      {reviewId && (
-        <ResultReviewDrawer id={reviewId} onClose={() => SETREVIEW(null)} />
       )}
     </div>
   );

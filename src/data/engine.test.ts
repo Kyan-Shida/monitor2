@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run, constraints } from "./engine";
+import { rulesOf } from "./alarmRules";
 import { pages } from "./navigation";
-import { ensureCalibration, calibrationVersionOf } from "./mapCalibration";
+import { ensureCalibration } from "./mapCalibration";
 import type { State } from "./types";
 function complete(s: State, id: string, abnormal = false) {
   while (s.tasks.find((t) => t.id === id)!.state === "执行中")
@@ -26,9 +27,61 @@ function dispatch(s: State, id: string) {
 // 同日合并「能力与健康 / 地图与版本 / 机型专项」三页为「机器人能力」并新增「新增机器人」页 → 37
 // 2026-10-06：新增「空间与区域目标」页（非装置类目标独立入口）→ 38
 // 2026-10-07：空间与区域目标（points-space）暂未实现，从菜单注释掉 → 38 → 37
-test("37 unique phase-one pages", () => {
-  assert.equal(pages.length, 37);
-  assert.equal(new Set(pages.map((p) => p.id)).size, 37);
+// 2026-10-08：新增「后台管理 › 工厂基础数据」页（区域 / 设备 / 仪表配置）→ 37 → 38
+// 2026-10-09：新增「后台管理 › 机器人上装能力」页（上装主数据）→ 38 → 39
+// 2026-10-09：下线「结果详情 / 复核」页（人工复核取消，异常即告警）→ 39 → 38
+// 2026-10-09：新增「后台管理 › 告警模板管理」页（触发逻辑唯一维护入口）→ 38 → 39
+// 2026-10-09：从「工厂基础数据」拆出「后台管理 › 算法模板管理」页（AI 能力清单）→ 39 → 40
+// 2026-10-10：新增「后台管理 › 巡检要求管理」页（看什么、怎么判 的标准表达，台账按目标类型与采集方式匹配引用）→ 40 → 41
+// 2026-10-10：新增「资源与地图 › 空间 › 空间管理」页（全局坐标系配准 / 跨图拓扑）→ 41 → 42
+test("42 unique phase-one pages", () => {
+  assert.equal(pages.length, 42);
+  assert.equal(new Set(pages.map((p) => p.id)).size, 42);
+});
+
+test("巡检要求管理：管理员可维护，需填齐判定口径", () => {
+  let s = seed();
+  const base = {
+    id: "",
+    name: "看管道振动",
+    kind: "声音判别" as const,
+    description: "沿锚点声纹采样判别异常振动",
+    targetKinds: ["区域"] as ("仪表" | "环境" | "区域")[],
+    capture: "声音" as const,
+    detectKind: "声纹" as const,
+    algorithm: "管道振动识别 v1.0",
+    judge: "等级评分" as const,
+    cycle: "每班",
+  };
+  // 非管理员被拦截
+  assert.throws(
+    () => run({ ...s, roleId: "user" }, { type: "SAVE_REQUIREMENT", requirement: base }),
+    /仅管理员/,
+  );
+  // 数值范围判定缺单位 / 上下限时拦截
+  assert.throws(
+    () =>
+      run(s, {
+        type: "SAVE_REQUIREMENT",
+        requirement: { ...base, judge: "数值范围" },
+      }),
+    /单位|下限/,
+  );
+  // 管理员正常保存：自动生成 REQ- id 且版本为 1
+  const next = run(s, { type: "SAVE_REQUIREMENT", requirement: base });
+  const saved = (next.requirements || []).find((r) => r.name === "看管道振动")!;
+  assert.ok(saved.id.startsWith("REQ-"));
+  assert.equal(saved.version, 1);
+  assert.equal(saved.updatedAt, String(saved.updatedAt));
+  // 再次保存同一 id 版本自增
+  const v2 = run(next, {
+    type: "SAVE_REQUIREMENT",
+    requirement: { ...saved, description: "改说明" },
+  });
+  assert.equal(
+    (v2.requirements || []).find((r) => r.id === saved.id)!.version,
+    2,
+  );
 });
 test("map import → annotation → sync → validation → publication", () => {
   let s = seed();
@@ -59,17 +112,19 @@ test("map import → annotation → sync → validation → publication", () => 
     item: "压力读数",
     requirement: "表盘清晰",
   });
-  // 单级定版：原始资料与点位齐备即可发布（平台不区分试验版 / 正式版）
+  // 单级定版：只校验原始资料与点位齐备；状态按"当前版本是否已下发给机器"派生
+  // 新图还没有机器持有、也从未下发 → 未发布
   s = run(s, { type: "PUBLISH", id: m.id });
-  assert.equal(s.maps[0].state, "已发布");
+  assert.equal(s.maps[0].state, "未发布");
   s = sync(s, m.id, "R02");
+  // 下发给机器后即"下发到位"→ 已发布（不要求对方已完成激活）
+  assert.equal(s.maps[0].state, "已发布");
   const p = s.points.at(-1)!;
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02", fail: true });
   assert.match(s.points.find(x => x.id === p.id)!.validationFailure!, /目标身份未确认/);
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02" });
   assert.equal(s.points.find(x => x.id === p.id)!.validationFailure, undefined);
   assert.equal(s.points.find(x => x.id === p.id)!.state, "已启用");
-  assert.equal(s.robots[1].calibrationVersion, calibrationVersionOf(s, m.id));
 });
 test("missing archive blocks publishing", () => {
   let s = seed();
@@ -96,16 +151,32 @@ test("template → plan → immutable task → schedule → autonomous results",
   assert.equal(JSON.stringify(s.tasks[0].items), snap);
   assert.equal(s.results.filter((r) => r.taskId === id).length, 3);
 });
-test("alarm → recheck → normal result → restored → closed", () => {
+test("alarm handling records result and false positive without touching state", () => {
   let s = complete(seed(), "T009");
-  s = run(s, { type: "ALARM_ACK", id: "AL001" });
-  s = run(s, { type: "RECHECK", id: "AL001" });
-  const id = s.tasks[0].id;
-  s = dispatch(s, id);
-  s = complete(s, id);
-  assert.equal(s.alarms.find((a) => a.id === "AL001")!.state, "已恢复");
-  s = run(s, { type: "ALARM_CLOSE", id: "AL001", reason: "复查正常" });
-  assert.equal(s.alarms.find((a) => a.id === "AL001")!.state, "已关闭");
+  const before = s.alarms.find((a) => a.id === "AL001")!.state;
+  s = run(s, {
+    type: "ALARM_LABEL",
+    id: "AL001",
+    reason: "现场确认表计读数与识别一致",
+    result: "受理",
+    falsePositive: false,
+  });
+  const al = s.alarms.find((a) => a.id === "AL001")!;
+  assert.equal(al.handleResult, "受理");
+  assert.equal(al.falsePositive, false);
+  assert.equal(!!al.handledAt, true);
+  assert.equal(al.state, before);
+  assert.equal(al.notes.some((x) => x.includes("处理说明")), true);
+  // 已处理告警不可二次编辑：重复处理会污染报警准确率口径
+  assert.throws(() =>
+    run(s, {
+      type: "ALARM_LABEL",
+      id: "AL001",
+      reason: "再次处理",
+      result: "忽略",
+      falsePositive: true,
+    }),
+  );
 });
 test("takeover pause acknowledgment exclusive session exit resume", () => {
   let s = seed();
@@ -144,7 +215,7 @@ test("failed sync retains actual version; stale receipt rejected; busy activatio
 test("mismatched map may queue but may not dispatch", () => {
   let s = seed();
   assert.ok(
-    constraints(s, s.tasks[1], s.robots[1]).includes("地图/标定版本待同步"),
+    constraints(s, s.tasks[1], s.robots[1]).includes("地图版本待同步"),
   );
   s = run(s, { type: "ASSIGN", id: "T010", robotId: "R02" });
   assert.throws(() => run(s, { type: "DISPATCH", id: "T010" }), /版本待同步/);
@@ -168,15 +239,10 @@ test("external task idempotency and result audit preserve raw evidence", () => {
   const count = s.tasks.length;
   s = run(s, { type: "EXTERNAL", businessId: "B1" });
   assert.equal(s.tasks.length, count);
-  s = run(s, {
-    type: "REVIEW",
-    id: "RES001",
-    value: "0.91",
-    reason: "复核证据",
-  });
-  assert.equal(s.results[0].raw, "0.92");
-  assert.equal(s.results[0].final, "0.91");
-  assert.equal(s.results[0].reviews.length, 1);
+  // 采集结果保留原始证据与识别值，且不再产生复核记录（人工复核已下线）
+  const r = s.results[0];
+  assert.equal(r.raw, r.recognized);
+  assert.equal("reviews" in (r as object), false);
 });
 
 test("TASK_FINISHED without business evidence is failure, partial evidence is partial completion", () => {
@@ -190,6 +256,36 @@ test("TASK_FINISHED without business evidence is failure, partial evidence is pa
   assert.equal(s.tasks[0].state, "部分完成");
   assert.equal(s.tasks[0].done.length, 1);
 });
+test("AI state anomaly alarms at level 3, risk anomaly follows the risk level, normal records no alarm", () => {
+  /** 每轮都把任务复位到"采集第一个检测项"，三种口径落在同一检测项上便于对比 */
+  const tick = (base: State, a: Record<string, unknown>) => {
+    const t = base.tasks.find((x) => x.id === "T009")!;
+    t.stage = 6;
+    t.index = 0;
+    // 清空历史告警：只验证本次采集产生的告警（避免并入种子里的同点位旧告警）
+    base.alarms = [];
+    return run(base, { type: "TICK", id: "T009", ...a });
+  };
+  // ① AI 状态异常（识别结果为空）→ 三级告警，风险信息本身不异常
+  const ai = tick(seed(), { value: "" });
+  assert.equal(ai.results[0].aiAbnormal, true);
+  assert.equal(ai.results[0].abnormal, false);
+  assert.equal(ai.alarms.length, 1);
+  assert.equal(ai.alarms[0].level, "三级");
+  assert.ok(ai.alarms[0].notes.some((n) => n.includes("AI 状态异常")));
+  // ② 风险信息异常 → 按该检测项的风险等级告警（P001 = 二级）
+  const risk = tick(ai, { abnormal: true });
+  assert.equal(risk.results[0].abnormal, true);
+  assert.equal(risk.results[0].aiAbnormal, false);
+  assert.equal(risk.alarms.length, 1);
+  assert.equal(risk.alarms[0].level, "二级");
+  assert.ok(risk.alarms[0].notes.some((n) => n.includes("规则")));
+  // ③ 识别正常且风险正常 → 只有检测记录，没有告警
+  const ok = tick(risk, {});
+  assert.equal(ok.results[0].abnormal, false);
+  assert.equal(ok.results[0].aiAbnormal, false);
+  assert.equal(ok.alarms.length, 0);
+});
 test("queue reordering and reassignment preserve identity and require withdrawal confirmation", () => {
   let s = seed();
   s = run(s, { type: "REORDER", id: "T013", beforeId: "T012" });
@@ -198,29 +294,12 @@ test("queue reordering and reassignment preserve identity and require withdrawal
       s.tasks.findIndex((t) => t.id === "T012"),
   );
   assert.throws(() => run(s, { type: "REASSIGN", id: "T013", robotId: "R02" }));
-  assert.throws(() => run(s, { type: "REASSIGN", id: "T013", robotId: "R02", confirmed: true }), /移动能力不足/);
-  s.tasks.find((t) => t.id === "T013")!.requiredMobility = [];
   s = run(s, { type: "REASSIGN", id: "T013", robotId: "R02", confirmed: true });
   assert.equal(s.tasks.find((t) => t.id === "T013")!.robotId, "R02");
   assert.throws(() =>
     run(s, { type: "REORDER", id: "T013", beforeId: "T012" }),
   );
 });
-test("invalidating evidence preserves raw values and recalculates task business completion", () => {
-  let s = seed();
-  s = run(s, {
-    type: "REVIEW",
-    id: "RES001",
-    value: "0.92",
-    reason: "证据无法对应目标",
-    conclusion: "标记无效",
-  });
-  assert.equal(s.results[0].raw, "0.92");
-  assert.equal(s.results[0].recognized, "0.92");
-  assert.equal(s.results[0].status, "无效");
-  assert.equal(s.tasks.find((t) => t.id === "T008")!.state, "失败");
-});
-
 test("execution workbench quick dispatch creates an accepted queued task without interrupting current task", () => {
   let s = seed();
   s = run(s, {

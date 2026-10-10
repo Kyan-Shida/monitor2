@@ -6,7 +6,6 @@
 import type { State } from "./types";
 import { terminal } from "./selectors";
 import { deviceOf } from "./deviceMaster";
-import { calibrationVersionOf } from "./mapCalibration";
 
 /** 口径配置：成本 / 人力换算系数（口径可配，配置中心可改） */
 export const METRIC_CONFIG = {
@@ -54,9 +53,6 @@ export function scopedState(s: State, region?: string): State {
   const taskIds = new Set(
     s.tasks.filter((t) => mapIds.includes(t.mapId)).map((t) => t.id),
   );
-  const alarmIds = new Set(
-    s.alarms.filter((a) => taskIds.has(a.taskId)).map((a) => a.id),
-  );
   return {
     ...s,
     robots: s.robots.filter((r) => r.region === region),
@@ -67,7 +63,6 @@ export function scopedState(s: State, region?: string): State {
     points: s.points.filter((p) => mapIds.includes(p.mapId)),
     // 设备清单同按厂区裁剪：覆盖率的分母必须与分子同一范围，否则厂区筛选后覆盖率会被拉低
     devices: s.devices?.filter((d) => !d.region || d.region === region),
-    workOrders: s.workOrders.filter((w) => alarmIds.has(w.alarmId)),
     fieldOrders: s.fieldOrders.filter((f) =>
       s.robots.some((r) => r.id === f.robotId && r.region === region),
     ),
@@ -147,14 +142,14 @@ export const metrics: MetricDef[] = [
   },
   {
     key: "unconfirmedAlarms",
-    name: "未确认告警",
-    formula: "状态为「待确认」的告警条数",
+    name: "未处理告警",
+    formula: "尚未人工处理（无处理时间）的告警条数，与告警事件页「未处理」同源",
     unit: "条",
     target: 0,
     positive: false,
     dims: ["厂区", "机型", "告警类型"],
     roles: "*",
-    calc: (s) => s.alarms.filter((a) => a.state === "待确认").length,
+    calc: (s) => s.alarms.filter((a) => !a.handledAt).length,
   },
   {
     key: "lowBattery",
@@ -172,7 +167,7 @@ export const metrics: MetricDef[] = [
     key: "robotAttention",
     name: "机器待关注",
     formula:
-      "离线、电量低于本机型门槛、或地图/点位版本不一致的机器台数（同一台机器只计一次）",
+      "离线、电量低于本机型门槛、或地图版本不一致的机器台数（同一台机器只计一次）",
     unit: "台",
     target: 0,
     positive: false,
@@ -183,12 +178,8 @@ export const metrics: MetricDef[] = [
         if (r.state === "离线" || r.battery < r.constraints.minBattery)
           return true;
         const m = s.maps.find((x) => x.id === r.mapId);
-        // 地图空间版本 + 独立标定数据版本，任一落后即计入
-        return (
-          !!m &&
-          (r.mapVersion !== m.version ||
-            r.calibrationVersion !== calibrationVersionOf(s, r.mapId))
-        );
+        // 地图空间版本落后即计入
+        return !!m && r.mapVersion !== m.version;
       }).length,
   },
   {
@@ -231,10 +222,10 @@ export const metrics: MetricDef[] = [
     roles: "*",
     calc: (s) => {
       // J′ 口径收敛：分母由「设备清单里声明要巡检的检测目标」决定，
-      // 关闭「是否巡检」的目标不进分母；待审核 / 已驳回 / 已停用设备的清单不计入。
+      // 关闭「是否巡检」的目标不进分母；已停用设备的清单不计入。
       // 这样"清单要求了但还没落位"才会体现为覆盖缺口（原来只统计点位自身启用率，看不出缺口）。
       const targets = (s.devices || [])
-        .filter((d) => d.reviewState === "已通过" && d.state !== "停用")
+        .filter((d) => d.state !== "停用")
         .flatMap((d) =>
           d.items
             .filter((it) => it.inspect)
@@ -307,44 +298,6 @@ export const metrics: MetricDef[] = [
       ),
   },
   {
-    key: "closeRate",
-    name: "异常闭环率",
-    formula: "状态为「已关闭」的告警数 / 告警总数 × 100%",
-    unit: "%",
-    target: 95,
-    positive: true,
-    dims: ["厂区", "机型", "告警类型"],
-    roles: "*",
-    calc: (s) =>
-      pct(s.alarms.filter((a) => a.state === "已关闭").length, s.alarms.length),
-  },
-  {
-    key: "mttr",
-    name: "MTTR",
-    formula: "已闭环工单的平均处置时长（分钟），处置时长取工单责任链首末时间差",
-    unit: "分钟",
-    target: 120,
-    positive: false,
-    dims: ["厂区", "机型"],
-    roles: "*",
-    calc: (s) => {
-      const closed = s.workOrders.filter(
-        (w) => w.timeline.length > 1 && ["已验收", "已关闭"].includes(w.state),
-      );
-      if (!closed.length) return 0;
-      const sum = closed.reduce(
-        (a, w) =>
-          a +
-          minutesBetween(
-            w.timeline[0].time,
-            w.timeline[w.timeline.length - 1].time,
-          ),
-        0,
-      );
-      return Math.round(sum / closed.length);
-    },
-  },
-  {
     key: "takeoverRate",
     name: "人工接管率",
     formula: "发生过远程接管或抢占的机器数 / 机器总数 × 100%",
@@ -376,17 +329,7 @@ export const metrics: MetricDef[] = [
       return pct(done.length, base.length);
     },
   },
-  {
-    key: "reviewBacklog",
-    name: "复核积压量",
-    formula: "状态为「待复核」的结果条数",
-    unit: "条",
-    target: 50,
-    positive: false,
-    dims: ["机型", "队列"],
-    roles: "*",
-    calc: (s) => s.results.filter((r) => r.status === "待复核").length,
-  },
+
   {
     key: "scheduleRate",
     name: "排班执行率",
@@ -464,38 +407,36 @@ export const metrics: MetricDef[] = [
   {
     key: "alarmValid",
     name: "有效告警数",
-    formula: "处置时被人工标注为「有效」的告警数（ALM-05）",
+    formula: "人工处理中判定为「非误报」的告警数（ALM-05）",
     unit: "条",
     positive: true,
     dims: ["厂区", "机型", "告警类型"],
     roles: "*",
-    calc: (s) => s.alarms.filter((a) => a.validity === "有效").length,
+    calc: (s) => s.alarms.filter((a) => a.falsePositive === false).length,
   },
   {
     key: "alarmAccuracy",
     name: "报警准确率",
     formula:
-      "被标注为「有效」的告警数 / 已标注（有效 + 无效）的告警数 × 100%；取自告警处置时的「有效 / 无效」人工标注",
+      "已处理告警中「非误报」条数 / 已处理告警数 × 100%；取自告警处理时的「是否误报」人工判定",
     unit: "%",
     target: 90,
     positive: true,
     dims: ["厂区", "机型", "告警类型"],
     roles: "*",
     calc: (s) => {
-      const labeled = s.alarms.filter(
-        (a) => a.validity === "有效" || a.validity === "无效",
-      );
+      const handled = s.alarms.filter((a) => a.handledAt);
       return pct(
-        labeled.filter((a) => a.validity === "有效").length,
-        labeled.length,
+        handled.filter((a) => a.falsePositive === false).length,
+        handled.length,
       );
     },
   },
   {
     key: "alarmLabelRate",
-    name: "告警标注率",
+    name: "告警处理率",
     formula:
-      "已标注「有效 / 无效」的告警数 / 告警总数 × 100%；标注覆盖率越高，准确率越可信（产品成熟度信号）",
+      "已处理（填写处理结果）的告警数 / 告警总数 × 100%；处理覆盖率越高，准确率越可信（产品成熟度信号）",
     unit: "%",
     target: 80,
     positive: true,
@@ -503,8 +444,7 @@ export const metrics: MetricDef[] = [
     roles: "*",
     calc: (s) =>
       pct(
-        s.alarms.filter((a) => a.validity === "有效" || a.validity === "无效")
-          .length,
+        s.alarms.filter((a) => a.handledAt).length,
         s.alarms.length,
       ),
   },

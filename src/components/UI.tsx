@@ -29,13 +29,13 @@ export const Badge = ({
   const text = String(children);
   const cls =
     tone ??
-    (/失败|异常|歧义|离线|超限|待确认|已驳回|紧急/.test(text)
+    (/失败|异常|歧义|离线|超限|待确认|已驳回|一级|紧急/.test(text)
       ? "red"
       : /已启用|已同步|完成|空闲|已恢复|已确认|已通过|通过|正常|已落位/.test(text)
         ? "green"
-        : /待|暂停|草稿|接管|维护|孤立|重要/.test(text)
+        : /待|暂停|草稿|未发布|接管|维护|孤立|二级|重要/.test(text)
           ? "amber"
-          : /一般|普通/.test(text)
+          : /三级|一般|普通/.test(text)
             ? "blue"
             : "");
   return <span className={"badge " + cls}>{children}</span>;
@@ -122,8 +122,6 @@ export function Modal({
   children,
   onClose,
   wide = false,
-  drawer = false,
-  drawerWidth,
   footer,
 }: {
   title: string;
@@ -131,14 +129,6 @@ export function Modal({
   onClose: () => void;
   /** 宽版弹窗：列数较多的表格（如对象与检测项）使用，避免挤压换行 */
   wide?: boolean;
-  /**
-   * 右侧抽屉形态
-   * @description 内容体量大的场景（多字段表单、分步向导、长文档、就地详情）用它替代居中弹窗：
-   *              全高滚动 + 底部操作条常驻，且不遮挡身后的列表上下文
-   */
-  drawer?: boolean;
-  /** 抽屉宽度（px）；仅 drawer 生效，缺省沿用样式的 620 */
-  drawerWidth?: number;
   /**
    * 固定底栏（取消 / 保存这类常驻操作）
    * @description 与滚动内容分离：按钮不随内容滚动、也不悬浮在内容之上，始终贴在窗体底部
@@ -155,12 +145,11 @@ export function Modal({
   );
   const body = <div className="modal-body">{children}</div>;
   return (
-    <div className={"overlay" + (drawer ? " drawer-host" : "")} onClick={onClose}>
+    <div className="overlay" onClick={onClose}>
       <div
         role="dialog"
         aria-label={title}
         className={"modal" + (wide ? " wide" : "")}
-        style={drawerWidth ? { width: drawerWidth } : undefined}
         onClick={(e) => e.stopPropagation()}
       >
         {header}

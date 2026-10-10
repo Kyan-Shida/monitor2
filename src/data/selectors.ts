@@ -1,6 +1,5 @@
-﻿import type { State, Task, Robot, Result } from "./types";
+import type { State, Task, Robot, Result, Alarm } from "./types";
 import { stages, atomicActionCapability } from "./types";
-import { hasMobility } from "./deviceProfile";
 import { captureKindsOfPoint, robotCoversPoint } from "./deviceMaster";
 export const terminal = ["完成", "部分完成", "失败", "取消", "超期"];
 export const queueStates = ["已分配", "下发中", "待执行"];
@@ -22,6 +21,7 @@ export const logNames: Record<string, string> = {
   TICK: "自主阶段回报",
   PAUSE: "任务暂停",
   STOP: "任务终止",
+  DELETE_TASK: "删除任务",
   FAIL: "执行失败",
   RETRY: "目标重试",
   SKIP: "跳过检测项",
@@ -34,9 +34,8 @@ export const logNames: Record<string, string> = {
   CONTROL_EXIT: "退出接管核对",
   CONTROL_RELEASE: "控制权释放",
   REVIEW: "结果复核",
-  ALARM_ACK: "告警确认",
-  RECHECK: "复查任务生成",
-  ALARM_CLOSE: "告警关闭",
+  ALARM_LABEL: "告警处理",
+  SAVE_ALARM_TEMPLATE: "告警模板配置",
   TASK_FINISHED: "机器人结束回报",
   QUICK_DISPATCH: "临时任务快速下发",
   EMERGENCY_STOP: "紧急停止",
@@ -50,7 +49,6 @@ export const logNames: Record<string, string> = {
   CALIBRATE_FRAMES: "坐标标定",
   SET_MAP_LAYERS: "地图图层更新",
   IMPORT_DEVICES: "设备清单导入",
-  REVIEW_DEVICE_IMPORT: "设备清单审核",
   SET_INSPECT_FLAG: "是否巡检开关",
   SET_DEVICE_STATE: "设备启停",
   ADD_BUSINESS_TARGET: "新增巡检目标台账",
@@ -68,6 +66,9 @@ export const logNames: Record<string, string> = {
   SAVE_ACTION_PLAN: "保存动作编排",
   SAVE_ROUTE: "保存路线",
   CALIBRATE: "点位重校准",
+  MAP_SWITCH_ADD: "新增跨图切换点",
+  MAP_SWITCH_REMOVE: "删除跨图切换点",
+  MAP_SWITCH_STATE: "跨图切换点启停",
 };
 /**
  * 解析平台时间字符串
@@ -85,6 +86,33 @@ export const parseTime = (x: string): number => {
     : Date.parse(x || "");
 };
 
+/**
+ * 复检闭环时限（天）
+ * @description 受理后超过该天数仍未闭环的告警，自动按「无效闭环」对待（口径见 verifyStateOf）
+ */
+export const VERIFY_DAYS = 30;
+/**
+ * 复检状态（派生值，随当前时间变化）
+ * @description 「超过 30 天自动无效闭环」由这里派生，不写回告警数据：
+ *              已闭环的按记录值展示；待反馈且已过时限的显示为「无效闭环」并标记超期；
+ *              超期判定以**受理时间**（verify.startedAt）为起点，与处理时间同源
+ * @param a 告警
+ * @param now 当前时间戳（默认系统时间，测试可注入）
+ * @returns 复检状态、剩余天数、是否超期自动判定
+ */
+export function verifyStateOf(a: Alarm, now = Date.now()) {
+  const v = a.verify;
+  if (!v)
+    return { state: "未进入复检" as const, leftDays: 0, overdue: false };
+  if (v.state !== "待反馈")
+    return { state: v.state, leftDays: 0, overdue: false };
+  const leftDays = Math.ceil(
+    (parseTime(v.startedAt) + VERIFY_DAYS * 86400000 - now) / 86400000,
+  );
+  return leftDays > 0
+    ? { state: "待反馈" as const, leftDays, overdue: false }
+    : { state: "无效闭环" as const, leftDays: 0, overdue: true };
+}
 export const stageOf = (t?: Task) =>
   !t
     ? "—"
@@ -96,16 +124,20 @@ export const queueFor = (s: State, rid: string) =>
   s.tasks.filter((t) => t.robotId === rid && queueStates.includes(t.state));
 export const currentTask = (s: State, r: Robot) =>
   s.tasks.find((t) => t.id === r.current);
-export const minutesLeft = (t?: Task) =>
-  t
-    ? Math.max(
-        2,
-        Math.ceil(
-          t.duration *
-            (1 - (t.index + (t.stage || 0) / stages.length) / t.items.length),
-        ),
-      )
-    : 0;
+/**
+ * 机器人执行队列
+ * @description 平台无法估算机器人执行一次巡检需要多久（只掌握电量这类可实测信息），
+ *              因此队列只表达「当前任务 → 后续任务的先后顺序」，不携带任何时间窗口：
+ *              执行中 / 暂停的当前任务固定在最前，其余按队列顺序排列
+ * @param s 状态
+ * @param r 机器人
+ * @returns 队列任务（第一项为当前任务；无任务时为空数组）
+ */
+export function robotQueue(s: State, r: Robot): Task[] {
+  const cur = currentTask(s, r);
+  const q = queueFor(s, r.id).filter((t) => t.id !== cur?.id);
+  return cur ? [cur, ...q] : q;
+}
 export const pointOf = (s: State, r: Result) =>
   s.tasks
     .find((t) => t.id === r.taskId)
@@ -113,25 +145,76 @@ export const pointOf = (s: State, r: Result) =>
   s.points.find((p) => p.id === r.pointId);
 /**
  * 单条巡检结果的业务判定（全局唯一口径）
- * @description `abnormal` 只是「规则判定超限」，不等于「已判为异常」：
- *   识别无效的结果（status=待复核）即使超阈值也还没人判定，
- *   若直接按 abnormal 计数就会凭空多出「异常」。故判定顺序固定为
- *   待复核 → 待判定（未判定，不计入异常）；无效 → 无效；其余才按 abnormal 定异常 / 正常。
+ * @description 判定顺序固定为：无效 → 无效；其余按规则判定的 abnormal 定 异常 / 正常。
+ *              异常即告警：判为异常的结果都会有一条对应的告警事件，不再有人工复核环节。
  * @param r 巡检结果
- * @returns 待判定 / 无效 / 异常 / 正常
+ * @returns 无效 / 异常 / 正常
  */
-export const judgeOf = (r: Result): "待判定" | "无效" | "异常" | "正常" =>
-  r.status === "待复核"
-    ? "待判定"
-    : r.status === "无效"
-      ? "无效"
-      : r.abnormal
-        ? "异常"
-        : "正常";
-/** 已判定为异常的结果（供各页统计"异常数"使用，避免把待复核算成异常） */
+export const judgeOf = (r: Result): "无效" | "异常" | "正常" =>
+  r.status === "无效" ? "无效" : r.abnormal ? "异常" : "正常";
+/**
+ * AI 状态：识别是否给出可用结论
+ * @description AI 状态异常（识别结果为空 / 无有效读数 / 规则未配置）固定触发三级告警
+ * @param r 巡检结果
+ * @returns 正常 / 异常
+ */
+export const aiStateOf = (r: Result): "正常" | "异常" =>
+  r.aiAbnormal ? "异常" : "正常";
+/**
+ * 风险信息：按检测项规则判定的风险
+ * @description 风险异常按该检测项的风险等级触发一 / 二 / 三级告警
+ * @param r 巡检结果
+ * @returns 正常 / 异常
+ */
+export const riskStateOf = (r: Result): "正常" | "异常" =>
+  r.abnormal ? "异常" : "正常";
+/** 该检测项是否应有告警：AI 状态异常 或 风险信息异常（两者都正常只有检测记录） */
+export const hasAlarm = (r: Result) => !!r.abnormal || !!r.aiAbnormal;
+/**
+ * 风险信息文案：正常 / 异常（原因）
+ * @description 原因取自该结果采集时保存的规则快照（阈值 / 期望状态），
+ *              避免用当前规则倒推历史判定；AI 状态异常时回落到未识别原因
+ * @param r 巡检结果
+ * @returns 「正常」或「异常（原因）」；无结果时返回「—」
+ */
+export const riskReasonOf = (r?: Result) => {
+  if (!r) return "—";
+  if (r.abnormal) {
+    const rule = r.ruleSnapshot;
+    if (rule?.type === "期望状态")
+      return `异常（状态「${r.final}」不等于期望「${rule.expected}」）`;
+    if (rule)
+      return Number(r.final) > rule.max
+        ? `异常（读数 ${r.final}${r.unit} 超出上限 ${rule.max}${rule.unit}）`
+        : `异常（读数 ${r.final}${r.unit} 低于下限 ${rule.min}${rule.unit}）`;
+    return `异常（读数 ${r.final}${r.unit} 超出阈值）`;
+  }
+  if (r.aiAbnormal) return `异常（${r.triggerReason || "AI 未识别出有效读数"}）`;
+  return "正常";
+};
+/**
+ * 告警阈值文案（取自结果保存的规则快照）
+ * @param r 巡检结果
+ * @returns 数值范围「min ~ max 单位」/ 期望状态「期望「开启」」；无快照时返回「—」
+ */
+export const thresholdOf = (r?: Result) => {
+  const rule = r?.ruleSnapshot;
+  if (!rule) return "—";
+  return rule.type === "期望状态"
+    ? `期望「${rule.expected}」`
+    : `${rule.min} ~ ${rule.max} ${rule.unit || ""}`.trim();
+};
+/**
+ * 识别结果文案：机器读取到的原始数据（不做判定表述，判定归「风险信息」）
+ * @param r 巡检结果
+ * @returns 如「压力读数 0.83 MPa」；无有效读数时给出占位说明
+ */
+export const readingOf = (r: Result) =>
+  r.aiAbnormal
+    ? r.triggerReason || "未识别出有效读数"
+    : `${r.item} ${r.raw}${r.unit}`.trim();
+/** 已判定为异常的结果（供各页统计"异常数"使用） */
 export const isAbnormal = (r: Result) => judgeOf(r) === "异常";
-/** 仍需人工复核的结果 */
-export const isPending = (r: Result) => r.status === "待复核";
 export const deviceCode = (name: string) => name.split(" ")[0];
 /**
  * 把任务 / 结果的时间统一显示为「MM-DD HH:mm」
@@ -147,79 +230,6 @@ export const fmtTime = (value?: string) => {
     p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
-export const timeAt = (minutes: number) => {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() + minutes);
-  return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-};
-export interface Window {
-  id: string;
-  kind: "task" | "charging" | "maintenance";
-  start: number;
-  end: number;
-  label: string;
-  task?: Task;
-}
-export function schedule(s: State, r: Robot): Window[] {
-  const out: Window[] = [];
-  let cursor = 0;
-  const cur = currentTask(s, r);
-  if (cur) {
-    const end = minutesLeft(cur);
-    out.push({
-      id: cur.id,
-      kind: "task",
-      start: 0,
-      end,
-      label: cur.name,
-      task: cur,
-    });
-    cursor = end;
-  }
-  if (r.state === "充电") {
-    out.push({
-      id: r.id + "charge",
-      kind: "charging",
-      start: cursor,
-      end: cursor + 45,
-      label: "充电窗口（估计）",
-    });
-    cursor += 45;
-  }
-  const q = queueFor(s, r.id);
-  let mv = `${r.mapId}/${r.mapVersion}/${r.calibrationVersion}`;
-  for (const t of q) {
-    const target = `${t.mapId}/${t.mapVersion}/${t.calibrationVersion}`;
-    if (mv !== target) {
-      out.push({
-        id: t.id + "sync",
-        kind: "maintenance",
-        start: cursor,
-        end: cursor + 15,
-        label: "地图 / 标定同步窗口",
-      });
-      cursor += 15;
-      mv = target;
-    }
-    out.push({
-      id: t.id,
-      kind: "task",
-      start: cursor,
-      end: cursor + t.duration,
-      label: t.name,
-      task: t,
-    });
-    cursor += t.duration;
-  }
-  return out;
-}
-export function robotAvailability(s: State, r: Robot) {
-  if (["离线", "故障", "人工接管", "维护"].includes(r.state))
-    return "待处理后评估";
-  const windows = schedule(s, r);
-  const end = windows.at(-1)?.end || 0;
-  return end ? `${timeAt(end)}（约${end}分钟后）` : "现在";
-}
 export function taskEvents(s: State, id?: string) {
   return s.logs
     .filter(
@@ -264,21 +274,9 @@ export function checks(s: State, t: Task, r: Robot) {
           .join(" / ") || "按检测项执行",
     },
     {
-      name: "移动能力",
-      pass: hasMobility(r.mobility, t.requiredMobility),
-      detail:
-        (t.requiredMobility || []).join(" / ") ||
-        `${r.deviceType}：${r.mobility.join(" / ")}`,
-    },
-    {
       name: "地图版本",
       pass: r.mapId === t.mapId && r.mapVersion === t.mapVersion,
-      detail: `实际 m${r.mapVersion} → 要求 m${t.mapVersion}`,
-    },
-    {
-      name: "标定版本",
-      pass: r.calibrationVersion === t.calibrationVersion,
-      detail: `实际 c${r.calibrationVersion} → 要求 c${t.calibrationVersion}`,
+      detail: `实际地图第 ${r.mapVersion} 版 → 要求地图第 ${t.mapVersion} 版`,
     },
     {
       name: "电量",
@@ -322,16 +320,12 @@ export function checks(s: State, t: Task, r: Robot) {
       name: "当前任务冲突",
       pass: !cur || cur.id === t.id,
       detail:
-        cur && cur.id !== t.id
-          ? `${cur.id} · 剩余约${minutesLeft(cur)}分钟`
-          : "无当前冲突",
+        cur && cur.id !== t.id ? `${cur.id} · 执行中，需等待其结束` : "无当前冲突",
     },
     {
       name: "后续队列",
       pass: q.length === 0,
-      detail: q.length
-        ? `${q.length}个任务，末尾约${robotAvailability(s, r)}`
-        : "无排队任务",
+      detail: q.length ? `${q.length} 个任务排队中` : "无排队任务",
     },
   ];
 }

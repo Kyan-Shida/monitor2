@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file types.ts
  * @description 全量数据模型类型 + 链路常量（stages / taskTypeActions / atomicActionCapability）；
  *              含「地图 → 巡检任务」链路新增类型（DeviceAsset/LogicalPoint/Route/TrialReceipt…）
@@ -30,7 +30,6 @@ export interface Point {
    * 权威坐标以统一坐标系 `world` 为准，不以本字段判别身份。
    */
   mapId: string;
-  version: number;
   device: string;
   object: string;
   item: string;
@@ -80,6 +79,8 @@ export interface Candidate {
   kind: string;
   x: number;
   y: number;
+  /** 统一坐标系坐标（米，全厂 XYZ）：由标定文件直接给 XYZ 或由底图坐标换算；演示环境按底图 1:1 */
+  world?: { x: number; y: number; z: number };
   state: "待确认" | "已确认" | "已剔除";
   pointId?: string;
   /** 标定点来源（地图导入 / 平台新增） */
@@ -98,6 +99,19 @@ export interface Candidate {
   clusterId?: string;
 }
 /**
+ * 地图版本历史条目
+ * @description 一次「定版 / 修订」= 一条，只记录**地图空间版本 V{n}**；
+ *              点位标定数据有自己的版本 c{n}（见 mapCalibration.ts），不写进地图历史。
+ */
+export interface MapVersionLog {
+  /** 空间版本 V{n} */
+  version: number;
+  /** 该版本发生了什么（中文，直接可读） */
+  note: string;
+  /** 定版 / 修订时间 */
+  at: string;
+}
+/**
  * 地图（**纯点云**）
  * @description 地图只承载"机器人能走哪"：点云底图 + 采集批次元信息，
  *              **不含任何定位ID、巡检点与业务信息**（第一次扫描不可能已有巡检点）。
@@ -107,28 +121,31 @@ export interface MapAsset {
   id: string;
   name: string;
   region: string;
-  /** 空间版本 m{n}：底图 / 建图内容变更时自增（点位标定不改变本版本） */
+  /** 空间版本 V{n}（界面展示口径）：底图 / 建图内容变更时自增（点位标定不改变本版本） */
   version: number;
   /**
-   * 地图状态：`草稿`（内容未定版）/ `已发布`（已定版，可下发与引用）
+   * 地图状态：`未发布`（内容未定版）/ `已发布`（已定版，可下发与引用）
    * @description 平台**不区分试验版 / 正式版**：下发时会自动把当前内容定版为「已发布」
    */
-  state: "草稿" | "已发布";
+  state: "未发布" | "已发布";
   source: string;
   batch: string;
   cloud: string;
   video: string;
   file: string;
   checksum: string;
-  history: string[];
+  /** 版本历史：**最新在前**（V{n} 一次定版 / 修订 = 一条） */
+  history: MapVersionLog[];
   /** 坐标系标定（阶段②，原型可只存示意值） */
   frames?: MapFrames;
   /** 图层可用性/可见性（阶段②） */
   layers?: MapLayerFlags;
-  /** 设备清单版本（阶段⑧，与空间版本 m 并列的第三类版本） */
+  /** 设备清单版本（阶段⑧，与空间版本 V 并列的第三类版本） */
   deviceListVersion?: number;
   /** 底图（用户上传的地图图片 dataUrl）；有底图即可在图上标注点位 */
   image?: string;
+  /** 最近更新时间（建图 / 修订 / 定版 / 下发定版等变更时刷新，用于列表「更新时间」列） */
+  updatedAt?: string;
 }
 
 /* ── 以下为「地图 → 巡检任务」链路改造新增类型（阶段①~⑧） ───────────── */
@@ -235,6 +252,71 @@ export const payloadGroups: { name: string; caption: string; actions: AtomicActi
 /** AI 不安全行为识别的具体类别清单（动作参数多选） */
 export const BEHAVIOR_TYPES = ["未戴安全帽", "人员闯入", "越界", "违规作业", "人员聚集"];
 
+/**
+ * 上装的一项采集能力：一种采集方式 + 该方式下支持的原子动作
+ * @description 一个上装可覆盖**多种**采集方式（如可见光 + 红外一体云台），每类各自声明支持动作。
+ *              动作归哪类采集由 `atomicActionCapability` 唯一决定，故同一能力组内动作必须同属该采集方式。
+ */
+export interface RobotPayloadAbility {
+  /** 采集方式：与检测项 kind、机器人 capabilities 同口径 */
+  kind: CaptureKind;
+  /** 该采集方式下支持的动作：任务指令集据此推导（见 taskTypeOfActions） */
+  actions: AtomicAction[];
+}
+
+/**
+ * 机器人上装能力（后台管理 › 机器人上装能力）
+ * @description 机器人本体可挂载的采集载荷**主数据**：一台机器人能干什么，取决于它装了哪些上装。
+ *              上装 → N 组「采集方式（可见光 / 红外 / 气体 / 声音）→ 原子动作」→ 巡检项 / 任务指令集，
+ *              因此这里是「机器人能力 → 可执行任务 → 派单校验」链路的唯一上游口径。
+ *              与上装分组常量 `payloadGroups` 的区别：后者只是动作模板的归组展示（写死 4 类，不可维护），
+ *              本实体是后台可维护的清单（一个上装可再定义多种采集方式 + 支持动作 / 适用机型 / 启停）。
+ */
+export interface RobotPayload {
+  /** 上装编码（唯一身份，仅字母 / 数字 / 下划线 / 中划线） */
+  id: string;
+  name: string;
+  /** 支持的采集能力组（至少 1 组）：一个上装可覆盖多种采集方式，不再只支持单一采集方式 */
+  abilities: RobotPayloadAbility[];
+  /** 适用机型：空数组 = 机型无关（通用上装） */
+  models: DeviceType[];
+  state: "启用" | "停用";
+}
+
+/** 算法部署位置：云端（平台算力）/ 本体（机器人本体算力） */
+export const algoDeploys = ["云端", "本体"] as const;
+export type AlgoDeploy = (typeof algoDeploys)[number];
+
+/** 算法适配的检测类型（独立枚举，与巡检要求分类 / 采集方式解耦） */
+export const algoKinds = [
+  "读数识别",
+  "红外测温",
+  "缺陷识别",
+  "气体检测",
+  "声纹识别",
+  "行为识别",
+] as const;
+export type AlgoKind = (typeof algoKinds)[number];
+
+/**
+ * 算法（AI 能力）配置 —— 后台管理 › 算法配置
+ * @description 平台可用的 AI 算法清单：算法 ID / 名称 / 部署位置 / 适配检测类型 / 状态 / 更新时间。
+ *              巡检要求与巡检目标台账的 `algorithm` 字段按**名称**引用本清单，
+ *              因此列表里的「关联台账」= 引用该算法的目标台账条数；停用后不再作为新台账的可选项。
+ *              `adapt` 为空的算法表示尚未配置检测类型适配（界面显示「待配置」）。
+ */
+export interface AlgoConfig {
+  /** 算法 ID（平台侧唯一标识） */
+  id: string;
+  name: string;
+  deploy: AlgoDeploy;
+  /** 适配的检测类型：独立枚举 AlgoKind；空数组 = 待配置 */
+  adapt: AlgoKind[];
+  /** 平台侧同步的更新时间（展示用） */
+  updatedAt: string;
+  state: "启用" | "停用";
+}
+
 /** 点位级机器人动作编排（阶段⑥：解决"到得了之后怎么看"） */
 export interface PointActionPlan {
   ptz: PTZ;
@@ -335,6 +417,13 @@ export interface InspectItem {
   id: string;
   /** 检测目标（如 P-50406A 油杯） */
   target: string;
+  /**
+   * 检测项分类
+   * @description 仪表＝有形表计（可读数 / 有量纲，如出口压力表）；区域＝空间范围（罐壁 / 管廊 / 地面）。
+   *              与巡检目标台账的 `targetKind` 同口径：检测项增删改后同步到台账，
+   *              供「巡检目标台账」按装置 / 空间与区域归类。缺省按「仪表」处理。
+   */
+  targetKind?: "仪表" | "区域";
   /** 采集方式 */
   kind: CaptureKind;
   unit: string;
@@ -376,7 +465,13 @@ export interface Instrument {
 }
 
 /** 巡检要求分类：这一类要求"看什么" */
-export type RequirementKind = "可见异常" | "读数识别" | "状态判别" | "声音判别";
+export const requirementKinds = [
+  "可见异常",
+  "读数识别",
+  "状态判别",
+  "声音判别",
+] as const;
+export type RequirementKind = (typeof requirementKinds)[number];
 
 /** 判定方式：这一类要求"怎么判" */
 export type JudgeType = "数值范围" | "期望状态" | "有无目标" | "等级评分";
@@ -387,6 +482,23 @@ export interface Requirement {
   name: string;
   kind: RequirementKind;
   description: string;
+  /**
+   * 适用的目标类型（TGT-01 口径）
+   * @description 仪表 = 有形表计（看读数 / 看阀位）；环境 / 区域 = 空间范围（气体 / 红外 / 声纹 / AI 行为 / 拍照）。
+   *              台账抽屉按目标类型过滤巡检要求，避免把"看仪表读数"配到区域类目标上
+   */
+  targetKinds: ("仪表" | "环境" | "区域")[];
+  /**
+   * 默认采集方式（决定需要哪种机器人上装能力）
+   * @description 仪表类目标用仪表自己的采集方式；环境 / 区域类目标没有仪表，采集方式由巡检要求给出
+   */
+  capture: CaptureKind;
+  /**
+   * 检测类型（匹配告警模板的口径，见 alarmTemplates.kindOfTarget）
+   * @description 环境 / 区域类目标常常没有"有量纲的单位"（声纹、AI 行为），
+   *              只按单位换算会猜成"阀门状态"；因此由巡检要求显式声明，留空 = 按台账单位换算
+   */
+  detectKind?: import("./alarmTemplates").ApplyKind;
   /** 背后的算法 / AI 表达方式（默认值，巡检目标台账可覆盖） */
   algorithm: string;
   /** 默认判定方式与阈值（可被巡检目标台账覆盖） */
@@ -400,22 +512,58 @@ export interface Requirement {
   needVideo?: boolean;
   needReview?: boolean;
   cycle?: string;
+  /** 版本号：每次保存自增（后台管理 › 巡检要求管理维护） */
+  version?: number;
+  /** 最近修改时间（展示用） */
+  updatedAt?: string;
 }
 
 /**
+ * 告警等级：一级（最严重，需立即处置）/ 二级（需关注）/ 三级（提示）
+ * @description 与处置机制一一对应；AI 状态异常固定三级，风险信息异常按检测项风险等级
+ */
+export type AlarmLevel = "一级" | "二级" | "三级";
+/** 告警等级清单（与告警页筛选、驾驶舱分级、消息推送标签同源） */
+export const ALARM_LEVELS: AlarmLevel[] = ["一级", "二级", "三级"];
+/** 告警等级说明：一眼看懂分级含义 */
+export const ALARM_LEVEL_DESC: Record<AlarmLevel, string> = {
+  一级: "需立即处置：可能造成停机 / 安全风险，同步通知值班主管",
+  二级: "需关注：指标超限或有劣化趋势，按班次跟进处置",
+  三级: "提示：识别异常 / 轻微超限，记录并纳入观察",
+};
+/**
  * 告警设置（**整个平台唯一的告警配置入口**，挂在巡检目标台账上）
  * @description 巡检点 / 点位不提供告警配置：巡检点的判定直接复用所绑业务目标的
- *              阈值（`judge/min/max/expected`）与这里的三项设置（是否告警 / 等级 / 通知）
+ *              阈值（`judge/min/max/expected`）与这里的设置（等级 / 通知 / 引用模板）。
+ *              **平台没有「告警开关」**：判定异常即告警；要停止判定只能关台账的「是否巡检」
  */
 export interface BusinessAlarm {
-  /** 是否产生告警（关闭时只记录结果与证据，不生成告警、不进入待确认） */
-  on: boolean;
-  /** 告警等级：决定告警列表分级与工单 SLA（紧急 5 / 重要 15 / 一般 60 分钟） */
-  level: "一般" | "重要" | "紧急";
-  /** 触发条件补充说明；一期只支持"单次超限即告警" */
+  /**
+   * 告警规则来源（台账「3、告警规则」选择）
+   * @description 模板 = 选现有模板（触发条件 / 触发逻辑 / 等级 / 声光报警 / 处置流程由模板下发）；
+   *              手动 = 手动输入（用台账自己的判定口径）。老数据缺省按"手动"处理
+   */
+  source?: "模板" | "手动";
+  /** 告警等级：决定告警列表分级（一级 / 二级 / 三级） */
+  level: AlarmLevel;
+  /** 触发条件补充说明（手动来源时可写依据；模板来源时按模板回显） */
   trigger?: string;
   /** 通知对象（岗位 / 角色），随告警记录一并带出 */
   notify?: string[];
+  /**
+   * 关联的告警模板（后台管理 › 告警模板管理，source = 模板 时生效）
+   * @description 选中后本目标的触发条件 / 触发逻辑 / 等级 / 声光报警 / 处置流程都按该模板走
+   *              （一处维护、多点引用）；留空 = 按检测类型自动套用后台管理的启用模板
+   */
+  templateId?: string;
+  /** 手动来源：触发逻辑（单次即触发 = 识别即触发 / 连续确认） */
+  triggerMode?: "单次即触发" | "连续确认";
+  /** 手动来源：连续确认次数（至少 2） */
+  consecutive?: number;
+  /** 手动来源：声光报警持续时长（秒），0 = 不启动 */
+  alarmSeconds?: number;
+  /** 手动来源：处置流程步骤（受理后按此逐条复检） */
+  flow?: string[];
 }
 
 /**
@@ -464,7 +612,7 @@ export interface BusinessTarget {
   createdAt?: string;
 }
 
-/** 设备主数据（阶段③：Excel/CSV/API 导入 → 待审核 → 生效） */
+/** 设备主数据（阶段③：Excel/CSV/API 导入 → 直接生效） */
 export interface DeviceAsset {
   /** 设备唯一编码（业务身份的唯一依据） */
   id: string;
@@ -480,7 +628,6 @@ export interface DeviceAsset {
   items: InspectItem[];
   photo?: string;
   remark?: string;
-  reviewState: "待审核" | "已通过" | "已驳回";
   /**
    * 设备启停：停用后，含该设备点位的任务创建 / 派单被拦截。
    * @description 替代旧口径 `extras.category === "equipment"`（种子里从无该类数据，该校验一直空转）
@@ -488,12 +635,6 @@ export interface DeviceAsset {
   state?: "在用" | "停用";
   /** 所属厂区（清单里的厂区列）：指标按厂区裁剪时用；缺省时不参与裁剪 */
   region?: string;
-  /** 导入批次（批量导入时写入；标注页「＋快速新建」不写） */
-  importBatch?: string;
-  /** 导入时间 */
-  importedAt?: string;
-  /** 审核意见（驳回原因等） */
-  reviewNote?: string;
 }
 
 /** 逻辑巡检点（阶段④：只表达"要巡检什么"，不含坐标） */
@@ -524,6 +665,27 @@ export interface Route {
   version: number;
 }
 
+/**
+ * 跨图切换点（**地图拓扑**的一条边）
+ * @description 机器狗一次只加载一张 SLAM 地图做局部定位，跨图巡检时必须在
+ *              「来源地图的边界点」切换到「目标地图」，才能继续覆盖另一张图所属的那部分厂区；
+ *              本实体即这条拓扑边：记录两端地图与各自的切换位置。
+ * @interaction 由「资源与地图 › 空间管理」维护，引擎动作 MAP_SWITCH_ADD / _REMOVE / _STATE 写入
+ */
+export interface MapSwitchPoint {
+  id: string;
+  name: string;
+  /** 来源地图 id */
+  fromMapId: string;
+  /** 目标地图 id */
+  toMapId: string;
+  /** 切换点在来源地图上的位置（**底图百分比**，来源图的局部界线） */
+  from: { x: number; y: number };
+  /** 切换点在目标地图上的位置（**底图百分比**，进入目标图后的接驳位） */
+  to: { x: number; y: number };
+  state: "启用" | "停用";
+}
+
 /** 试采回执（阶段⑤后半：机器人批量跑候选点的回执，原型为 Mock） */
 export interface TrialReceipt {
   pointId: string;
@@ -540,17 +702,6 @@ export interface TrialReceipt {
 }
 /** 机型：三类巡检机器统称“巡检机器”，不做三套系统 */
 export type DeviceType = "机器狗" | "四轮车" | "挂轨";
-
-/** 移动能力标签：与载荷能力 capabilities 分离，决定任务可否下发与地图图层 */
-export type MobilityCapability =
-  | "爬楼"
-  | "越障"
-  | "跨楼层"
-  | "高速"
-  | "大负载"
-  | "道路行驶"
-  | "固定轨道"
-  | "长时在线";
 
 /** 机型特有约束：进入调度校验与充电规划 */
 export interface DeviceConstraints {
@@ -573,10 +724,8 @@ export interface Robot {
   state:
     "空闲" | "执行中" | "暂停" | "人工接管" | "离线" | "充电" | "返航中" | "故障" | "维护";
   mapId: string;
-  /** 已同步的空间版本 m{n} */
+  /** 已同步的空间版本 V{n} */
   mapVersion: number;
-  /** 已同步的标定数据版本 c{n}（来自独立标定集合，与地图空间版本解耦） */
-  calibrationVersion: number;
   current?: string;
   x: number;
   y: number;
@@ -584,8 +733,6 @@ export interface Robot {
   posture?: string;
   /** 机型：机器狗 / 四轮车 / 挂轨 */
   deviceType: DeviceType;
-  /** 移动能力标签，见 MobilityCapability */
-  mobility: MobilityCapability[];
   /** 机型特有约束 */
   constraints: DeviceConstraints;
   /** 健康度评分 0-100（电池衰减 / 故障率 / 里程综合） */
@@ -593,9 +740,12 @@ export interface Robot {
   /** 固件版本 */
   firmware: string;
 }
+/**
+ * 任务快照：继承 `Point`（含统一坐标系 `world`）；任务下发时以 `world` 为巡检点权威坐标，
+ * 底图百分比 `x/y` 仅作回退展示。
+ */
 export interface Snapshot extends Point {
   mapVersion: number;
-  calibrationVersion: number;
   /**
    * 创建任务时推导出的到位原子动作列表（快照：不随后续设备主数据 / 采集方式变更而变）
    * @description 一个停靠位可覆盖多个检测目标，故为列表（如同时"拍照"+"采集红外热像"）
@@ -681,14 +831,12 @@ export interface Task {
   blockedReason?: string;
   nextReportAt?: number;
   alarmId?: string;
-  priority: "普通" | "高" | "紧急";
   taskType: TaskType;
   atomicActions: AtomicAction[];
   state: TaskStatus;
   robotId?: string;
   mapId: string;
   mapVersion: number;
-  calibrationVersion: number;
   items: Snapshot[];
   stage: number;
   index: number;
@@ -696,9 +844,6 @@ export interface Task {
   skipped: string[];
   failure?: string;
   retries: number;
-  duration: number;
-  /** 任务所需移动能力（如罐顶需爬楼、轨道区段需固定轨道），调度时按机型能力校验 */
-  requiredMobility?: MobilityCapability[];
   dispatchId?: string;
   created: string;
   startedAt?: string;
@@ -711,7 +856,6 @@ export interface Template {
   id: string;
   name: string;
   points: string[];
-  priority: "普通" | "高" | "紧急";
   end: string;
   /** 模板状态：启用后计划方可引用；停用仅存档不参与生成 */
   state: "启用" | "停用";
@@ -746,18 +890,16 @@ export interface Result {
   recognized: string;
   final: string;
   unit: string;
+  /** 风险信息：按检测项规则判定的风险（true = 风险异常） */
   abnormal: boolean;
+  /** AI 状态：识别是否给出可用结论（true = AI 状态异常，如识别结果为空 / 无有效读数） */
+  aiAbnormal?: boolean;
   status: string;
+  /** 未做判定的原因（规则未配置 / 识别无效时记录，供用户判断是否可信），可选 */
+  triggerReason?: string;
   source: string;
   confidence: number;
   time: string;
-  reviews: {
-    value: string;
-    reason: string;
-    time: string;
-    conclusion?: string;
-    finalState?: string;
-  }[];
 }
 /** 告警分类：业务场景（设备/工艺指标超限） vs 机器人本体异常（机器人自身故障/状态） */
 export type AlarmCategory = "业务" | "机器人";
@@ -771,55 +913,32 @@ export const ALARM_CATEGORY_DESC: Record<AlarmCategory, string> = {
   机器人: "机器人本体异常：传感器、通信、定位、电量、急停、固件、里程保养等",
 };
 
-/** 告警分级处置机制：不同级别对应不同的处理流程与推送策略 */
-export interface AlarmLevelPolicy {
-  /** 是否自动派发处置工单 */
-  autoWorkOrder: boolean;
-  /** SLA 档位（影响工单 sla 阈值与超时升级） */
-  sla: "紧急" | "高" | "普通";
-  /** 推送人群 */
-  notify: string;
-  /** 是否需要现场确认（而非远程即可闭环） */
-  onSiteConfirm: boolean;
-  /** 一句话处置机制说明 */
-  mechanism: string;
+/** 复检步骤：受理后按引用模板的处置流程逐条反馈 */
+export interface VerifyStep {
+  /** 步骤文字（受理时按当时引用的模板落库，模板后续修改不影响在办的复检） */
+  text: string;
+  /** 是否已完成 */
+  done: boolean;
+  /** 完成时间 */
+  at?: string;
 }
-
 /**
- * 告警分级处置策略：级别决定"怎么处理"，分类决定"推给谁/归哪类"
- * @description 紧急=立即处置并升级；重要=限时派单；一般=批量复核；其他=仅记录不计入未关闭
+ * 反馈（复检）流程
+ * @description 只有「受理」的告警进入：处置流程（引用自告警模板）逐条回馈是否完成，
+ *              全部完成即有效闭环；未闭环超过 30 天自动判定为无效闭环（口径见 selectors.verifyStateOf）
  */
-export const ALARM_LEVEL_HANDLING: Record<string, AlarmLevelPolicy> = {
-  紧急: {
-    autoWorkOrder: true,
-    sla: "紧急",
-    notify: "值班主管 + 现场班组",
-    onSiteConfirm: true,
-    mechanism: "立即处置：自动派单并升级，强制现场确认闭环",
-  },
-  重要: {
-    autoWorkOrder: true,
-    sla: "高",
-    notify: "责任人 + 巡检管理员",
-    onSiteConfirm: false,
-    mechanism: "限时派单：推送责任人，可远程确认后现场复核",
-  },
-  一般: {
-    autoWorkOrder: false,
-    sla: "普通",
-    notify: "巡检管理员",
-    onSiteConfirm: false,
-    mechanism: "提示类：进入批量复核队列，不强制派单",
-  },
-  其他: {
-    autoWorkOrder: false,
-    sla: "普通",
-    notify: "系统",
-    onSiteConfirm: false,
-    mechanism: "记录类：已恢复/已关闭不计入未关闭统计",
-  },
-};
-
+export interface VerifyFlow {
+  /** 进入复检的时间（= 受理时间） */
+  startedAt: string;
+  /** 处置流程步骤清单 */
+  steps: VerifyStep[];
+  /** 复检结论：待反馈 / 有效闭环 / 无效闭环 */
+  state: "待反馈" | "有效闭环" | "无效闭环";
+  /** 闭环时间 */
+  closedAt?: string;
+  /** 闭环说明 / 依据 */
+  note?: string;
+}
 export interface Alarm {
   id: string;
   /** 告警分类：业务场景 / 机器人本体异常（新增维度，与级别正交） */
@@ -833,16 +952,22 @@ export interface Alarm {
   /** 关联机器人：机器人本体异常必填，业务告警可选（记录执行机） */
   robotId?: string;
   name: string;
-  level: string;
+  /** 告警等级：一级 / 二级 / 三级 */
+  level: AlarmLevel;
   state: "待确认" | "处理中" | "待复查" | "已恢复" | "已关闭";
   notes: string[];
-  /**
-   * ALM-05：处置时标注「有效 / 无效」告警（可选），用于统计机器人报警准确率 / 误报率。
-   */
-  validity?: "有效" | "无效";
-  /** 处置机制摘要（按级别自动推导，可覆盖；用于详情/推送展示"该怎么处理"） */
+  /** ALM-05 处理时间：人工提交处理时写入；为空表示未处理，非空后不允许二次编辑 */
+  handledAt?: string;
+  /** ALM-05 处理结果：受理（转现场处置）/ 忽略（记录后不处置） */
+  handleResult?: "受理" | "忽略";
+  /** ALM-05 处理说明 / 依据（与 notes 里的处理留痕同源，供处理情况表单直接回显） */
+  handleNote?: string;
+  /** ALM-05 是否误报：人工判定，用于统计报警准确率（准确率 = 已处理中非误报占比） */
+  falsePositive?: boolean;
+  /** 反馈（复检）流程：仅「受理」的告警进入（「忽略」= 不处置，不需要复检） */
+  verify?: VerifyFlow;
+  /** 处置机制摘要（按级别自动推导，可覆盖） */
   handle?: string;
-  reviewTask?: string;
   time: string;
 }
 export interface Sync {
@@ -850,8 +975,9 @@ export interface Sync {
   mapId: string;
   robotId: string;
   mapVersion: number;
-  calibrationVersion: number;
   state: "传输中" | "校验中" | "待激活" | "已同步" | "失败";
+  /** 下发登记时间（用于「每个版本 × 每台机器」的下发记录展示） */
+  at?: string;
   reason?: string;
 }
 export interface Change {
@@ -863,7 +989,6 @@ export interface Change {
   note: string;
   state: "待确认" | "维护中" | "待同步" | "已完成" | "已驳回";
   version?: number;
-  calibrationVersion?: number;
 }
 export interface Session {
   startedAt?: string;
@@ -903,9 +1028,18 @@ export interface Extra {
 export interface State {
   systemRules?: import("./alarmRules").SystemRules;
   alarmRules?: import("./alarmRules").AlarmRule[];
+  /**
+   * 告警模板（后台管理 › 告警模板管理）
+   * @description 名称 + 触发条件 + 触发逻辑 + 声光报警 + 默认等级 + 处理流程；
+   *              原「告警规则库」已并入本集合（规则库的级别 / 类型 / 阈值 / 触发条件都是模板已有字段）
+   */
+  alarmTemplates?: import("./alarmTemplates").AlarmTemplate[];
   fieldDevices?: Record<string, import("./fieldControl").FieldState>;
-  /** 数据模型版本：1→2 工单/验收/接管/反馈/现场/资产集合；2→3 模板 state；5→6「地图→任务」链路集合 */
-  schema: 6;
+  /**
+   * 数据模型版本：1→2 接管/反馈/现场/资产集合；2→3 模板 state；5→6「地图→任务」链路集合；
+   * 6→7 告警处理口径（validity「有效 / 无效」→ handledAt / handleResult / falsePositive）
+   */
+  schema: 7;
   maps: MapAsset[];
   points: Point[];
   robots: Robot[];
@@ -921,8 +1055,6 @@ export interface State {
   extras: Extra[];
   requests: { businessId: string; taskId: string }[];
   /** ↓ 以下为 schema 2 新增集合 */
-  workOrders: WorkOrder[];
-  acceptances: Acceptance[];
   takeovers: Takeover[];
   feedbacks: Feedback[];
   fieldOrders: FieldOrder[];
@@ -942,10 +1074,16 @@ export interface State {
   requirements?: Requirement[];
   /** 巡检目标台账（仪表 + 巡检要求 + 算法 + 阈值 + 判断标准） */
   businessTargets?: BusinessTarget[];
+  /** 机器人上装能力主数据（后台管理 › 机器人上装能力） */
+  robotPayloads?: RobotPayload[];
+  /** 算法（AI 能力）清单（后台管理 › 算法模板管理） */
+  algoConfigs?: AlgoConfig[];
   /** 逻辑巡检点（阶段④） */
   logicalPoints?: LogicalPoint[];
   /** 巡检路线（阶段⑦） */
   routes?: Route[];
+  /** 跨图切换点（空间管理 › 地图拓扑）：每张碎片地图之间的切换位置 */
+  mapSwitchPoints?: MapSwitchPoint[];
   /** 现场踩点记录（阶段①） */
   siteSurveys?: SiteSurvey[];
   /** 轨迹采样点（阶段①） */
@@ -965,59 +1103,6 @@ export interface State {
   pendingCalibration?: PendingCalibration;
   /** 当前演示角色 ID，用于角色切换器（原型阶段代替真实登录） */
   roleId: string;
-}
-
-/** 工单状态机：告警 → 派单 → 处置 → 验收 → 闭环 */
-export type WorkOrderState =
-  | "待派单"
-  | "已派单"
-  | "已接单"
-  | "处置中"
-  | "待验收"
-  | "已验收"
-  | "已关闭";
-
-/** SLA 分级：紧急 / 高 / 普通 */
-export type SlaLevel = "紧急" | "高" | "普通";
-
-export interface WorkOrder {
-  id: string;
-  alarmId: string;
-  pointId: string;
-  title: string;
-  level: SlaLevel;
-  state: WorkOrderState;
-  /** 当前指派人 */
-  assignee?: string;
-  /** 处置执行人：验收互斥校验用（执行人 ≠ 验收人） */
-  executor?: string;
-  /** SLA 剩余分钟，负数表示已超时 */
-  slaLeft: number;
-  slaState: "正常" | "预警" | "已升级";
-  /** 消耗备件 ID 列表 */
-  spares: string[];
-  note: string;
-  created: string;
-  /** 责任链时间线 */
-  timeline: { time: string; actor: string; action: string; detail: string }[];
-}
-
-export type AcceptanceState = "待验收" | "通过" | "驳回";
-
-export interface Acceptance {
-  id: string;
-  workOrderId: string;
-  /** 验收人：与工单 executor 互斥 */
-  acceptor: string;
-  state: AcceptanceState;
-  /** 驳回理由（走模板） */
-  reason?: string;
-  /** 误报标记：进入 feedbacks 供 AI 复核域消费 */
-  falsePositive: boolean;
-  /** 处置前后对比证据 */
-  compareBefore?: string;
-  compareAfter?: string;
-  time: string;
 }
 
 /** 远程接管申请：插在现有 TAKEOVER 之前，高风险操作需双人复核 */

@@ -1,16 +1,25 @@
 /**
  * @file MonitorCockpit.tsx
- * @description 管理驾驶舱（重构版）：**顶部概览 + 底部双栏（70/30）** 网格布局，不再使用左中右三栏。
+ * @description 管理驾驶舱（重构版）：**数字孪生场景 + 左右可折叠数据面板** 布局（参考「左右块折叠 / 展开」设计稿）。
  *   ① Header：左=系统名称 + 两舱切换，中=全局筛选（区域 / 时间），右=实时时间 + 系统状态指示灯；
- *   ② 全局 KPI：一排 4 个扁平大数字卡片（今日巡检 / 未处理报警 / 任务完成率 / 在线设备）；
- *   ③ 左侧主工作区（70%）：上=**实时报警数据表格**（可滚动 · 按等级红橙底色区分）、
- *      下=任务情况环形图(40%) + 报警排行 TOP10 横向条形图(60%)；
- *   ④ 右侧辅助监控区（30%）：上=风险设备紧凑卡片（状态呼吸灯）、下=告警趋势折线图（延伸高度）。
+ *   ② 综合总览：中央=厂区点云场景（MapCanvas）铺满主区 + 顶部悬浮 KPI 徽标；
+ *      左栏（可折叠）= 基础数据 / 任务情况环形图 / 风险设备；
+ *      右栏（可折叠）= 实时报警紧凑列表 / 报警排行 TOP10 / 告警趋势折线；
+ *      左右栏以毛玻璃半透明卡片浮于场景之上，贴边箭头整体收起 / 展开，折叠后场景全屏；
+ *   ③ KPI 以场景悬浮徽标呈现（原「运营管理」视图与切换入口已移除）。
  *   暗色主题：slate-950 底 / slate-900 卡片 / slate-800 边框，强调色 cyan-500 + red-500；图表统一用 Recharts。
- * @interaction 由 CockpitScreen 按 overview 渲染；指标口径取自 data/metrics.ts，历史趋势取自 data/metricHistory.ts
+ * @interaction 由 CockpitScreen 按 overview 渲染；指标口径取自 data/metrics.ts，历史趋势取自 data/metricHistory.ts；
+ *              中央场景复用 components/MapCanvas.tsx（厂区点云画布）
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, MapPin, Maximize, Minimize, TriangleAlert } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  MapPin,
+  Maximize,
+  Minimize,
+} from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -29,6 +38,7 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { scopedState } from "../data/metrics";
 import { ScreenTopBar, type CockpitId } from "../components/ScreenTopBar";
+import { MapCanvas } from "../components/MapCanvas";
 
 /** 任务状态分布配色（与状态语义一一对应，用于环形图与图例） */
 const TASK_COLORS = {
@@ -50,8 +60,8 @@ const RANK_COLORS = [
   "#c084fc",
   "#facc15",
 ];
-/** 告警等级加权分：紧急 3 / 重要 2 / 一般 1 */
-const LEVEL_W = { 紧急: 3, 重要: 2, 一般: 1 } as const;
+/** 告警等级加权分：一级 3 / 二级 2 / 三级 1 */
+const LEVEL_W = { 一级: 3, 二级: 2, 三级: 1 } as const;
 /** 风险等级 → 指示灯色 */
 const RISK_DOT = { 高: "#ef4444", 中: "#f59e0b", 低: "#22c55e", "—": "#64748b" } as const;
 const RISK_TEXT = { 高: "高", 中: "中", 低: "低", "—": "—" } as const;
@@ -94,8 +104,10 @@ export function MonitorCockpit({
   const [range, SETRANGE] = useState<RangeKey>("近7天");
   /** 实时时钟 */
   const [clock, SETCLOCK] = useState(() => new Date());
-  const [view, SETVIEW] = useState<"综合总览" | "运营管理">("综合总览");
   const [fs, FS] = useState(false);
+  /** 左右数据面板折叠状态（true=展开；折叠后中央场景全屏） */
+  const [openL, OPENL] = useState(true);
+  const [openR, OPENR] = useState(true);
   const shellRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -128,8 +140,8 @@ export function MonitorCockpit({
 
   // ── KPI ──
   const todayTasks = s.tasks.filter((t) => t.created.slice(0, 10) === TODAY).length;
-  const openAlarms = sc.alarms.filter((a) => a.state !== "已关闭");
-  const openAlarmUrgent = openAlarms.filter((a) => a.level === "紧急").length;
+  const openAlarms = sc.alarms.filter((a) => !a.handledAt);
+  const openAlarmUrgent = openAlarms.filter((a) => a.level === "一级").length;
   const doneInRange = tasksInRange.filter((t) =>
     ["完成", "部分完成"].includes(t.state),
   ).length;
@@ -138,9 +150,17 @@ export function MonitorCockpit({
     : 0;
   const onlineRobots = sc.robots.filter((r) => r.state !== "离线").length;
 
+  /** 全局 KPI（综合总览=场景悬浮徽标；运营管理=扁平卡片行），两处共用同一口径 */
+  const kpis = [
+    { label: "今日巡检", value: String(todayTasks), cls: "cyan", sub: `${range} ${tasksInRange.length} 次` },
+    { label: "未处理报警", value: String(openAlarms.length), cls: openAlarms.length ? "red" : "cyan", sub: `紧急 ${openAlarmUrgent} 条` },
+    { label: "任务完成率", value: `${completeRate}%`, cls: "cyan", sub: `完成 ${doneInRange} / ${tasksInRange.length}` },
+    { label: "在线设备", value: String(onlineRobots), cls: "cyan", sub: `共 ${sc.robots.length} 台` },
+  ];
+
   // ── 左·上：实时报警数据表格（等级优先 + 时间倒序） ──
   const alarmRows = useMemo(() => {
-    const rank = (lv: string) => (lv === "紧急" ? 0 : lv === "重要" ? 1 : 2);
+    const rank = (lv: string) => (lv === "一级" ? 0 : lv === "二级" ? 1 : 2);
     return [...openAlarms]
       .sort(
         (a, b) => rank(a.level) - rank(b.level) || b.time.localeCompare(a.time),
@@ -213,7 +233,7 @@ export function MonitorCockpit({
         if (!cur) return;
         cur.alarmCount += 1;
         cur.score += LEVEL_W[a.level as keyof typeof LEVEL_W] ?? 1;
-        if (a.level === "紧急") cur.urgent += 1;
+        if (a.level === "一级") cur.urgent += 1;
       });
     return [...m.values()]
       .sort((a, b) => b.score - a.score || b.alarmCount - a.alarmCount || a.device.localeCompare(b.device))
@@ -235,12 +255,6 @@ export function MonitorCockpit({
     }
     return out;
   }, [sc.alarms, trendDays]);
-
-  // ── 运营管理（非管理员默认视图）：过程指标表 ──
-  const incomplete = s.tasks.filter(
-    (t) => t.deadline && Date.parse(t.deadline) < Date.now() && !["完成", "取消", "失败", "超期"].includes(t.state),
-  ).length;
-  const woOpen = s.workOrders.filter((w) => !["已验收", "已关闭"].includes(w.state)).length;
 
   return (
     <div className="cockpit-screen mcp-screen" ref={shellRef}>
@@ -275,115 +289,87 @@ export function MonitorCockpit({
                 </select>
               </label>
             </div>
-            <div className="mcp-status">
-              <span className="mcp-led ok">
-                <i />
-                平台正常
-              </span>
-              <span className={`mcp-led ${onlineRobots < sc.robots.length ? "warn" : "ok"}`}>
-                <i />
-                在线 {onlineRobots}/{sc.robots.length}
-              </span>
-              <span className={`mcp-led ${openAlarmUrgent > 0 ? "bad" : "ok"}`}>
-                <i />
-                一级告警 {openAlarmUrgent}
-              </span>
-              <button
-                className="cs-nav-icon"
-                title={fs ? "退出全屏" : "全屏展示"}
-                onClick={toggleFullscreen}
-              >
-                {fs ? <Minimize size={15} /> : <Maximize size={15} />}
-              </button>
-            </div>
+            <button
+              className="cs-nav-icon"
+              title={fs ? "退出全屏" : "全屏展示"}
+              onClick={toggleFullscreen}
+            >
+              {fs ? <Minimize size={15} /> : <Maximize size={15} />}
+            </button>
           </>
         }
       />
 
-      {/* ── 全局 KPI：一排 4 个扁平大数字卡片 ── */}
-      <section className="mcp-kpis">
-        <div className="mcp-kpi">
-          <span>今日巡检</span>
-          <b className="cyan">{todayTasks}</b>
-          <small>{range} {tasksInRange.length} 次</small>
-        </div>
-        <div className="mcp-kpi">
-          <span>未处理报警</span>
-          <b className={openAlarms.length ? "red" : "cyan"}>{openAlarms.length}</b>
-          <small>紧急 {openAlarmUrgent} 条</small>
-        </div>
-        <div className="mcp-kpi">
-          <span>任务完成率</span>
-          <b className="cyan">{completeRate}%</b>
-          <small>完成 {doneInRange} / {tasksInRange.length}</small>
-        </div>
-        <div className="mcp-kpi">
-          <span>在线设备</span>
-          <b className="cyan">{onlineRobots}</b>
-          <small>共 {sc.robots.length} 台</small>
-        </div>
-      </section>
+      {/* ── 数字孪生场景 + 左右可折叠数据面板（参考「左右块折叠 / 展开」设计稿）──
+          中央厂区点云场景铺满主区；左右栏毛玻璃卡片浮于场景上，
+          贴边箭头整体收起 / 展开，折叠后场景全屏 */}
+      <div className="mcp-main mcp-scene-wrap">
+          {/* 中央场景：厂区点云画布（只读展示，不接遥控交互） */}
+          <div className="mcp-scene">
+            <MapCanvas
+              points={sc.points}
+              robots={sc.robots}
+              chargers={s.chargers}
+              rails={s.railSections}
+              fit="xMidYMid slice"
+            />
+          </div>
+          {/* 场景悬浮 KPI：紧凑玻璃徽标，不占面板版面 */}
+          <div className="mcp-scene-kpis">
+            {kpis.map((k) => (
+              <span className="mcp-chip" key={k.label}>
+                {k.label}
+                <b className={k.cls}>{k.value}</b>
+                <small>{k.sub}</small>
+              </span>
+            ))}
+          </div>
+          <div className="mcp-scene-tag">数字孪生场景 · {region}</div>
 
-      {view === "综合总览" ? (
-        /* ── 底部双栏：左 70% 主工作区 / 右 30% 辅助监控 ── */
-        <div className="mcp-main">
-          <div className="mcp-left">
-            {/* 左·上：实时报警数据表格 */}
+          {/* ══ 左栏：基础数据 / 任务情况 / 风险设备 ══ */}
+          <aside className={"mcp-side mcp-side-l" + (openL ? "" : " folded")}>
+            {/* 基础数据：点位 / 机器人 / 任务 / 报警 / 充电桩 / 轨道 紧凑统计 */}
             <section className="mcp-card">
               <div className="mcp-card-head">
-                <h3>实时报警</h3>
-                <small>
-                  按等级排序 · 未处理优先 · 共 {openAlarms.length} 条（紧急 {openAlarmUrgent}）
-                </small>
+                <h3>基础数据</h3>
+                <small>{region} · 实时</small>
               </div>
-              <div className="mcp-table-scroll">
-                <table className="mcp-table">
-                  <thead>
-                    <tr>
-                      <th>报警等级</th>
-                      <th>设备 / 区域</th>
-                      <th>报警内容</th>
-                      <th>时间</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {alarmRows.map((a) => {
-                      const place = placeOf(a.pointId);
-                      return (
-                        <tr key={a.id} className={"lv-" + a.level}>
-                          <td>
-                            <span className={"mcp-lv lv-" + a.level}>{a.level}</span>
-                          </td>
-                          <td>
-                            <b>{place.device}</b>
-                            <small>{place.region}</small>
-                          </td>
-                          <td className="mcp-alarm-name">{a.name}</td>
-                          <td className="mcp-time">{a.time}</td>
-                          <td>
-                            <button className="mcp-btn" onClick={() => go("alarm", a.id)}>
-                              处置
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {!alarmRows.length && (
-                      <tr>
-                        <td colSpan={5} className="mcp-empty">
-                          当前无未处理报警。
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <ul className="mcp-base">
+                <li>
+                  <span>巡检点位</span>
+                  <b>{sc.points.length}</b>
+                  <small>已启用 {sc.points.filter((p) => p.state === "已启用").length}</small>
+                </li>
+                <li>
+                  <span>巡检机器人</span>
+                  <b>{sc.robots.length}</b>
+                  <small>在线 {onlineRobots}</small>
+                </li>
+                <li>
+                  <span>今日任务</span>
+                  <b>{todayTasks}</b>
+                  <small>{range} 共 {tasksInRange.length}</small>
+                </li>
+                <li>
+                  <span>未处理报警</span>
+                  <b className={openAlarms.length ? "red" : ""}>{openAlarms.length}</b>
+                  <small>紧急 {openAlarmUrgent} 条</small>
+                </li>
+                <li>
+                  <span>充电桩</span>
+                  <b>{s.chargers.length}</b>
+                  <small>全厂</small>
+                </li>
+                <li>
+                  <span>轨道区段</span>
+                  <b>{s.railSections.length}</b>
+                  <small>全厂</small>
+                </li>
+              </ul>
             </section>
 
-            {/* 左·下：任务情况环形图(40%) + 报警排行 TOP10(60%) */}
-            <div className="mcp-lower">
-              <section className="mcp-card">
+            {/* 任务情况环形图（左栏中部） */}
+            <section className="mcp-card">
                 <div className="mcp-card-head">
                   <h3>任务情况</h3>
                   <small>{range} · 共 {taskTotal} 个任务</small>
@@ -422,9 +408,72 @@ export function MonitorCockpit({
                     </li>
                   ))}
                 </ul>
-              </section>
+            </section>
 
-              <section className="mcp-card">
+            {/* 风险设备（左栏收尾）：呼吸灯 + 等级徽标 */}
+            <section className="mcp-card">
+              <div className="mcp-card-head">
+                <h3>风险设备</h3>
+                <small>按被巡检设备聚合 · {range}</small>
+              </div>
+              <div className="mcp-risk-list">
+                {riskList.map((x) => (
+                  <div className="mcp-risk" key={x.device}>
+                    <span
+                      className={"mcp-breathe" + (x.level === "高" ? " is-bad" : x.level === "中" ? " is-warn" : "")}
+                      style={{ background: RISK_DOT[x.level] }}
+                    />
+                    <div className="mcp-risk-main">
+                      <b>{x.device}</b>
+                      <small>
+                        {x.pointCount} 个点位 · 告警 {x.alarmCount}
+                        {x.urgent > 0 ? ` · 紧急 ${x.urgent}` : ""}
+                      </small>
+                    </div>
+                    <span className={`mcp-risk-level lv-${x.level}`}>{RISK_TEXT[x.level]}</span>
+                  </div>
+                ))}
+                {!riskList.length && <p className="mcp-empty">当前筛选下无被巡检设备。</p>}
+              </div>
+            </section>
+          </aside>
+
+          {/* ══ 右栏：实时报警 / 报警排名 / 告警趋势 ══ */}
+          <aside className={"mcp-side mcp-side-r" + (openR ? "" : " folded")}>
+            {/* 实时报警：窄栏紧凑列表（等级徽标 + 内容 + 设备归属 + 就地处置） */}
+            <section className="mcp-card">
+              <div className="mcp-card-head">
+                <h3>实时报警</h3>
+                <small>
+                  按等级排序 · 共 {openAlarms.length} 条（紧急 {openAlarmUrgent}）
+                </small>
+              </div>
+              <div className="mcp-alarm-list">
+                {alarmRows.slice(0, 30).map((a) => {
+                  const place = placeOf(a.pointId);
+                  return (
+                    <div key={a.id} className={"mcp-alarm-item lv-" + a.level}>
+                      <span className={"mcp-lv lv-" + a.level}>{a.level}</span>
+                      <div className="mcp-alarm-main">
+                        <b>{a.name}</b>
+                        <small>
+                          {place.device} · {place.region}
+                        </small>
+                      </div>
+                      <div className="mcp-alarm-side">
+                        <time>{a.time.slice(5, 16)}</time>
+                        <button className="mcp-btn" onClick={() => go("alarm", a.id)}>
+                          处置
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {!alarmRows.length && <p className="mcp-empty">当前无未处理报警。</p>}
+              </div>
+            </section>
+
+            <section className="mcp-card">
                 <div className="mcp-card-head">
                   <h3>报警排行 TOP10</h3>
                   <small>按点位聚合 · {range}</small>
@@ -464,37 +513,8 @@ export function MonitorCockpit({
                   )}
                 </div>
               </section>
-            </div>
-          </div>
 
-          {/* 右 30%：风险设备 + 告警趋势 */}
-          <div className="mcp-right">
-            <section className="mcp-card">
-              <div className="mcp-card-head">
-                <h3>风险设备</h3>
-                <small>按被巡检设备聚合 · {range}</small>
-              </div>
-              <div className="mcp-risk-list">
-                {riskList.map((x) => (
-                  <div className="mcp-risk" key={x.device}>
-                    <span
-                      className={"mcp-breathe" + (x.level === "高" ? " is-bad" : x.level === "中" ? " is-warn" : "")}
-                      style={{ background: RISK_DOT[x.level] }}
-                    />
-                    <div className="mcp-risk-main">
-                      <b>{x.device}</b>
-                      <small>
-                        {x.pointCount} 个点位 · 告警 {x.alarmCount}
-                        {x.urgent > 0 ? ` · 紧急 ${x.urgent}` : ""}
-                      </small>
-                    </div>
-                    <span className={`mcp-risk-level lv-${x.level}`}>{RISK_TEXT[x.level]}</span>
-                  </div>
-                ))}
-                {!riskList.length && <p className="mcp-empty">当前筛选下无被巡检设备。</p>}
-              </div>
-            </section>
-
+            {/* 告警趋势（右栏收尾） */}
             <section className="mcp-card">
               <div className="mcp-card-head">
                 <h3>告警趋势</h3>
@@ -521,42 +541,24 @@ export function MonitorCockpit({
                 </ResponsiveContainer>
               </div>
             </section>
-          </div>
-        </div>
-      ) : (
-        /* 运营管理：过程指标（非管理员默认视图），保留原有业务动作 */
-        <div className="mcp-ops">
-          {[
-            { t: "任务与计划", rows: [["已超期任务", incomplete], ["待调度任务", tasksInRange.filter((x) => x.state === "待调度").length], ["临时插单", s.tasks.filter((x) => x.source !== "计划生成").length]] },
-            { t: "异常闭环", rows: [["未处理报警", openAlarms.length], ["工单未闭环", woOpen], ["一级告警", openAlarmUrgent]] },
-            { t: "设备与人员", rows: [["在线设备", onlineRobots], ["离线设备", sc.robots.length - onlineRobots], ["人工接管", s.takeovers.length]] },
-          ].map((card) => (
-            <section className="mcp-card" key={card.t}>
-              <div className="mcp-card-head">
-                <h3>{card.t}</h3>
-              </div>
-              <ul className="mcp-ops-list">
-                {card.rows.map(([k, v]) => (
-                  <li key={String(k)}>
-                    <span>{k}</span>
-                    <b>{v as number}</b>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
+          </aside>
 
-      {/* 总览 / 运营 视图切换（非管理员日常看运营过程指标） */}
-      <button
-        className="mcp-view-switch"
-        onClick={() => SETVIEW((v) => (v === "综合总览" ? "运营管理" : "综合总览"))}
-        title="切换综合总览 / 运营管理"
-      >
-        <TriangleAlert size={14} />
-        {view === "综合总览" ? "运营管理" : "综合总览"}
-      </button>
+          {/* 折叠按钮：展开时贴在面板外侧，收起后回到屏幕边缘（场景全屏） */}
+          <button
+            className={"mcp-fold mcp-fold-l" + (openL ? " open" : "")}
+            title={openL ? "收起左侧面板" : "展开左侧面板"}
+            onClick={() => OPENL((v) => !v)}
+          >
+            {openL ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
+          </button>
+          <button
+            className={"mcp-fold mcp-fold-r" + (openR ? " open" : "")}
+            title={openR ? "收起右侧面板" : "展开右侧面板"}
+            onClick={() => OPENR((v) => !v)}
+          >
+            {openR ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+          </button>
+      </div>
     </div>
   );
 }

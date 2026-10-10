@@ -5,6 +5,7 @@
  * @interaction Planning.tsx（新建 / 编辑计划弹窗）；能力可用性口径来自 data/robotCapabilities，绑定校验来自 data/planSchedule
  */
 import { useStore } from "../data/store";
+import { mapVer } from "../data/versionLabel";
 import { bindingReasons, requiredKinds } from "../data/planSchedule";
 import { Badge } from "./UI";
 import { capabilityMatrix } from "../data/robotCapabilities";
@@ -39,12 +40,10 @@ export function PlanRobotBinding({
     <div className="pb-detail">
       <div className="pb-detail-title">执行前提与能力可用性</div>
       <dl className="pb-facts">
-        <dt>移动能力</dt>
-        <dd>{cur.mobility.join(" / ")}</dd>
         <dt>执行前提</dt>
         <dd>
           {cur.state} · 电量 {cur.battery}% · 地图 {cur.mapId} m
-          {cur.mapVersion}/c{cur.calibrationVersion}
+          {mapVer(cur.mapVersion)}
         </dd>
         <dt>当前任务</dt>
         <dd>
@@ -55,7 +54,7 @@ export function PlanRobotBinding({
       </dl>
       {/* 能力可用性：与机器人管理页「能力、组件与业务影响」同口径 */}
       <div className="pb-avail">
-        {capabilityMatrix(cur).map((c) => (
+        {capabilityMatrix(s, cur).map((c) => (
           <span
             key={c.key}
             className={

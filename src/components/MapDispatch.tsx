@@ -2,11 +2,13 @@
  * @file MapDispatch.tsx
  * @description 地图下发与机器同步（地图管理内嵌抽屉）：**多选设备批量下发**，
  *              并跟踪每台的阶段回执（传输中 → 校验中 → 待激活 → 已同步）。
+ *              下发记录**只列本图**（最新在前）：这张图发给了哪几台机器、
+ *              发的是哪个版本、走到哪一步、失败原因是什么，一眼可查。
  * @interaction Maps.tsx → 地图详情 →「地图下发」抽屉
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { calibrationVersionOf } from "../data/mapCalibration";
+import { mapVer } from "../data/versionLabel";
 import { Badge, Btn, Empty, Note, Panel, Table } from "./UI";
 
 export function MapDispatch({ mapId }: { mapId: string }) {
@@ -15,16 +17,21 @@ export function MapDispatch({ mapId }: { mapId: string }) {
   const [sel, SEL] = useState<string[]>([]);
   if (!m) return <Note>地图不存在。</Note>;
   /** 该地图的标定数据版本 c{n}（来自独立标定集合，与地图空间版本解耦） */
-  const calVer = calibrationVersionOf(s, m.id);
-  const syncs = s.syncs.filter((x) => x.mapId === m.id);
-  const done = (rid: string) =>
-    s.syncs.some(
+  /**
+   * 本图的下发记录（最新在前，写入时 unshift；老缓存可能缺该集合，故兜底空数组）
+   * @description 记录只归到所属地图的详情页：每条含发给了哪台机器、发的哪个版本、
+   *              走到哪一步、什么时间、反馈是什么
+   */
+  const syncs = (s.syncs || []).filter((x) => x.mapId === m.id);
+  /** 可下发 = 区域已一致，或未分配区域（首次下发即归入本图区域） */
+  const dispatchable = s.robots.filter((r) => !r.region || r.region === m.region);
+  /** 该机器是否已持有「本图当前版本」的激活回执 */
+  const synced = (rid: string) =>
+    syncs.some(
       (x) =>
-        x.mapId === m.id &&
         x.robotId === rid &&
         x.state === "已同步" &&
-        x.mapVersion === m.version &&
-        x.calibrationVersion === calVer,
+        x.mapVersion === m.version,
     );
   /**
    * 维护窗口：区域不匹配不可下发；任务中需等结束；非空闲需等待
@@ -32,40 +39,32 @@ export function MapDispatch({ mapId }: { mapId: string }) {
    * @returns 一句话可用性说明
    */
   const windowOf = (r: (typeof s.robots)[number]) =>
-    r.region !== m.region
+    r.region && r.region !== m.region
       ? "不适用区域"
-      : r.current
-        ? "任务结束后"
-        : r.state === "空闲"
-          ? "当前可维护"
-          : "等待空闲";
+      : !r.region
+        ? "首次下发即归属本区域"
+        : r.current
+          ? "任务结束后"
+          : r.state === "空闲"
+            ? "当前可维护"
+            : "等待空闲";
   const toggle = (rid: string) =>
     SEL((old) => (old.includes(rid) ? old.filter((x) => x !== rid) : [...old, rid]));
   const send = () => {
     if (act({ type: "SYNC_BATCH", mapId: m.id, robotIds: sel })) SEL([]);
   };
+  /** 机器人名 / 地图名（记录里只有 id，展示时补上名称便于现场核对） */
+  const nameOf = (rid: string) =>
+    s.robots.find((r) => r.id === rid)?.name || rid;
+  const mapNameOf = (mid: string) =>
+    s.maps.find((x) => x.id === mid)?.name || mid;
   return (
     <>
-      {m.state === "草稿" && (
-        <Note>
-          <b>当前地图为草稿状态：</b>下发将自动定版为当前版本（m{m.version} / c{calVer}）并同步给所选设备。
-        </Note>
-      )}
-      <Note>
-        下发只登记“传输中”，**传输完成不等于已同步**——需机器人激活回执确认版本一致后，
-        平台才更新机器人实际版本；任务执行中需等待维护窗口。
-      </Note>
-      {/* MAP-05：换机器人后一键重下发（地图 + 巡检点 + 业务数据） */}
-      <Note>
-        <b>换机器人一键重下发（MAP-05）</b>：机器人坏了 / 换机时，勾选新设备点「下发」，
-        平台把<b>点云底图 + 巡检点坐标 + 业务数据</b>一次性重新同步到新机，新机即知道要干什么；
-        巡检路线 / 相关调整无需逐台重配。
-      </Note>
       <Panel
-        title={`选择设备下发 · 目标版本 m${m.version} / c${calVer}`}
+        title={`选择设备下发 · 目标版本 ${m.name} ${mapVer(m.version)}`}
         extra={
           <div className="actions">
-            <Btn onClick={() => SEL(s.robots.map((r) => r.id))}>全选</Btn>
+            <Btn onClick={() => SEL(dispatchable.map((r) => r.id))}>全选可下发</Btn>
             <Btn onClick={() => SEL([])}>清空</Btn>
             <Btn primary disabled={!sel.length} onClick={send}>
               下发 {sel.length || ""} 台
@@ -78,9 +77,11 @@ export function MapDispatch({ mapId }: { mapId: string }) {
             <input
               type="checkbox"
               aria-label="全选设备"
-              checked={!!s.robots.length && sel.length === s.robots.length}
+              checked={
+                !!dispatchable.length && sel.length === dispatchable.length
+              }
               onChange={(e) =>
-                SEL(e.target.checked ? s.robots.map((r) => r.id) : [])
+                SEL(e.target.checked ? dispatchable.map((r) => r.id) : [])
               }
             />,
             "设备",
@@ -94,6 +95,7 @@ export function MapDispatch({ mapId }: { mapId: string }) {
             <input
               type="checkbox"
               aria-label={`选择 ${r.name}`}
+              disabled={!!r.region && r.region !== m.region}
               checked={sel.includes(r.id)}
               onChange={() => toggle(r.id)}
             />,
@@ -101,42 +103,64 @@ export function MapDispatch({ mapId }: { mapId: string }) {
               {r.name}
               <small>{r.id}</small>
             </>,
-            r.region,
+            r.region || "未分配",
             <Badge>{r.state}</Badge>,
-            `${r.mapId} / m${r.mapVersion} / c${r.calibrationVersion}`,
+            r.mapId
+              ? `${mapNameOf(r.mapId)} ${mapVer(r.mapVersion)}`
+              : "未分配地图",
             windowOf(r),
-            done(r.id) ? <Badge>已同步</Badge> : <span className="muted">—</span>,
+            r.region && r.region !== m.region ? (
+              <span className="muted">不适用</span>
+            ) : synced(r.id) ? (
+              <Badge>已同步</Badge>
+            ) : (
+              <Badge tone="amber">待更新</Badge>
+            ),
           ])}
         />
       </Panel>
-      <Panel title="下发记录与模拟回执" extra={<span>{syncs.length} 条</span>}>
+      <Panel
+        title="下发记录"
+        extra={
+          <span>
+            {syncs.length} 条 · 覆盖 {new Set(syncs.map((x) => x.robotId)).size}{" "}
+            台设备
+          </span>
+        }
+      >
         {syncs.length ? (
           <Table
-            heads={["同步编号", "设备", "目标版本", "阶段", "反馈", "操作"]}
+            heads={["设备", "版本", "阶段", "下发时间", "反馈", "操作"]}
             rows={syncs.map((x) => [
-              x.id,
-              x.robotId,
-              `m${x.mapVersion} / c${x.calibrationVersion}`,
+              <>
+                {nameOf(x.robotId)}
+                <small>{x.robotId}</small>
+              </>,
+              mapVer(x.mapVersion),
               <Badge>{x.state}</Badge>,
+              x.at || "—",
               x.reason || "—",
-              <div className="actions">
-                <Btn
-                  disabled={x.state === "已同步"}
-                  onClick={() => act({ type: "SYNC_STEP", id: x.id })}
-                >
-                  {x.state === "失败"
-                    ? "重试"
-                    : x.state === "待激活"
-                      ? "确认激活回执"
-                      : "模拟下一阶段回执"}
-                </Btn>
-                <Btn
-                  disabled={x.state === "已同步" || x.state === "失败"}
-                  onClick={() => act({ type: "SYNC_STEP", id: x.id, fail: true })}
-                >
-                  模拟失败
-                </Btn>
-              </div>,
+              x.state === "已同步" ? (
+                <span className="muted">—</span>
+              ) : (
+                <div className="actions">
+                  <Btn onClick={() => act({ type: "SYNC_STEP", id: x.id })}>
+                    {x.state === "失败"
+                      ? "重试"
+                      : x.state === "待激活"
+                        ? "确认激活回执"
+                        : "模拟下一阶段回执"}
+                  </Btn>
+                  <Btn
+                    disabled={x.state === "失败"}
+                    onClick={() =>
+                      act({ type: "SYNC_STEP", id: x.id, fail: true })
+                    }
+                  >
+                    模拟失败
+                  </Btn>
+                </div>
+              ),
             ])}
           />
         ) : (

@@ -7,7 +7,6 @@ import {
   ensureCalibration,
   targetsOf,
   calibrationOf,
-  calibrationVersionOf,
   parsePointCalibration,
 } from "./mapCalibration";
 
@@ -40,15 +39,13 @@ test("标定数据区分来源：随标定文件带入的定位ID vs 平台新�
   // 地图对象上不再承载任何点位（点位/定位ID 只在独立标定数据里）
   assert.equal("targets" in s.maps[0], false);
   const before = cal.targets.length;
-  const c0 = cal.version;
   s = run(s, { type: "ADD_TARGET", mapId, x: 12, y: 34, kind: "仪表" });
   const added = targetsOf(s, mapId).at(-1)!;
   assert.equal(targetsOf(s, mapId).length, before + 1);
   assert.equal(added.source, "平台新增");
   assert.equal(added.externalId, undefined);
   assert.equal(added.state, "待确认");
-  // 标定只推进标定数据版本，地图空间版本与状态不受影响
-  assert.equal(calibrationVersionOf(s, mapId), c0 + 1);
+  // 标定不改变地图空间版本与状态
   assert.equal(s.maps[0].state, "已发布");
 });
 
@@ -68,6 +65,8 @@ test("轨迹采样点可按地图继续新增，序号按该地图递增", () =>
 test("地图下发支持多选设备批量下发；区域不匹配则整批不下发（不产生半截状态）", () => {
   let s = seed();
   const mapId = "MAP-A03";
+  /** seed 里已有该图的历史下发记录；断言只看"本次新增" */
+  const base = s.syncs.filter((x) => x.mapId === mapId).length;
   // 空选择：拒绝
   assert.throws(
     () => run(s, { type: "SYNC_BATCH", mapId, robotIds: [] }),
@@ -78,23 +77,24 @@ test("地图下发支持多选设备批量下发；区域不匹配则整批不�
     () => run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R01", "R03"] }),
     /区域与地图不匹配/,
   );
-  assert.equal(s.syncs.filter((x) => x.mapId === mapId).length, 0);
+  assert.equal(s.syncs.filter((x) => x.mapId === mapId).length, base);
   // 全部匹配：一次登记多条"传输中"
   s = run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R01", "R02"] });
-  const batch = s.syncs.filter((x) => x.mapId === mapId);
+  const batch = s.syncs.filter(
+    (x) => x.mapId === mapId && x.state === "传输中",
+  );
   assert.equal(batch.length, 2);
   assert.deepEqual(
     batch.map((x) => x.robotId).sort(),
     ["R01", "R02"],
   );
   for (const x of batch) {
-    assert.equal(x.state, "传输中");
     assert.equal(x.mapVersion, s.maps[0].version);
-    assert.equal(x.calibrationVersion, calibrationVersionOf(s, mapId));
   }
+  assert.equal(s.syncs.filter((x) => x.mapId === mapId).length, base + 2);
 });
 
-test("标定与地图版本解耦：标定不回草稿；地图修订才回草稿、下发自动定版", () => {
+test("标定与地图版本解耦：标定不回未发布；修订后下发给所有旧版本机器才回已发布", () => {
   let s = seed();
   const mapId = "MAP-A03";
   assert.equal(s.maps[0].state, "已发布");
@@ -103,7 +103,7 @@ test("标定与地图版本解耦：标定不回草稿；地图修订才回草�
   s = run(s, { type: "ADD_TARGET", mapId, x: 50, y: 50, kind: "仪表" });
   assert.equal(s.maps[0].state, "已发布");
   assert.equal(s.maps[0].version, v0);
-  // 地图内容修订（重新采集 / 换版）才推进空间版本并回草稿
+  // 地图内容修订（重新采集 / 换版）才推进空间版本并回未发布
   s = run(s, {
     type: "CHANGE_ADD",
     mapId,
@@ -115,12 +115,18 @@ test("标定与地图版本解耦：标定不回草稿；地图修订才回草�
   s = run(s, { type: "CHANGE_CONFIRM", id: cid });
   s = run(s, { type: "CHANGE_REVISION", id: cid, file: "MAP-A03-m4.map" });
   assert.equal(s.maps[0].version, v0 + 1);
-  assert.equal(s.maps[0].state, "草稿");
-  // 下发即定版：不需要先点"发布"
+  assert.equal(s.maps[0].state, "未发布");
+  // 只发给一部分旧版本机器（R01）→ 仍有旧版本机器没收到，保持未发布
   s = run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R01"] });
+  assert.equal(s.maps[0].state, "未发布");
+  // 补齐剩下那台（R02）→ 当前版本已下发给所有旧版本机器 → 已发布
+  s = run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R02"] });
   assert.equal(s.maps[0].state, "已发布");
-  assert.ok(s.maps[0].history[0].includes("已发布"));
-  assert.equal(s.syncs.filter((x) => x.mapId === mapId).length, 1);
+  // 两次下发各登记一条"当前版本"记录（新增量，不数 seed 历史）
+  assert.equal(
+    s.syncs.filter((x) => x.mapId === mapId && x.mapVersion === v0 + 1).length,
+    2,
+  );
   // 原始资料缺失的地图定不了版，也就下发不了
   s = run(s, {
     type: "IMPORT",
@@ -134,6 +140,59 @@ test("标定与地图版本解耦：标定不回草稿；地图修订才回草�
     () => run(s, { type: "SYNC_BATCH", mapId: bare.id, robotIds: ["R01"] }),
     /原始点云/,
   );
+});
+
+test("地图状态派生口径：新图看「是否下发过」，更新图看「旧版本机器是否全部收到」", () => {
+  let s = seed();
+  /** 按 id 读当前地图状态（每次动作后重算，所以必须现读） */
+  const stateOf = (id: string) => s.maps.find((m) => m.id === id)!.state;
+
+  /* ── 新图：从未下发过 → 未发布；下发过 → 已发布 ── */
+  s = run(s, {
+    type: "IMPORT",
+    name: "二期罐区新图",
+    file: "B02.map",
+    cloud: "B02.ply",
+    video: "B02.mp4",
+    region: "一期罐区",
+  });
+  const fresh = s.maps[0];
+  assert.equal(fresh.version, 1);
+  assert.equal(fresh.state, "未发布");
+  // 内容备齐（有底图 + 一个已标注点位）也不算发布：从没有机器收到过它
+  s = run(s, { type: "ADD_TARGET", mapId: fresh.id, x: 30, y: 40, kind: "仪表" });
+  const target = targetsOf(s, fresh.id).at(-1)!;
+  s = run(s, {
+    type: "ANNOTATE",
+    mapId: fresh.id,
+    targetId: target.id,
+    name: "新图一号点位",
+    device: "DEV-V001",
+    objects: ["出口压力表"],
+    requirement: "可见光拍摄压力表读数",
+  });
+  assert.equal(stateOf(fresh.id), "未发布");
+  // 只要下发过 → 已发布（登记下发记录即算，不要求对方已回激活回执）
+  s = run(s, { type: "SYNC_BATCH", mapId: fresh.id, robotIds: ["R02"] });
+  assert.equal(stateOf(fresh.id), "已发布");
+  // 逐图派生：新图的状态不牵连老图（老图机器都还在当前版本）
+  assert.equal(stateOf("MAP-A03"), "已发布");
+
+  /* ── 更新图：还有机器停在旧版本且没收到当前版本 → 未发布；全部收到 → 已发布 ── */
+  const v0 = s.maps.find((m) => m.id === "MAP-A03")!.version;
+  const mapVer = (rid: string) => s.robots.find((r) => r.id === rid)!.mapVersion;
+  assert.equal(mapVer("R01"), v0); // R01 已激活到当前版本
+  assert.equal(mapVer("R02"), v0 - 1); // R02 停在旧版本
+  // 内容变更推进空间版本 → 两台机器都成了"停在旧版本" → 未发布
+  s = run(s, { type: "TRACK_RECORD", mapId: "MAP-A03", x: 40, y: 30, kind: "转弯点" });
+  assert.equal(s.maps.find((m) => m.id === "MAP-A03")!.version, v0 + 1);
+  assert.equal(stateOf("MAP-A03"), "未发布");
+  // 只补一台（R01）→ 还有 R02 没收到当前版本 → 仍未发布
+  s = run(s, { type: "SYNC_BATCH", mapId: "MAP-A03", robotIds: ["R01"] });
+  assert.equal(stateOf("MAP-A03"), "未发布");
+  // 补齐最后一台（R02）→ 当前版本已发到所有停在旧版本的机器 → 已发布
+  s = run(s, { type: "SYNC_BATCH", mapId: "MAP-A03", robotIds: ["R02"] });
+  assert.equal(stateOf("MAP-A03"), "已发布");
 });
 
 test("MAP-02：标定文件解析定位ID → 导入绑定 → 地图重传后按ID重绑 → 支持暂存", () => {
@@ -158,7 +217,6 @@ test("MAP-02：标定文件解析定位ID → 导入绑定 → 地图重传后�
 
   let s = seed();
   const mapId = "MAP-A03";
-  const c0 = calibrationVersionOf(s, mapId);
   // ② 导入并绑定：定位ID 作为来源绑定键写入独立标定数据；同时记录数据来源机器人
   s = run(s, {
     type: "IMPORT_POINT_CALIBRATION",
@@ -167,7 +225,6 @@ test("MAP-02：标定文件解析定位ID → 导入绑定 → 地图重传后�
     robotId: "R01",
     points: parsed.points,
   });
-  assert.equal(calibrationVersionOf(s, mapId), c0 + 1);
   assert.equal(calibrationOf(s, mapId)!.robotId, "R01");
   assert.equal(targetsOf(s, mapId).find((t) => t.externalId === "O901")!.y, 34);
   // 定位ID 只是绑定键：导入标定文件不会自动生成平台巡检点
@@ -206,4 +263,79 @@ test("MAP-02：标定文件解析定位ID → 导入绑定 → 地图重传后�
   });
   s = run(s, { type: "DISCARD_PENDING_CALIBRATION" });
   assert.equal(s.pendingCalibration, undefined);
+});
+
+test("跨图切换点：地图拓扑可维护，两端不能是同一张地图", () => {
+  let s = seed();
+  // 演示数据只有一张碎片地图，第二张由导入产生——没有两张图谈不上"跨图"
+  const two = run(s, {
+    type: "IMPORT",
+    name: "二期装置区补充地图",
+    region: "二期装置区",
+    file: "map-b01.map",
+  });
+  const [a, b] = two.maps;
+  assert.ok(a && b, "跨图拓扑至少需要两张碎片地图");
+  assert.deepEqual(s.mapSwitchPoints, undefined);
+
+  const added = run(two, {
+    type: "MAP_SWITCH_ADD",
+    name: "罐区 → 装置区 连廊口",
+    fromMapId: a.id,
+    toMapId: b.id,
+    fromX: 92,
+    fromY: 10,
+    toX: 8,
+    toY: 10,
+  });
+  assert.equal(added.mapSwitchPoints!.length, 1);
+  const sp = added.mapSwitchPoints![0];
+  assert.equal(sp.state, "启用");
+  assert.deepEqual(sp.from, { x: 92, y: 10 });
+  assert.deepEqual(sp.to, { x: 8, y: 10 });
+  assert.equal(added.logs[0].action, "MAP_SWITCH_ADD");
+
+  // 启停切换与删除
+  const off = run(added, { type: "MAP_SWITCH_STATE", id: sp.id });
+  assert.equal(off.mapSwitchPoints![0].state, "停用");
+  const gone = run(off, { type: "MAP_SWITCH_REMOVE", id: sp.id });
+  assert.equal(gone.mapSwitchPoints!.length, 0);
+
+  // 校验：两端同图无意义，地图不存在时不写脏数据
+  assert.throws(() =>
+    run(s, {
+      type: "MAP_SWITCH_ADD",
+      fromMapId: a.id,
+      toMapId: a.id,
+      fromX: 1,
+      fromY: 1,
+      toX: 1,
+      toY: 1,
+    }),
+  );
+  assert.throws(() =>
+    run(s, {
+      type: "MAP_SWITCH_ADD",
+      fromMapId: a.id,
+      toMapId: "MAP-404",
+      fromX: 1,
+      fromY: 1,
+      toX: 1,
+      toY: 1,
+    }),
+  );
+  // 删除不存在的切换点必须报错，而不是静默成功
+  assert.throws(() => run(added, { type: "MAP_SWITCH_REMOVE", id: "SW-404" }));
+});
+
+test("空间管理是「资源与地图 › 空间」下的目录页：路由与菜单高亮都落在自身", () => {
+  const page = pages.find((x) => x.id === "space")!;
+  assert.equal(page.name, "空间管理");
+  assert.equal(page.group, "资源与地图");
+  assert.equal(page.sub, "空间");
+  // 已经是叶子页（无父级），因此侧边栏高亮不需要回落到别的页面
+  assert.equal(page.parent, undefined);
+  assert.equal(menuIdOf("space"), "space");
+  assert.equal(href("space"), "#/resources/space");
+  assert.equal(parse("#/resources/space").page, "space");
 });

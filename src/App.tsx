@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file App.tsx
  * @description 应用外壳：按角色过滤的侧边栏、角色切换器、路由分发与权限守卫
  * @interaction 消费 data/navigation.ts（菜单与路由）、data/store.tsx（状态）、data/roles.ts（权限）
@@ -30,9 +30,11 @@ import {
   Eye,
   Archive,
   BellRing,
+  BrainCircuit,
   LineChart,
   Bot,
   Boxes,
+  Layers,
   MapPin,
   Pencil,
   FileStack,
@@ -68,9 +70,11 @@ import { useStore } from "./data/store";
 import { canSee, roleOf, roles } from "./data/roles";
 import { Maps } from "./pages/Maps";
 import { MapDetail } from "./pages/MapDetail";
+import { SpaceManage } from "./pages/SpaceManage";
 import { BusinessTargets } from "./pages/BusinessTargets";
 import { InspectionPoints } from "./pages/InspectionPoints";
 import { PointEdit } from "./pages/PointEdit";
+import { PointOnsite } from "./pages/PointOnsite";
 import { Annotation } from "./pages/Annotation";
 import { Planning } from "./pages/Planning";
 import { AlarmConfiguration } from "./pages/AlarmConfiguration";
@@ -87,6 +91,11 @@ import { AlarmCenter } from "./components/AlarmCenter";
 import { ObjectDetails } from "./pages/ObjectDetails";
 import { DeviceArchive } from "./pages/DeviceArchive";
 import { DeviceMaster } from "./pages/DeviceMaster";
+import { Admin } from "./pages/Admin";
+import { AlgoTemplates } from "./pages/AlgoTemplates";
+import { AlarmTemplates } from "./pages/AlarmTemplates";
+import { Requirements } from "./pages/Requirements";
+import { RobotPayloads } from "./pages/RobotPayloads";
 import { RobotNew } from "./pages/RobotNew";
 import { MonitorCockpit } from "./pages/MonitorCockpit";
 import { DispatchCockpit } from "./pages/DispatchCockpit";
@@ -101,6 +110,7 @@ const icons = [
   Split,
   FileCheck,
   MapPinned,
+  SlidersHorizontal,
   Bot,
   BarChart3,
   Settings,
@@ -116,7 +126,6 @@ const pageIcons: Record<string, LucideIcon> = {
   execution: Activity,
   replay: History,
   results: FileSearch,
-  review: Eye,
   archive: Archive,
   alarms: BellRing,
   metrics: LineChart,
@@ -129,6 +138,9 @@ const pageIcons: Record<string, LucideIcon> = {
   manual: Terminal,
   device: SlidersHorizontal,
   equipment: Boxes,
+  admin: SlidersHorizontal,
+  "alarm-templates": BellRing,
+  "algo-templates": BrainCircuit,
   points: MapPin,
   "points-space": MapPinned,
   annotation: Pencil,
@@ -143,6 +155,7 @@ const pageIcons: Record<string, LucideIcon> = {
   "plan-edit": Pencil,
   "dispatch-log": History,
   maps: MapIcon,
+  space: Layers,
   roles: ShieldHalf,
   audit: ScrollText,
   integration: Plug,
@@ -151,18 +164,15 @@ const pageIcons: Record<string, LucideIcon> = {
 };
 /**
  * 业务关键词 → 页面 ID
- * 让全局搜索支持"异常""待复核"等业务语言，而非仅匹配页面名称
+ * 让全局搜索支持"异常""告警"等业务语言，而非仅匹配页面名称
  */
 const keywordPages: Record<string, string[]> = {
-  异常: ["alarms", "review"],
+  异常: ["alarms"],
   告警: ["alarms"],
   失败: ["alarms", "execution"],
-  待复核: ["review"],
-  复核: ["review"],
   离线: ["robots"],
   低电量: ["robots"],
   接管: ["manual"],
-  工单: ["alarms"],
   验收: ["results"],
   分析: ["metrics"],
   权限: ["roles"],
@@ -278,13 +288,29 @@ export default function App() {
   // 添加 / 编辑巡检点（内置页）：名称 + 地图 + 标定点 + 多个巡检项
   else if (page === "point-edit")
     body = <PointEdit id={id === "new" ? undefined : id} />;
+  // 现场采集（跑图）新增巡检点（内置页）：巡检点新增的唯一入口；id 可带机器人（深链）
+  else if (page === "point-onsite") body = <PointOnsite id={id} />;
   // 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证
   else if (page === "point-annotate") body = <Annotation id={id} />;
   else if (page === "maps") body = <Maps id={id} tab={tab} />;
   // 地图详情内置页：列表「详情」进入，内部抽屉（地图下发）
   else if (page === "map-detail") body = <MapDetail id={id} tab={tab} />;
-  // 设备主数据（阶段③）：清单导入 / 审核 / 启停 / 是否巡检的后台，沿用 equipment 路由
+  // 空间管理（资源与地图 › 空间）：全局坐标系配准、全局↔局部换算、地图拓扑与版本校验
+  else if (page === "space") body = <SpaceManage />;
+  // 设备主数据（阶段③）：清单导入 / 启停 / 是否巡检的后台，沿用 equipment 路由
   else if (page === "equipment") body = <DeviceMaster />;
+  // 后台管理：工厂已有基础数据（区域 / 设备 / 仪表）配置
+  // 旧深链 `admin?tab=algo`：算法已独立成页（后台管理 › 算法模板管理）
+  else if (page === "admin")
+    body = tab === "algo" ? <AlgoTemplates /> : <Admin tab={tab} />;
+  // 后台管理：算法模板管理（AI 能力清单的唯一维护入口，供目标台账 / 巡检要求引用）
+  else if (page === "algo-templates") body = <AlgoTemplates />;
+  // 后台管理：告警模板管理（触发逻辑的唯一维护入口，供其他页面引用）
+  else if (page === "alarm-templates") body = <AlarmTemplates />;
+  // 后台管理：巡检要求管理（平台「看什么、怎么判」标准表达的唯一维护入口，供目标台账引用）
+  else if (page === "requirements") body = <Requirements />;
+  // 后台管理：机器人上装能力（上装 → 采集方式 → 原子动作 的上游主数据）
+  else if (page === "payloads") body = <RobotPayloads />;
   // 新增机器人（内置表单页）：编码 / 机型 / 能力 / 约束，提交即接入台账
   else if (page === "robot-new") body = <RobotNew />;
   else if (
@@ -304,7 +330,7 @@ export default function App() {
   // 单任务现场态势（内置页）：执行总览行内「监控」进入
   else if (page === "execution-monitor")
     body = <ExecutionMonitor id={id} />;
-  else if (["results", "review", "result-detail"].includes(page))
+  else if (["results", "result-detail"].includes(page))
     body = <Results page={page} id={id} />;
   else if (["alarms", "alarm", "alarm-detail"].includes(page))
     body = <Alarms page={page} id={id} />;
@@ -676,7 +702,7 @@ export default function App() {
       {reset && (
         <Modal title="重置演示数据" onClose={() => R(false)}>
           <Note>
-            将清除当前浏览器的演示操作记录，恢复初始地图、任务、告警与工单。
+            将清除当前浏览器的演示操作记录，恢复初始地图、任务与告警。
           </Note>
           <Btn
             danger

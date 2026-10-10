@@ -10,16 +10,6 @@ export type Scope = "全区域演示（仅菜单/操作权限，未模拟数据�
 
 /** 按钮级权限点：页面用 <Can perm={PERMS.xxx}> 包裹，禁止散落 if 判断 */
 export const PERMS = {
-  告警确认: "alarm.ack",
-  一键派单: "alarm.dispatch",
-  超时升级: "alarm.escalate",
-  工单派单: "wo.assign",
-  工单转派: "wo.transfer",
-  工单处置: "wo.handle",
-  验收通过: "accept.pass",
-  验收驳回: "accept.reject",
-  批量验收: "accept.batch",
-  误报标记: "accept.false",
   AI复核: "ai.review",
   标注反馈: "ai.feedback",
   计划编辑: "task.plan",
@@ -77,9 +67,6 @@ export interface Role {
 
 /** 业务操作权限：两类角色的公共部分 */
 const bizPerms: string[] = [
-  PERMS.告警确认, PERMS.一键派单, PERMS.超时升级,
-  PERMS.工单派单, PERMS.工单转派, PERMS.工单处置,
-  PERMS.验收通过, PERMS.验收驳回, PERMS.批量验收, PERMS.误报标记,
   PERMS.AI复核, PERMS.标注反馈,
   PERMS.计划编辑, PERMS.调度下发, PERMS.紧急插队, PERMS.临时任务,
   PERMS.远程接管, PERMS.紧急停止, PERMS.一键返航充电,
@@ -103,7 +90,7 @@ export const roles: Role[] = [
     person: "王姐",
     // 驾驶舱已改为顶栏「驾驶舱大屏」入口，落地页统一为角色工作台
     landing: "workbench",
-    centers: ["工作台", "巡检执行", "调度中心", "结果与异常", "资源与地图", "机器人管理", "分析与报表", "系统设置"],
+    centers: ["工作台", "巡检执行", "调度中心", "结果与异常", "资源与地图", "后台管理", "机器人管理", "分析与报表", "系统设置"],
     pages: "*",
     scope: "全租户",
     approvals: ["接管审批", "导出审批", "配置发布", "插单审批", "资质审批"],

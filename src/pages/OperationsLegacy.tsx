@@ -3,7 +3,7 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note } from "../components/UI";
 import { MapCanvas } from "../components/MapCanvas";
-import { calibrationVersionOf } from "../data/mapCalibration";
+import { mapVer } from "../data/versionLabel";
 export function Operations({ page, id }: { page: string; id?: string }) {
   const { s } = useStore();
   const [q, Q] = useState("");
@@ -54,7 +54,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
                   {r.battery}%
                 </>,
                 r.capabilities.join(" / "),
-                `m${r.mapVersion} / c${r.calibrationVersion}`,
+                mapVer(r.mapVersion),
                 r.current || "无",
                 <div className="actions">
                   <Btn onClick={() => go("robot", r.id)}>详情</Btn>
@@ -103,7 +103,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
               <dd>{r.current || "无"}</dd>
               <dt>激活版本</dt>
               <dd>
-                {r.mapId} m{r.mapVersion}/c{r.calibrationVersion}
+                {r.mapId} {mapVer(r.mapVersion)}
               </dd>
               <dt>能力</dt>
               <dd>{r.capabilities.join(" / ")}</dd>
@@ -229,8 +229,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
               (r) =>
                 r.region === s.maps[0].region &&
                 (r.mapId !== s.maps[0].id ||
-                  r.mapVersion !== s.maps[0].version ||
-                  r.calibrationVersion !== calibrationVersionOf(s, s.maps[0].id)),
+                  r.mapVersion !== s.maps[0].version),
             )
             .map((r) => (
               <Note key={r.id}>
@@ -244,7 +243,7 @@ export function Operations({ page, id }: { page: string; id?: string }) {
           <div className="guide-links">
             <Btn onClick={() => go("maps")}>01 地图 → 标注 → 同步</Btn>
             <Btn onClick={() => go("templates")}>02 模板 → 调度 → 执行</Btn>
-            <Btn onClick={() => go("alarms")}>03 异常 → 复查 → 关闭</Btn>
+            <Btn onClick={() => go("alarms")}>03 异常 → 标注</Btn>
             <Btn onClick={() => go("manual", "R01")}>
               04 接管 → 遥控 → 恢复
             </Btn>

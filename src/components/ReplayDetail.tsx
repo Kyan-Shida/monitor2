@@ -37,8 +37,8 @@ export function ReplayDetail({
     const rs = results.filter((r) => r.pointId === p.id);
     const state = rs.some((r) => r.abnormal)
       ? "异常"
-      : rs.some(r => r.status === "待复核" || r.status === "无效")
-        ? "待判定" : rs.length
+      : rs.some((r) => r.status === "无效")
+        ? "无效" : rs.length
         ? "正常"
         : task.skipped?.includes(p.id)
           ? "未采集"

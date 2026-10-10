@@ -16,7 +16,7 @@ const quick = (points: string[], name = "临时复核") => ({
   atomicActions: ["拍照"],
 });
 
-test("设备清单导入进入待审核：编码唯一、采集方式与单位受校验", () => {
+test("设备清单导入直接生效：编码唯一、采集方式与单位受校验", () => {
   const s = seed();
   const count = s.devices!.length;
   assert.throws(
@@ -26,17 +26,6 @@ test("设备清单导入进入待审核：编码唯一、采集方式与单位�
   assert.throws(
     () => run(s, { type: "IMPORT_DEVICES", devices: [{ id: "V 007", name: "非法编码" }] }),
     /格式不合法/,
-  );
-  assert.throws(
-    () =>
-      run(s, {
-        type: "IMPORT_DEVICES",
-        devices: [
-          { id: "V008", name: "V008 新增储罐", items: [] },
-          { id: "V008", name: "批内重复", items: [] },
-        ],
-      }),
-    /本批次内重复/,
   );
   assert.throws(
     () =>
@@ -74,7 +63,41 @@ test("设备清单导入进入待审核：编码唯一、采集方式与单位�
   assert.equal(s.devices!.length, count);
 });
 
-test("审核通过后设备生效并推进清单版本；驳回留下意见", () => {
+test("设备清单导入支持同一设备多行（一设备多检测项）", () => {
+  const item = (
+    id: string,
+    target: string,
+    kind: string,
+    unit: string,
+  ) => ({ id, target, kind, unit, inspect: true, cycle: "每日", priority: "普通" });
+  const s = run(seed(), {
+    type: "IMPORT_DEVICES",
+    devices: [
+      { id: "V008", name: "V008 新增储罐", type: "储罐", items: [] },
+      {
+        id: "V008",
+        name: "V008 新增储罐",
+        items: [item("II-V008-1", "液位读数", "可见光", "m")],
+      },
+      {
+        id: "V008",
+        name: "V008 新增储罐",
+        items: [
+          item("II-V008-2", "罐壁温度", "红外", "℃"),
+          // 同设备同检测目标重复行只保留一条
+          item("II-V008-3", "罐壁温度", "红外", "℃"),
+        ],
+      },
+    ],
+  });
+  const dev = s.devices!.find((d) => d.id === "V008")!;
+  assert.deepEqual(
+    dev.items.map((it) => it.target),
+    ["液位读数", "罐壁温度"],
+  );
+});
+
+test("设备清单导入即生效并推进设备清单版本", () => {
   let s = seed();
   const before = s.maps[0].deviceListVersion || 1;
   s = run(s, {
@@ -101,51 +124,11 @@ test("审核通过后设备生效并推进清单版本；驳回留下意见", ()
     ],
   });
   const imported = s.devices!.find((d) => d.id === "V008")!;
-  assert.equal(imported.reviewState, "待审核");
   assert.equal(imported.state, "在用");
-  assert.ok(imported.importBatch);
-
-  s = run(s, { type: "REVIEW_DEVICE_IMPORT", ids: ["V008"], pass: true });
-  assert.equal(s.devices!.find((d) => d.id === "V008")!.reviewState, "已通过");
+  // 导入即生效：设备清单版本推进，供机器人同步比对（阶段⑧）
   assert.equal(s.maps[0].deviceListVersion, before + 1);
-  assert.throws(
-    () => run(s, { type: "REVIEW_DEVICE_IMPORT", ids: ["V008"], pass: true }),
-    /不处于待审核/,
-  );
-
-  s = run(s, {
-    type: "IMPORT_DEVICES",
-    devices: [
-      {
-        id: "V007",
-        name: "V007 新增泵",
-        items: [
-          {
-            id: "II-V007-S",
-            target: "运行状态",
-            kind: "可见光",
-            unit: "",
-            inspect: true,
-            cycle: "每周",
-            priority: "普通",
-          },
-        ],
-      },
-    ],
-  });
-  s = run(s, {
-    type: "REVIEW_DEVICE_IMPORT",
-    ids: ["V007"],
-    pass: false,
-    note: "铭牌与清单编码不符",
-  });
-  const rejected = s.devices!.find((d) => d.id === "V007")!;
-  assert.equal(rejected.reviewState, "已驳回");
-  assert.equal(rejected.reviewNote, "铭牌与清单编码不符");
-  // 驳回的设备不被计入"在用"：V001~V004 + 两段管廊 + 本次导入的 V008 = 7
-  assert.equal(deviceStats(s).inUse, 7);
-  assert.equal(deviceStats(s).rejected, 2); // V006（种子）+ V007（本次驳回）
-  assert.equal(deviceStats(s).pending, 1); // V005（种子待审核）
+  // 台账统计：在用 = 设备总数 − 停用
+  assert.equal(deviceStats(s).inUse, s.devices!.length - 1);
   assert.equal(deviceStats(s).stopped, 1); // V009（种子已停用）
 });
 
@@ -192,17 +175,6 @@ test("关闭「是否巡检」的检测目标不进任务指令集", () => {
   const t = s.tasks.find((x) => x.name === "多点位部分过滤")!;
   assert.equal(t.items.length, 1);
   assert.equal(t.items[0].id, "P002");
-  // 主数据未审核的设备不允许配置开关
-  assert.throws(
-    () =>
-      run(s, {
-        type: "SET_INSPECT_FLAG",
-        deviceId: "DEV-V005",
-        itemId: "II-V005-L",
-        inspect: false,
-      }),
-    /尚未通过审核/,
-  );
 });
 
 test("标注页「＋快速新建」的设备直接生效，建完即可标注（单页闭环）", () => {
@@ -210,7 +182,6 @@ test("标注页「＋快速新建」的设备直接生效，建完即可标注�
   const before = s.maps[0].deviceListVersion;
   s = run(s, {
     type: "IMPORT_DEVICES",
-    approved: true,
     devices: [
       {
         id: "V010",
@@ -233,10 +204,9 @@ test("标注页「＋快速新建」的设备直接生效，建完即可标注�
     ],
   });
   const d = s.devices!.find((x) => x.id === "V010")!;
-  assert.equal(d.reviewState, "已通过");
-  assert.equal(d.importBatch, "人工新增");
-  // 人工新增不推进清单版本（版本只在批量清单审核通过时推进）
-  assert.equal(s.maps[0].deviceListVersion, before);
+  assert.equal(d.state, "在用");
+  // 人工新增即生效：设备清单版本同样推进
+  assert.equal(s.maps[0].deviceListVersion, (before || 1) + 1);
   // 建完即可直接用于标注：检测项与单位按检测目标自动推导
   s = run(s, {
     type: "ANNOTATE",
@@ -291,7 +261,7 @@ test("一次停靠可覆盖多个检测目标：逻辑点由系统派生且不�
     s.logicalPoints!.filter((x) => x.physicalPointId === p.id).length,
     1,
   );
-  // 不在主数据中的设备、未通过审核的设备、已停用的设备都不能标注
+  // 不在主数据中的设备、已停用的设备都不能标注
   assert.throws(
     () =>
       run(s, {
@@ -304,19 +274,6 @@ test("一次停靠可覆盖多个检测目标：逻辑点由系统派生且不�
         requirement: "x",
       }),
     /不在设备主数据中/,
-  );
-  assert.throws(
-    () =>
-      run(s, {
-        type: "ANNOTATE",
-        mapId: m.id,
-        targetId,
-        name: "待审核设备点",
-        device: "DEV-V005",
-        objects: ["液位计"],
-        requirement: "x",
-      }),
-    /尚未通过审核/,
   );
   assert.throws(
     () =>

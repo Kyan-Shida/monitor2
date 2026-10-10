@@ -44,7 +44,7 @@ interface OverviewItem {
 
 /**
  * 全局地图总览
- * @param points 待汇总展示的巡检点（由父页按筛选条件传入；不传筛选即"全部巡检点"）
+ * @param points 待汇总展示的巡检点（父页传入全厂巡检点：画布是"全厂一张图"口径，不随列表筛选收敛）
  * @returns 统一坐标系画布 + 分区图例；无点位时给出空态提示
  */
 export function GlobalMapOverview({ points }: { points: Point[] }) {
@@ -75,11 +75,7 @@ export function GlobalMapOverview({ points }: { points: Point[] }) {
   });
 
   if (!items.length) {
-    return (
-      <Note>
-        当前筛选下没有可展示的巡检点。清空筛选或先「巡检点导入」绑定点位。
-      </Note>
-    );
+    return <Note>尚无巡检点，先「巡检点导入」绑定点位。</Note>;
   }
 
   // 归一化：把统一坐标铺满画布（统一坐标是同一坐标系，故各分区点位保持相对关系）
@@ -199,20 +195,6 @@ export function GlobalMapOverview({ points }: { points: Point[] }) {
           );
         })}
       </svg>
-
-      <div className="gmo-legend">
-        {[...groups.values()].map((g) => (
-          <span key={g.id} className="gmo-leg-item">
-            <i style={{ background: g.color }} />
-            {g.name}
-            <b>{g.n}</b>
-            {g.missing && <em className="gmo-leg-warn">地图缺失</em>}
-          </span>
-        ))}
-        <span className="gmo-leg-sum">
-          统一坐标 <b>{unifiedCount}</b> · 回退本地坐标 <b>{fallbackCount}</b>
-        </span>
-      </div>
       {fallbackCount > 0 && (
         <small className="gmo-hint">
           多地图统一坐标系尚未完全落地：{fallbackCount} 个巡检点未写入 <b>world</b> 统一坐标，

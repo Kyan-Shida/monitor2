@@ -1,12 +1,13 @@
 /**
  * @file DispatchCockpit.tsx
- * @description 调度指挥驾驶舱（V2 版式重构）：**中央地图最大化 + 左 300 / 右 350 固定栏 + 悬浮式操作台**。
+ * @description 调度指挥驾驶舱（V3 版式重构）：**中央地图场景最大化 + 左右可折叠浮层面板**（与管理驾驶舱同款
+ *   「左右块折叠 / 展开」形态）。
  *   ① 顶栏与「管理驾驶舱」共用同一个 ScreenTopBar（卡片底 · 左品牌与两舱 Tab · 居中发光标题 ·
  *      调度中心 / 全屏 / 紧急停止 · 时钟），两舱样式完全一致；
- *   ② 左栏 300px：设备状态紧凑列表（状态灯 + 电量进度条）→ 选中设备后就地展开「当前设备」折叠面板（Accordion）；
- *   ③ 中栏 flex-1：地图舞台自适应铺满中央栏（不用绝对定位），左上角图层与图例、右下角缩放控件，
- *      底部为半透明毛玻璃悬浮操作台（导航 / 任务 / 云台 / 声光语音 四组，点开就地展开，不常驻占地图高度）；
- *   ④ 右栏 350px：单一枢纽卡片，三大 Tabs —— [告警与SLA] 红 · [视频信息] 青 · [巡检日志] 橙。
+ *   ② 指挥 KPI 数字条悬浮于场景顶部（半透明毛玻璃徽标，不再占一整行版面）；
+ *   ③ 中央场景：地图舞台铺满主区（图层 / 图例左上角、缩放控件右下角、底部半透明悬浮操作台）；
+ *      左栏（浮层 · 可折叠）= 设备状态 + 当前设备折叠面板；右栏（浮层 · 可折叠）= 实时告警 / SLA 倒计时 / 视频信息 三卡平铺；
+ *      贴边箭头整体收起 / 展开，折叠后场景全屏。
  *   配色口径（等价 Tailwind 语义，两舱统一）：底 `bg-slate-950 #020617` / 卡片 `slate-900 #0f172a` /
  *      边框 `slate-800 #1e293b` / 强调 `cyan-500 #06b6d4` + `red-500 #ef4444`。
  * @interaction 由 App.tsx 在 page === "screen" 时渲染；指标取自 data/metrics.ts，动作经 data/engine.ts
@@ -17,6 +18,8 @@ import {
   Camera,
   CameraOff,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Compass,
   ListChecks,
   Maximize,
@@ -59,12 +62,10 @@ const PRESETS = [
 ];
 
 /** 告警级别权重：用于分级抑制判断 */
-const levelRank = (l: string) => (l === "紧急" ? 3 : l === "重要" ? 2 : 1);
+const levelRank = (l: string) => (l === "一级" ? 3 : l === "二级" ? 2 : 1);
 
 /** 悬浮操作台的分组：四组控制按需展开 */
 type PadKey = "nav" | "task" | "cam" | "av";
-/** 右栏枢纽的两个 Tab（巡检日志已按需求移除） */
-type HubKey = "alarm" | "video";
 
 export function DispatchCockpit({
   onSwitch,
@@ -95,10 +96,11 @@ export function DispatchCockpit({
   const [counterSign, CS] = useState("李主管");
   /** 悬浮操作台当前展开的分组：默认全部收起，保证地图主视野不被遮挡，点按钮才就地展开 */
   const [pad, PAD] = useState<PadKey | null>(null);
-  /** 右栏枢纽 Tab */
-  const [hub, HUB] = useState<HubKey>("alarm");
   /** 左栏「当前设备」折叠面板：默认展开，可手动收起 */
   const [devOpen, DEVO] = useState(true);
+  /** 左右数据面板折叠状态（true=展开；折叠后中央场景全屏，与管理驾驶舱一致） */
+  const [openL, OPENL] = useState(true);
+  const [openR, OPENR] = useState(true);
   /** 地图缩放倍率：仅作用于地图舞台内的图形层，配合右下角缩放控件 */
   const [zoom, ZOOM] = useState(1);
 
@@ -107,17 +109,6 @@ export function DispatchCockpit({
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
-
-  // SLA 倒计时推进：每分钟一次，仅缩短真实剩余时间，不生成任何模拟数据
-  useEffect(() => {
-    const i = setInterval(() => {
-      const open = s.workOrders.some(
-        (w) => !["已验收", "已关闭"].includes(w.state),
-      );
-      if (open) act({ type: "SLA_TICK" });
-    }, 60000);
-    return () => clearInterval(i);
-  }, [s.workOrders, act]);
 
   const sc = scopedState(s, region);
   const mv = (key: string) => metricValue(sc, key);
@@ -149,9 +140,9 @@ export function DispatchCockpit({
       x.robotId === robot?.id && x.state === "已接管" && x.expires > Date.now(),
   );
 
-  /** 未关闭告警 */
+  /** 未处理告警：尚无人工处理（处理时间为空） */
   const openAlarms = useMemo(
-    () => s.alarms.filter((a) => a.state !== "已关闭"),
+    () => s.alarms.filter((a) => !a.handledAt),
     [s.alarms],
   );
   /** 选中机器后只看该机器任务的告警；未选中 / 全选时展示全部机器 */
@@ -184,18 +175,11 @@ export function DispatchCockpit({
       ),
     }));
   }, [scopedAlarms]);
-  /** 未闭环工单：SLA 倒计时列表 */
-  const openWos = s.workOrders.filter(
-    (w) => !["已验收", "已关闭"].includes(w.state),
-  );
-
-  /** 指挥 KPI 数字条：8 项待处置量，与管理驾驶舱数字带同款（只读展示，不下钻） */
+  /** 指挥 KPI 数字条：6 项待处置量，与管理驾驶舱数字带同款（只读展示，不下钻） */
   const strip = [
     { n: mv("onlineCount"), label: "在线设备（台）" },
     { n: mv("executing"), label: "执行中任务（个）" },
-    { n: sc.alarms.filter((a) => a.state !== "已关闭").length, label: "未闭环告警（条）" },
-    { n: openWos.filter((w) => w.slaState !== "正常").length, label: "SLA 预警/超时（单）" },
-    { n: openWos.filter((w) => !w.assignee).length, label: "待派单工单（单）" },
+    { n: sc.alarms.filter((a) => !a.handledAt).length, label: "未处理告警（条）" },
     { n: s.sessions.filter((x) => x.state === "已接管").length, label: "人工接管会话（个）" },
     { n: mv("lowBattery"), label: "低电量设备（台）" },
     { n: mv("fieldPending"), label: "现场待处理（项）" },
@@ -282,20 +266,20 @@ export function DispatchCockpit({
           </>
         }
       />
-      {/* 指挥 KPI 数字条：8 格待处置量，只读展示，不下钻跳转 */}
-      <div className="cs-kpi-strip">
-        {strip.map((x) => (
-          <div key={x.label} className="cs-kpi">
-            <b>{x.n}</b>
-            <span>{x.label}</span>
-          </div>
-        ))}
-      </div>
       {fsError && <Note>{fsError}</Note>}
 
-      <div className="ds-grid">
-        {/* ══ 左栏（300px）：设备与状态收纳 ══ */}
-        <aside className="ds-col ds-col-l">
+      <div className="ds-grid ds-scene-layout">
+        {/* 指挥 KPI 数字条：8 格待处置量，悬浮于场景顶部（半透明毛玻璃），不占版面高度 */}
+        <div className="cs-kpi-strip ds-strip-float">
+          {strip.map((x) => (
+            <div key={x.label} className="cs-kpi">
+              <b>{x.n}</b>
+              <span>{x.label}</span>
+            </div>
+          ))}
+        </div>
+        {/* ══ 左栏（浮层 · 可折叠）：设备状态 + 当前设备 ══ */}
+        <aside className={"ds-col ds-col-l" + (openL ? "" : " folded")}>
           {/* 设备状态 + 当前设备：合并为一张卡片并撑满左栏（「历史与实时数据」块已按需求移除） */}
           <section className="ds-card ds-fleet grow">
             <header className="ds-head">
@@ -741,138 +725,95 @@ export function DispatchCockpit({
           </div>
         </main>
 
-        {/* ══ 右栏（350px）：告警 · 视频 · 日志 三 Tab 枢纽 ══ */}
-        <aside className="ds-col ds-col-r">
-          <section className="ds-card ds-hub grow">
-            <div className="ds-hub-tabs">
-              <button
-                className={"ds-hub-tab t-alarm" + (hub === "alarm" ? " active" : "")}
-                onClick={() => HUB("alarm")}
-              >
+        {/* ══ 右栏（浮层 · 可折叠）：实时告警 / 视频信息 两卡平铺 ══ */}
+        <aside className={"ds-col ds-col-r" + (openR ? "" : " folded")}>
+          {/* 实时告警：去重合并 · 分级抑制 */}
+          <section className="ds-card grow">
+            <header className="ds-head">
+              <h3>
                 <BellRing size={13} />
-                告警与SLA
-                <b>{alarmGroups.length}</b>
+                实时告警
+              </h3>
+              <small>
+                分级抑制 · {activeId ? `${activeId} · ` : "全部机器 · "}
+                {alarmGroups.length} 组
+              </small>
+              <button className="ds-chip" onClick={() => go("alarms")}>
+                告警管理 ›
               </button>
-              <button
-                className={"ds-hub-tab t-video" + (hub === "video" ? " active" : "")}
-                onClick={() => HUB("video")}
-              >
+            </header>
+            <AutoScrollList auto={false} listClass="cs-work-list readonly">
+              {!alarmGroups.length && <Note>当前无未关闭告警。</Note>}
+              {alarmGroups.map((g) => (
+                <button key={g.key}>
+                  <i className={"severity " + (g.head.level === "二级" ? "amber" : "red")} />
+                  <div>
+                    <b>{g.head.name}</b>
+                    <small>
+                      {g.head.pointId
+                        ? g.head.pointId
+                        : `${g.head.category}${g.head.robotId ? " " + g.head.robotId : ""}`}{" "}
+                      · {g.head.state}
+                      {g.items.length > 1 ? ` · 合并 ${g.items.length} 条` : ""}
+                      {g.suppressed ? " · 已抑制" : ""}
+                    </small>
+                  </div>
+                  <Badge>{g.head.level}</Badge>
+                </button>
+              ))}
+            </AutoScrollList>
+          </section>
+
+          {/* 视频信息：选中设备后的双画面 */}
+          <section className="ds-card grow">
+            <header className="ds-head">
+              <h3>
                 <VideoIcon size={13} />
                 视频信息
-              </button>
+              </h3>
+              <small>{robot ? `${robot.id} · ${robot.state}` : "未选择设备"}</small>
+            </header>
+            <div className="ds-video-body">
+              {robot ? (
+                <div className="cs-video-dual">
+                  <Video live label="可见光主画面" robotId={robot.id} />
+                  <Video live label="红外热像" robotId={robot.id} />
+                </div>
+              ) : (
+                <div className="cs-video-dual">
+                  {["可见光主画面", "红外热像"].map((label) => (
+                    <div className="video-placeholder" key={label}>
+                      <CameraOff size={28} />
+                      <b>{label}</b>
+                      <small>未选择设备</small>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <small className="ds-hint">
+                {robot
+                  ? "对讲 / 声光 / 播报在底部悬浮操作台「声光语音」组，与画面同域操作。"
+                  : pickHint}
+              </small>
             </div>
-
-            {hub === "alarm" && (
-              <div className="ds-hub-body">
-                <section className="ds-sub">
-                  <header>
-                    <h4>告警 · 去重合并</h4>
-                    <small>
-                      分级抑制 · {activeId ? `${activeId} · ` : "全部机器 · "}
-                      {alarmGroups.length} 组
-                    </small>
-                    <button className="ds-chip" onClick={() => go("alarms")}>
-                      告警事件 ›
-                    </button>
-                  </header>
-                  <AutoScrollList listClass="cs-work-list readonly">
-                    {!alarmGroups.length && <Note>当前无未关闭告警。</Note>}
-                    {alarmGroups.map((g) => (
-                      <button key={g.key}>
-                        <i className={"severity " + (g.head.level === "重要" ? "red" : "amber")} />
-                        <div>
-                          <b>{g.head.name}</b>
-                          <small>
-                            {g.head.pointId
-                              ? g.head.pointId
-                              : `${g.head.category}${g.head.robotId ? " " + g.head.robotId : ""}`}{" "}
-                            · {g.head.state}
-                            {g.items.length > 1 ? ` · 合并 ${g.items.length} 条` : ""}
-                            {g.suppressed ? " · 已抑制" : ""}
-                          </small>
-                        </div>
-                        <Badge>{g.head.level}</Badge>
-                      </button>
-                    ))}
-                  </AutoScrollList>
-                </section>
-
-                <section className="ds-sub">
-                  <header>
-                    <h4>SLA 倒计时</h4>
-                    <small>{openWos.length} 单未闭环</small>
-                  </header>
-                  <AutoScrollList listClass="cs-work-list readonly">
-                    {!openWos.length && <Note>当前无未闭环工单。</Note>}
-                    {openWos.map((w) => (
-                      <button key={w.id}>
-                        <i
-                          className={
-                            "severity " +
-                            (w.slaState === "已升级" ? "red" : w.slaState === "预警" ? "amber" : "teal")
-                          }
-                        />
-                        <div>
-                          <b>{w.title}</b>
-                          <small>
-                            {w.level}级 · {w.assignee || "待派单"} ·{" "}
-                            {w.slaLeft > 0 ? `剩余 ${w.slaLeft} 分钟` : `已超时 ${-w.slaLeft} 分钟`}
-                            {w.slaState !== "正常" ? ` · ${w.slaState}` : ""}
-                          </small>
-                        </div>
-                        <Badge>{w.state}</Badge>
-                      </button>
-                    ))}
-                  </AutoScrollList>
-                </section>
-              </div>
-            )}
-
-            {hub === "video" && (
-              <div className="ds-hub-body ds-video-body">
-                {robot ? (
-                  <>
-                    <div className="cs-video-dual">
-                      <Video live label="可见光主画面" robotId={robot.id} />
-                      <Video live label="红外热像" robotId={robot.id} />
-                    </div>
-                    <div className="ds-fab-kv">
-                      <span>
-                        设备<b>{robot.id}</b>
-                      </span>
-                      <span>
-                        机型<b>{robot.deviceType}</b>
-                      </span>
-                      <span>
-                        区域<b>{robot.region}</b>
-                      </span>
-                      <span>
-                        通信<b>{robot.state === "离线" ? "离线" : "在线"}</b>
-                      </span>
-                    </div>
-                    <small className="ds-hint">
-                      对讲 / 声光 / 播报在中央地图底部的悬浮操作台「声光语音」组，与画面同域操作。
-                    </small>
-                  </>
-                ) : (
-                  <>
-                    <div className="cs-video-dual">
-                      {["可见光主画面", "红外热像"].map((label) => (
-                        <div className="video-placeholder" key={label}>
-                          <CameraOff size={28} />
-                          <b>{label}</b>
-                          <small>未选择设备</small>
-                        </div>
-                      ))}
-                    </div>
-                    <small className="ds-hint">{pickHint}</small>
-                  </>
-                )}
-              </div>
-            )}
-
           </section>
         </aside>
+
+        {/* 折叠按钮：展开时贴在面板外侧，收起后回到屏幕边缘（场景全屏） */}
+        <button
+          className={"ds-fold ds-fold-l" + (openL ? " open" : "")}
+          title={openL ? "收起左侧面板" : "展开左侧面板"}
+          onClick={() => OPENL((v) => !v)}
+        >
+          {openL ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
+        </button>
+        <button
+          className={"ds-fold ds-fold-r" + (openR ? " open" : "")}
+          title={openR ? "收起右侧面板" : "展开右侧面板"}
+          onClick={() => OPENR((v) => !v)}
+        >
+          {openR ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+        </button>
       </div>
 
       {takeover && robot && (

@@ -4,7 +4,7 @@
  *              「是否巡检」过滤、导入校验都收敛到这里，避免引擎与页面各写一套口径。
  *              设计约束（v3 定案）：设备是「巡检什么」的唯一来源，**禁止由点位反推设备**。
  * @interaction 被 engine.ts（任务生成 / 派单拦截）、Annotation.tsx（标注页选设备）、
- *              DeviceMaster 页（导入与审核）消费
+ *              DeviceMaster 页（设备台账）消费
  */
 import type {
   State,
@@ -228,20 +228,84 @@ const DEFAULT_ITEM_NAMES: [RegExp, string][] = [
 export const defaultInspectItemName = (target: string) =>
   DEFAULT_ITEM_NAMES.find(([re]) => re.test(target))?.[1] || target;
 
+/**
+ * 检测目标 → 默认检测项分类
+ * @description 检测项分两类：**仪表**（有形表计，可读数 / 有量纲）与**区域**（空间范围，
+ *              如罐壁 / 管廊 / 地面）。这里只给表单一个默认值，用户可随时在下拉里改写；
+ *              缺省口径与巡检目标台账的 `targetKind` 一致。
+ * @param target 检测目标（如 出口压力表 / 罐壁）
+ * @returns 检测项分类
+ */
+export const defaultTargetKindOfTarget = (target: string): "仪表" | "区域" =>
+  /罐壁|罐体|罐区|管廊|管线|地面|平台|围堰|池|区域|空间/.test(target)
+    ? "区域"
+    : "仪表";
+
+/**
+ * 采集方式 → 默认单位
+ * @description 检测项表单选采集方式时自动匹配单位，避免"数值类漏填单位"：
+ *              红外→℃、气体→%LEL 是采集方式自带的量纲；可见光 / 声音本身无量纲
+ *              （可见光拍表盘时单位随表计，如 MPa），留空由人工按表计填。
+ * @param kind 采集方式
+ * @returns 默认单位（可能为空串）
+ */
+export const defaultUnitOfCapture: Record<CaptureKind, string> = {
+  可见光: "",
+  红外: "℃",
+  气体: "%LEL",
+  声音: "",
+};
+
 /** 设备统计：台账页顶部 KPI 用 */
 export function deviceStats(s: State) {
   const ds = s.devices || [];
   return {
     total: ds.length,
-    inUse: ds.filter((d) => d.reviewState === "已通过" && d.state !== "停用")
-      .length,
+    inUse: ds.filter((d) => d.state !== "停用").length,
     stopped: ds.filter((d) => d.state === "停用").length,
-    pending: ds.filter((d) => d.reviewState === "待审核").length,
-    rejected: ds.filter((d) => d.reviewState === "已驳回").length,
     itemTotal: ds.reduce((n, d) => n + d.items.length, 0),
     itemOff: ds.reduce(
       (n, d) => n + d.items.filter((it) => !it.inspect).length,
       0,
     ),
   };
+}
+
+/* ── 区域主数据（工厂树第一层）────────────────────────────────────────
+   区域是**可维护的主数据**（后台管理里增删改），设备按安装位置前缀归属；
+   设备树分组、地图/设备的"区域"下拉都从这里取，保证同一份口径。 */
+
+/**
+ * 设备归属的区域
+ * @description 优先取设备主数据的厂区字段（后台管理里显式指定）；未指定时按
+ *              区域清单里的名称对安装位置做前缀匹配（如"一期罐区北侧"→"一期罐区"）。
+ * @param s 状态
+ * @param d 设备
+ * @returns 区域名称；无法归属时返回「未分区」
+ */
+export function areaNameOf(s: State, d: DeviceAsset): string {
+  if (d.region) return d.region;
+  const hit = (s.areas || []).find(
+    (a) => a.name && d.locationDesc.startsWith(a.name),
+  );
+  if (hit) return hit.name;
+  // 旧缓存没有区域主数据时的兼容回落（与历史设备树的硬编码口径一致）
+  if (d.locationDesc.startsWith("一期罐区")) return "一期罐区";
+  if (d.locationDesc.startsWith("装置区")) return "装置区";
+  return "未分区";
+}
+
+/**
+ * 区域下拉 / 设备树可用的区域清单
+ * @description 区域主数据 ∪ 设备实际归属（去重、剔除「未分区」），
+ *              老缓存里区域主数据缺失时也能从设备安装位置兜底出可选项。
+ * @param s 状态
+ * @returns 区域名称列表（保持主数据顺序，新出现的归属追加在后）
+ */
+export function areaOptions(s: State): string[] {
+  const names = (s.areas || []).map((a) => a.name).filter(Boolean);
+  const derived = (s.devices || []).map((d) => areaNameOf(s, d));
+  return [...new Set([...names, ...derived])].filter(
+    (x) => x && x !== "未分区",
+  );
 }

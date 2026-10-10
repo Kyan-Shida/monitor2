@@ -14,10 +14,10 @@ import { Bell, Minus, X } from "lucide-react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 
-/** 未处理告警判定：未关闭即视为需要关注（待确认 / 处理中 / 待复查 / 已恢复） */
-const isOpen = (state: string) => state !== "已关闭";
-/** 等级排序：紧急 → 重要 → 其他 */
-const rank = (lv: string) => (lv === "紧急" ? 0 : lv === "重要" ? 1 : 2);
+/** 未处理告警判定：尚无人工处理（处理时间为空） */
+const isOpen = (a: { handledAt?: string }) => !a.handledAt;
+/** 等级排序：一级 → 二级 → 其他 */
+const rank = (lv: string) => (lv === "一级" ? 0 : lv === "二级" ? 1 : 2);
 
 export function AlarmCenter() {
   const { s } = useStore();
@@ -32,16 +32,16 @@ export function AlarmCenter() {
   const panelRef = useRef<HTMLDivElement>(null);
 
   const list = s.alarms
-    .filter((a) => isOpen(a.state))
+    .filter((a) => isOpen(a))
     .sort((a, b) => rank(a.level) - rank(b.level));
-  const urgentList = list.filter((a) => a.level === "紧急");
+  const urgentList = list.filter((a) => a.level === "一级");
   const urgent = urgentList.length;
 
   /**
-   * 一级（紧急）告警全局拦截：
-   * - `seenUrgent` 记录已"推送过"的紧急告警 id —— 只有**新出现**的紧急告警才自动弹窗，
+   * 一级告警全局拦截：
+   * - `seenUrgent` 记录已"推送过"的一级告警 id —— 只有**新出现**的一级告警才自动弹窗，
    *   首帧已存在的历史告警不打扰（避免每次进页面都被弹）。
-   * - `intercept` = 待确认的新紧急告警 id：存在期间顶部显示红条、弹窗不可关闭，
+   * - `intercept` = 待确认的新一级告警 id：存在期间顶部显示红条、弹窗不可关闭，
    *   需点「知晓」或「去处理」后才收起（任何界面都能及时响应）。
    */
   const seenUrgent = useRef<Set<string>>(new Set(urgentList.map((a) => a.id)));
@@ -49,7 +49,7 @@ export function AlarmCenter() {
   useEffect(() => {
     const fresh = s.alarms.filter(
       (a) =>
-        a.level === "紧急" && isOpen(a.state) && !seenUrgent.current.has(a.id),
+        a.level === "一级" && isOpen(a) && !seenUrgent.current.has(a.id),
     );
     s.alarms.forEach((a) => seenUrgent.current.add(a.id));
     if (!fresh.length) return;
@@ -58,11 +58,11 @@ export function AlarmCenter() {
     SETMIN(false);
     SETINTERCEPT(fresh[0].id);
   }, [s.alarms]);
-  // 待确认的紧急告警一旦闭环（不再未处理），自动解除拦截
+  // 一级告警一旦完成标注，自动解除拦截
   useEffect(() => {
     if (
       intercept &&
-      !s.alarms.some((a) => a.id === intercept && isOpen(a.state))
+      !s.alarms.some((a) => a.id === intercept && isOpen(a))
     )
       SETINTERCEPT(null);
   }, [s.alarms, intercept]);
@@ -112,7 +112,7 @@ export function AlarmCenter() {
         }
         title={
           list.length
-            ? `有 ${list.length} 条未处理告警（紧急 ${urgent}），点击查看`
+            ? `有 ${list.length} 条未处理告警（一级 ${urgent}），点击查看`
             : "暂无告警"
         }
         onClick={() => {
@@ -128,11 +128,11 @@ export function AlarmCenter() {
         )}
       </button>
 
-      {/* 一级（紧急）告警全局提醒条：置顶、任何界面可见；知晓 / 去处理后收起 */}
+      {/* 一级告警全局提醒条：置顶、任何界面可见；知晓 / 去处理后收起 */}
       {interceptAlarm && (
         <div className="alarm-interrupt" role="alert">
           <Bell size={16} />
-          <b>一级 · 紧急告警</b>
+          <b>一级告警</b>
           <span>{interceptAlarm.name}</span>
           <small>{interceptAlarm.time}</small>
           <span className="alarm-interrupt-spacer" />
@@ -172,14 +172,14 @@ export function AlarmCenter() {
           <div className="alarm-panel-head" onPointerDown={startDrag}>
             <Bell size={15} />
             <b>告警 {list.length} 条</b>
-            {urgent > 0 && <em className="alarm-urgent">紧急 {urgent}</em>}
+            {urgent > 0 && <em className="alarm-urgent">一级 {urgent}</em>}
             <span className="alarm-head-spacer" />
             {/* 一级告警拦截期间：不给「最小化 / 关闭」，必须先知晓 / 去处理 */}
             {interceptAlarm ? (
               <>
                 <button
                   className="alarm-ack"
-                  title="知晓该紧急告警并收起"
+                  title="知晓该一级告警并收起"
                   onClick={ack}
                   onPointerDown={(e) => e.stopPropagation()}
                 >
@@ -187,7 +187,7 @@ export function AlarmCenter() {
                 </button>
                 <button
                   className="alarm-ack go"
-                  title="前往处置该紧急告警"
+                  title="前往处置该一级告警"
                   onClick={() => {
                     SETINTERCEPT(null);
                     SETOPEN(false);

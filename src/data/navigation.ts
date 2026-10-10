@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 /**
  * @file navigation.ts
  * @description 菜单结构与路由：一级业务中心 → 页面（按业务域归并，不按厂商能力域切分）
@@ -33,11 +33,10 @@ export const groups = [
   ],
   [
     "结果与异常",
-    "results:巡检结果查询::结果",
-    "review:结果详情 / 复核::结果",
+    "results:巡检结果::结果",
     // EQ-01：设备巡检档案已移入「资源与地图 › 设备主数据」（结果与异常侧只保留按任务的结果查询）
-    "alarms:告警事件::告警与工单",
-    "alarm:告警详情 / 复查::告警与工单",
+    "alarms:告警管理::告警与处理",
+    "alarm:告警详情 / 处理::告警与处理",
 
   ],
   [
@@ -46,13 +45,32 @@ export const groups = [
     "equipment:设备台账::点位与对象",
     "archive:设备巡检档案::点位与对象",
     "points:巡检目标台账::点位与对象",
-    // TGT-01：空间 / 区域（非装置）类目标单独成入口，与环境/区域类算法对齐
+    // TGT-01：空间 / 区域（非装置）类目标**不单独占菜单项**（2026-10-10 按产品要求删除）：
+    // 路由 `#/resources/points-space` 与台账页 tab="space" 视图保留，入口收口到
+    // 「巡检目标台账」的「空间与区域」筛选 + 新增抽屉第一步的「区域（环境）」页签
     // "points-space:空间与区域目标::点位与对象",
     "rules:采集结果与告警规则::点位与对象",
     // 巡检点管理（原「点位标注与验证工作台」）：巡检点 = 名称 + 地图 + 标定点 + 多个巡检项
     "annotation:巡检点管理::点位与对象",
     // 原「路线与轨道 → 路线管理」已下线：路线随地图带入，不再作为独立目录
     "maps:地图管理::地图",
+    // 空间管理（「空间」目录）：厂区全局坐标系、碎片地图配准、巡检点全局坐标、
+    // 全局↔局部坐标转换、地图拓扑与跨图切换点、版本绑定与校验
+    "space:空间管理::空间",
+  ],
+  [
+    "后台管理",
+    "admin:工厂基础数据",
+    // 算法模板管理：平台 AI 能力（算法）清单的唯一维护入口；被目标台账 / 巡检要求按名称引用
+    "algo-templates:算法模板管理",
+    // 告警模板管理：告警触发逻辑（模板 = 触发条件 + 处理流程；规则库 = 名称/级别/类型/阈值/触发条件）
+    // 的唯一维护入口，供点位判定规则、告警处置页等其他页面引用
+    "alarm-templates:告警模板管理",
+    // 巡检要求管理：平台「看什么、怎么判」的标准表达（模板库）的唯一维护入口，
+    // 巡检目标台账 = 仪表 / 区域 + 一条巡检要求 + 算法 + 阈值 + 判定；被台账按目标类型与采集方式匹配引用
+    "requirements:巡检要求管理",
+    // 机器人上装能力：机器人能力 / 任务指令集 / 派单校验的上游主数据
+    "payloads:机器人上装能力",
   ],
   [
     "机器人管理",
@@ -99,8 +117,6 @@ const hiddenIds = [
   "device",
   // EQ-01：设备巡检档案并入设备台账（行内入口）；路由保留（含 result-detail/alarm-detail/replay-detail 的父级），仅隐藏菜单
   "archive",
-  // REV-02：人工复核改为抽屉（结果列表 / 结果详情内就地打开），不再作为独立菜单与内置页；路由保留供深链直达
-  "review",
   // EXE-03：人工接管与遥控降为「实时执行监控」的内置页（从现场态势 / 机器人详情进入）；路由保留，仅隐藏菜单
   "manual",
   // ROB-03：运行监测 / 新增机器人 / 机器人能力 降为「机器台账」的内置页
@@ -115,6 +131,7 @@ const roots = [
   "dispatch",
   "result",
   "resource",
+  "admin",
   "robot",
   "analytics",
   "system",
@@ -129,16 +146,30 @@ const paths: Record<string, string> = {
   /** 新增机器人（内置表单页）：挂在「机器人管理 › 机器人资产」下 */
   "robot-new": "robots/new",
   maps: "robots/maps",
+  /** 空间管理（资源与地图 › 空间）：全局坐标系与地图拓扑 */
+  space: "resources/space",
   health: "robots/health",
   "robot-map": "robots/map",
   manual: "execution/manual",
   device: "robots/device",
   equipment: "resources/equipment",
+  /** 后台管理：工厂已有基础数据（区域 / 设备 / 仪表）配置 */
+  admin: "admin",
+  /** 后台管理：算法模板管理（AI 能力清单；target 台账按名称引用） */
+  "algo-templates": "admin/algo-templates",
+  /** 后台管理：告警模板管理（触发条件 + 处理流程 / 平台标准规则库） */
+  "alarm-templates": "admin/alarm-templates",
+  /** 后台管理：巡检要求管理（平台「看什么、怎么判」的标准表达，台账按目标类型与采集方式匹配引用） */
+  requirements: "admin/requirements",
+  /** 后台管理：机器人上装能力（上装主数据） */
+  payloads: "admin/payloads",
   points: "resources/points",
   /** 空间 / 区域（非装置）类目标：复用巡检目标台账页，预置为空间与区域视图 */
   "points-space": "resources/points-space",
   /** 添加 / 编辑巡检点（内置页）：名称 + 地图 + 标定点 + 多个巡检项 */
   "point-edit": "resources/points/edit",
+  /** 现场采集（跑图）新增巡检点（内置页）：巡检点新增的唯一入口 */
+  "point-onsite": "resources/points/onsite",
   /** 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证 */
   "point-annotate": "resources/points/annotate",
   /** 巡检点管理（菜单页）：已配置巡检点列表 + 添加巡检点 */
@@ -158,13 +189,13 @@ const paths: Record<string, string> = {
   results: "results/query",
   review: "results/review",
   archive: "results/equipment",
-  /** 结果详情内置页：挂在设备巡检档案目录下，不进入巡检结果查询这一支 */
+  /** 结果详情内置页：挂在设备巡检档案目录下，不进入「巡检结果」这一支 */
   "result-detail": "results/equipment/detail",
   /** 告警详情内置页：同样挂在设备巡检档案目录下，用于档案内的关联告警查看 */
   "alarm-detail": "results/equipment/alarm",
   /** 执行回溯内置页：挂在设备巡检档案目录下，用于档案内的任务过程回放 */
   "replay-detail": "results/equipment/replay",
-  /** 巡检结果详情内置页：挂在「巡检结果查询」分支下，由结果查询任务行「详情」进入（非弹窗） */
+  /** 巡检结果详情内置页：挂在「巡检结果」分支下，由结果查询任务行「详情」进入（非弹窗） */
   "result-view": "results/task-result",
   services: "ai/services",
   rules: "alarms/rules",
@@ -204,8 +235,9 @@ const parents: Record<string, string> = {
    *  ③ 「返回」按钮回到设备台账（而非置灰）。
    */
   archive: "equipment",
-  /** 添加 / 编辑巡检点、地图标注工作台、巡检点详情都归属「巡检点管理」 */
+  /** 添加 / 编辑巡检点、现场采集新增、地图标注工作台、巡检点详情都归属「巡检点管理」 */
   "point-edit": "annotation",
+  "point-onsite": "annotation",
   "point-annotate": "annotation",
   "plan-edit": "plans",
   review: "results",
@@ -268,11 +300,19 @@ export function menuIdOf(page: string): string {
 export const routeMeta = [
   ...pages,
   {
-    // 添加 / 编辑巡检点（内置页）：从「巡检点管理」列表的「添加巡检点」或行内「编辑」进入
+    // 添加 / 编辑巡检点（内置页）：从「巡检点管理」列表的行内「编辑巡检点」进入
     ...pages.find((x) => x.id === "annotation")!,
     id: "point-edit",
     name: "添加 / 编辑巡检点",
     path: paths["point-edit"],
+    parent: "annotation",
+  },
+  {
+    // 现场采集（跑图）新增巡检点（内置页）：巡检点新增的唯一入口，从「巡检点管理」工具条进入
+    ...pages.find((x) => x.id === "annotation")!,
+    id: "point-onsite",
+    name: "现场采集新增巡检点",
+    path: paths["point-onsite"],
     parent: "annotation",
   },
   {
@@ -330,7 +370,7 @@ export const routeMeta = [
     parent: "archive",
   },
   {
-    // 巡检结果详情内置页：无侧边栏入口，挂在「巡检结果查询」下（入口为结果查询任务行「详情」）
+    // 巡检结果详情内置页：无侧边栏入口，挂在「巡检结果」下（入口为结果查询任务行「详情」）
     ...pages.find((x) => x.id === "results")!,
     id: "result-view",
     name: "巡检结果详情",

@@ -17,8 +17,8 @@ export function TakeoverOutcome({ robotId, taskId }: { robotId?: string; taskId?
         <div className="context-bar"><b>{x.id}</b><Badge>{outcome}</Badge></div>
         <p>机器人 {x.robotId} · 原任务 {task?.name || x.taskId || "无"}{task && ` · 当前${task.state}`}</p>
         <p className="muted">申请：{x.startedAt ? new Date(x.startedAt).toLocaleString("zh-CN") : "历史记录未保存时间"} · 释放：{x.releasedAt ? new Date(x.releasedAt).toLocaleString("zh-CN") : "—"} · 恢复：{x.resumedAt ? new Date(x.resumedAt).toLocaleString("zh-CN") : "—"}</p>
-        <p>本次采集 {evidence.length} 条证据，{evidence.filter(r => r.status === "待复核").length} 条待复核。人工证据独立留档，不覆盖自主巡检结果。</p>
-        {!!evidence.length && <Table heads={["证据 / 检测项", "处理状态", "结果", "操作"]} rows={evidence.map(r => [r.id + " · " + r.item, <Badge>{r.status}</Badge>, r.final, <Btn onClick={() => go("review", r.id)}>查看与复核</Btn>])}/>}
+        <p>本次采集 {evidence.length} 条证据。人工证据独立留档，不覆盖自主巡检结果；异常即告警，检查受理在告警事件页完成。</p>
+        {!!evidence.length && <Table heads={["证据 / 检测项", "处理状态", "结果", "操作"]} rows={evidence.map(r => [r.id + " · " + r.item, <Badge>{r.status}</Badge>, r.final, <Btn onClick={() => go("result-detail", r.id)}>查看结果</Btn>])}/>}
         {task && <Btn onClick={() => go("execution-monitor", task.id)}>查看原任务执行状态</Btn>}
         <details><summary>操作回执（{logs.length} 条）</summary><Table heads={["时间", "操作反馈"]} rows={logs.map(l => [l.time, l.detail || l.action])}/></details>
       </section>;

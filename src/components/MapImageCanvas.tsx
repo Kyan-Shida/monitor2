@@ -31,6 +31,7 @@ const DEFAULT_NAT = { w: 1000, h: 620 };
  * @param onAdd 图面点击新增点位回调（返回百分比坐标）；不传则只读
  * @param showIds 是否在标记上显示编号尾号
  * @param height 画布高度（px）
+ * @param robot 机器人当前位置（百分比坐标 + 坐标标签），图上以脉冲圆环高亮标出
  */
 export function MapImageCanvas({
   image,
@@ -41,6 +42,7 @@ export function MapImageCanvas({
   track,
   showIds = false,
   height = 440,
+  robot,
 }: {
   image?: string;
   markers?: ImageMarker[];
@@ -51,6 +53,8 @@ export function MapImageCanvas({
   track?: { x: number; y: number }[];
   showIds?: boolean;
   height?: number;
+  /** 机器人当前位置：坐标点高亮 + 坐标标签（实地跑图时最关心「机器现在在哪」） */
+  robot?: { x: number; y: number; label: string };
 }) {
   const box = useRef<HTMLDivElement>(null);
   /** 底图原始像素尺寸 */
@@ -149,7 +153,40 @@ export function MapImageCanvas({
             {showIds ? mk.id.slice(-4) : ""}
           </button>
         ))}
-        <span className="map-image-hint">{onAdd ? "点击图面标注点位" : "只读预览"}</span>
+        {/* 选中光圈：跟随 selected marker 位置，给底图 img 叠加醒目定位反馈 */}
+        {(() => {
+          const sel = markers.find((m) => m.id === selected);
+          if (!sel) return null;
+          return (
+            <>
+              <span
+                className="map-marker-halo"
+                style={{ left: `${sel.x}%`, top: `${sel.y}%` }}
+              />
+              <span
+                className="map-marker-crosshair"
+                style={{ left: `${sel.x}%`, top: `${sel.y}%` }}
+              />
+            </>
+          );
+        })()}
+        {/* 机器人当前位置：圆点精确压在坐标上（容器零尺寸 + 子元素居中），靠右边缘时标签自动翻到左侧 */}
+        {robot && (
+          <span
+            className={"map-robot-pos" + (robot.x > 72 ? " flip" : "")}
+            style={{ left: `${robot.x}%`, top: `${robot.y}%` }}
+          >
+            <i />
+            <em>{robot.label}</em>
+          </span>
+        )}
+        <span className="map-image-hint">
+          {onAdd
+            ? "点击图面标注点位"
+            : onSelect
+              ? "点击图面定位ID点完成绑定"
+              : "只读预览"}
+        </span>
       </div>
     </div>
   );

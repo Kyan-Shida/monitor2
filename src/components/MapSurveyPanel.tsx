@@ -12,6 +12,7 @@ import { Badge, Btn, Empty, Field, Note, Panel, Table } from "./UI";
 import { MapImageCanvas } from "./MapImageCanvas";
 import { MapBaseUpload } from "./MapBaseUpload";
 import { targetsOf } from "../data/mapCalibration";
+import { mapVer } from "../data/versionLabel";
 
 /** 图层清单（与 types.ts 的 MapLayerFlags 对应） */
 const LAYERS = ["底图", "障碍物层", "点云层", "业务区域层", "巡检点层", "路线层"] as const;
@@ -243,7 +244,12 @@ export function MapSurveyPanel({ mapId }: { mapId: string }) {
       </Panel>
 
       <Panel title="版本与待校准差异（最小版，阶段⑧预置）">
-        <Table heads={["版本变更日志"]} rows={m.history.map((h) => [h])} />
+        <Table
+          heads={["版本", "变更内容", "时间"]}
+          rows={[...m.history]
+            .sort((a, b) => b.version - a.version)
+            .map((h) => [mapVer(h.version), h.note, h.at || "—"])}
+        />
         {!risky.length ? (
           <Note>当前无「可能失效 / 待校准」点位。</Note>
         ) : (

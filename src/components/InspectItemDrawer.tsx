@@ -1,30 +1,21 @@
 /**
  * @file InspectItemDrawer.tsx
- * @description 巡检项编辑抽屉：把「名称 + 业务目标 + 机器操作内容」放到右侧抽屉，
- *              支持两种参数录入方式：操控台边调边看、手动逐项输入。
- * @interaction 被 pages/PointEdit.tsx 调用
+ * @description 巡检项编辑抽屉：把「名称 + 业务目标 + 机器操作内容」放到右侧抽屉。
+ *              参数录入统一走「操控台」——人实际操控机器 / 云台 / 上装，操作即自动记录（source=cockpit）；
+ *              操控台按参考界面铺开为「云台控制 / 云台状态 / 镜头控制」三列 + 「辅助功能」通栏，
+ *              数值参数支持「查询（回读已记录值）/ 设置（下发并记录）」，右侧实时回显参数总览并可保存。
+ * @interaction 被 pages/PointEdit.tsx、pages/PointOnsite.tsx 调用
  */
-import { useMemo, useState } from "react";
-import {
-  Crosshair,
-  Move,
-  Settings2,
-  ScanEye,
-  Thermometer,
-  Video,
-  Focus,
-  Aperture,
-  Lightbulb,
-  Bell,
-  CloudRain,
-  Snowflake,
-  CloudFog,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Thermometer, Video } from "lucide-react";
 import { Badge, Btn, Field, Modal, Note } from "./UI";
+import { DeviceTree } from "./DeviceTree";
+import { useStore } from "../data/store";
+import { areaNameOf } from "../data/deviceMaster";
 import {
   atomicActionCapability,
-  payloadGroups,
   BEHAVIOR_TYPES,
+  payloadGroups,
 } from "../data/types";
 import type {
   AtomicAction,
@@ -34,11 +25,41 @@ import type {
   PTZ,
 } from "../data/types";
 
-/** 避障策略选项（到点后的通行策略） */
-const AVOID = ["标准", "谨慎", "绕行"];
+/** 台账算法关键词 → 原子动作（台账未显式存"所需上装"时据此自动匹配） */
+const ALGO_ACTION_RULES: [RegExp, AtomicAction][] = [
+  [/红外|测温|热像/, "采集红外热像"],
+  [/气体|泄漏/, "采集气体"],
+  [/声纹|声音|异响|噪声/, "录制声音"],
+  [/行为|不安全/, "分析不安全行为"],
+  [
+    /读数|表计|缺陷|外观|分割|图像|可见光|阀位|比对|液滴|油渍/,
+    "拍照",
+  ],
+];
 
-/** 两种参数录入方式 */
-type EditMode = "cockpit" | "manual";
+/**
+ * 依据巡检目标台账推导所需原子动作（决定需要哪些上装）
+ * @param bt 巡检目标台账
+ * @returns 去重后的原子动作列表（至少含一项，兜底「拍照」）
+ */
+function actionsOfTarget(bt: BusinessTarget): AtomicAction[] {
+  const set = new Set<AtomicAction>();
+  const algo = bt.algorithm || "";
+  for (const [re, act] of ALGO_ACTION_RULES) if (re.test(algo)) set.add(act);
+  if (bt.needPhoto) set.add("拍照");
+  if (bt.needVideo) set.add("录像片段");
+  if (!set.size) set.add("拍照");
+  return [...set];
+}
+
+/** 台账判定标准一句话（详情栏回显，与「巡检目标台账」页同一表达） */
+function judgeTextOf(b: BusinessTarget): string {
+  if (b.judge === "数值范围")
+    return `${b.min ?? "—"}–${b.max ?? "—"} ${b.unit || ""}`.trim();
+  if (b.judge === "期望状态") return `期望 ${b.expected || "—"}`;
+  if (b.judge === "有无目标") return "无 → 正常；有 → 异常";
+  return "按等级评分，低分需复核";
+}
 
 export interface InspectItemDrawerProps {
   /** 正在编辑的巡检项草稿 */
@@ -55,6 +76,8 @@ export interface InspectItemDrawerProps {
   labelOfBt: (id: string) => string;
   /** 打开「快速新建巡检目标台账」弹窗 */
   onOpenBt: () => void;
+  /** inline 模式：去掉 Modal 外壳，作为常驻面板渲染（实地采集页面用） */
+  inline?: boolean;
 }
 
 /**
@@ -69,8 +92,8 @@ export function InspectItemDrawer({
   businessTargets,
   labelOfBt,
   onOpenBt,
+  inline,
 }: InspectItemDrawerProps) {
-  const [mode, setMode] = useState<EditMode>("manual");
   const [recordingAction, setRecordingAction] = useState<AtomicAction | "">(
     draft.actions[0] || "",
   );
@@ -81,7 +104,7 @@ export function InspectItemDrawer({
     if (c) return c;
     const p = draft.pose;
     return {
-      source: mode === "cockpit" ? "cockpit" : "manual",
+      source: "cockpit",
       ptz: { ...p.ptz },
       light: p.light ?? 40,
       dwellSec: p.dwellSec ?? 5,
@@ -96,55 +119,364 @@ export function InspectItemDrawer({
   function updCfg(a: AtomicAction, patch: Partial<AtomicActionConfig>) {
     const cfgs = { ...(draft.actionConfigs || {}) };
     const prev = cfgs[a] || cfgOf(a);
-    const source = patch.source ?? (mode === "cockpit" ? "cockpit" : "manual");
+    const source = patch.source ?? "cockpit";
     cfgs[a] = { ...prev, ...patch, source };
     onChange({ actionConfigs: cfgs });
   }
 
-  /** 勾选 / 取消勾选原子动作 */
-  function toggleAction(a: AtomicAction, on: boolean) {
-    const actions = on
-      ? [...draft.actions, a]
-      : draft.actions.filter((x) => x !== a);
+  const { s } = useStore();
+  /** 三栏选择器：左栏树选中值（""=全部 / "r:区域" / "d:设备" / "s:台账"） */
+  const [navKey, NAVKEY] = useState("");
+  /** 三栏选择器中栏关键词 */
+  const [btKw, BTKW] = useState("");
+
+  const instruments = s.instruments || [];
+  const devices = s.devices || [];
+  const requirements = s.requirements || [];
+  const insOf = (id: string) => instruments.find((x) => x.id === id);
+  /** 台账归属设备（仪表类才有；空间 / 区域类没有） */
+  const devOfTarget = (b: BusinessTarget) =>
+    b.instrumentId
+      ? devices.find((d) => d.id === insOf(b.instrumentId)?.deviceId)
+      : undefined;
+  /** 台账归属区域（空间 / 区域类目标不挂设备，返回空串） */
+  const areaOfTarget = (b: BusinessTarget) => {
+    const dev = devOfTarget(b);
+    return dev ? areaNameOf(s, dev) : "";
+  };
+  const reqOfTarget = (b: BusinessTarget) =>
+    requirements.find((r) => r.id === b.requirementId);
+  /**
+   * 中栏条目标题：目标本体（仪表名 / 空间锚点 / 类型）
+   * @description 不再重复「区域 › 设备」前缀——那两层已经在左栏树与右栏详情里表达，
+   *              中栏只回答「检的是什么」，长名字才不至于被挤成省略号
+   */
+  const subjectOf = (b: BusinessTarget) =>
+    insOf(b.instrumentId)?.name || b.anchor || b.targetKind || labelOfBt(b.id);
+  /** 中栏条目副行：归属「设备 · 区域」，两者都取不到时返回空串（该行不渲染） */
+  const belongOf = (b: BusinessTarget) =>
+    [devOfTarget(b)?.name, areaOfTarget(b)].filter(Boolean).join(" · ");
+  /** 空间与区域（非装置）台账：树上挂到独立分组 */
+  const spaceTargets = useMemo(
+    () =>
+      businessTargets.filter(
+        (b) => !b.instrumentId || (b.targetKind && b.targetKind !== "仪表"),
+      ),
+    [businessTargets],
+  );
+  /** 树节点 → 中栏台账候选 */
+  const btMatches = (b: BusinessTarget) => {
+    if (!navKey) return true;
+    if (navKey.startsWith("s:")) return b.id === navKey.slice(2);
+    if (navKey.startsWith("d:")) return devOfTarget(b)?.id === navKey.slice(2);
+    return areaOfTarget(b) === navKey.slice(2);
+  };
+  const btList = businessTargets.filter((b) => {
+    if (!btMatches(b)) return false;
+    const k = btKw.trim();
+    return (
+      !k ||
+      (b.id + labelOfBt(b.id) + (b.algorithm || "") + (b.unit || "")).includes(k)
+    );
+  });
+  /** 当前选中的台账（右栏详情） */
+  const selBt = businessTargets.find((b) => b.id === draft.targetId);
+
+  /**
+   * 同步原子动作集合
+   * @description 动作变化时清理不再需要的动作参数，并保证「正在记录参数的动作」仍有效
+   * @param next 新的原子动作集合
+   * @param extra 需要一并写回草稿的其它字段
+   */
+  function applyActions(next: AtomicAction[], extra?: Partial<InspectSpec>) {
     const cfgs = { ...(draft.actionConfigs || {}) };
-    if (!on) delete cfgs[a];
-    onChange({ actions, actionConfigs: cfgs });
-    if (on && !recordingAction) setRecordingAction(a);
+    (Object.keys(cfgs) as AtomicAction[]).forEach((k) => {
+      if (!next.includes(k)) delete cfgs[k];
+    });
+    onChange({ actions: next, actionConfigs: cfgs, ...extra });
+    if (recordingAction && !next.includes(recordingAction as AtomicAction))
+      setRecordingAction(next[0] || "");
   }
 
-  /** 渲染模式切换栏 */
-  const modeBar = (
-    <div className="drawer-mode-bar">
-      <span>参数录入方式：</span>
-      <div className="actions">
-        {(
-          [
-            { k: "cockpit", label: "操控台录入" },
-            { k: "manual", label: "手动输入" },
-          ] as { k: EditMode; label: string }[]
-        ).map((m) => (
-          <label
-            key={m.k}
-            className={"mode-radio " + (mode === m.k ? "active" : "")}
-          >
-            <input
-              type="radio"
-              name="item-mode"
-              checked={mode === m.k}
-              onChange={() => setMode(m.k)}
+  /** 选择巡检目标台账：按其巡检要求自动匹配上装与原子动作 */
+  function pickTarget(id: string) {
+    const bt = businessTargets.find((b) => b.id === id);
+    applyActions(bt ? actionsOfTarget(bt) : [], { targetId: id });
+  }
+
+  /** 上装开关：开 = 记入该上装的主动作；关 = 移除该上装全部动作 */
+  function togglePayload(g: (typeof payloadGroups)[number]) {
+    const on = g.actions.some((x) => draft.actions.includes(x));
+    applyActions(
+      on
+        ? draft.actions.filter((x) => !g.actions.includes(x))
+        : [...new Set([...draft.actions, g.actions[0]])],
+    );
+  }
+
+  /** 单勾某个原子动作（上装开启后的细分动作） */
+  function setAction(x: AtomicAction, checked: boolean) {
+    applyActions(
+      checked
+        ? [...new Set([...draft.actions, x])]
+        : draft.actions.filter((y) => y !== x),
+    );
+  }
+
+  /** 已开启的上装类数（步骤②头部回显） */
+  const openedPayloads = payloadGroups.filter((g) =>
+    g.actions.some((x) => draft.actions.includes(x)),
+  ).length;
+
+  const content = (
+    /*
+      本页四步一屏读完：
+      ① 选择巡检目标（名称 + 台账：检什么 · 怎么判）
+      ② 明确本项需要哪些上装工作（上装开关）
+      ③ 视频面板实时操作机器 / 云台，把机器调到最佳观察位置（平台自动记录参数）
+      ④ 参数总览与保存（右栏随操控实时回显）
+    */
+    <div className="item-steps">
+      {/* ① 选择需要巡检的目标 */}
+      <section className="item-step">
+        <h4 className="item-step-h">
+          <i>1</i>
+          <span>选择需要巡检的目标</span>
+          <small className="step-tail">
+            {draft.targetId ? labelOfBt(draft.targetId) : "未选择台账"}
+          </small>
+        </h4>
+
+        <Field label="巡检项名称">
+          <input
+            value={draft.name}
+            placeholder="例如 压力读数 / 泵体滴漏"
+            onChange={(e) => onChange({ name: e.target.value })}
+          />
+        </Field>
+
+        {/*
+          目标台账 = 三栏选择器：左「区域 › 设备」树 ／ 中「台账列表」／ 右「台账详情」。
+          三栏等高（左树撑满、中栏列表自滚），点中一条台账即生效
+          （自动按其算法勾选所需上装与原子动作），右栏只读回显口径。
+        */}
+        <div className="bt-picker">
+          <div className="bt-picker-head">
+            <span className="bt-picker-cur">巡检目标台账（检什么 · 怎么判）</span>
+          </div>
+          <div className="pick-3col">
+            {/* 左栏：与「巡检目标台账」页同一棵树；非装置类挂「空间与区域」分组 */}
+            <DeviceTree
+              value={navKey}
+              onChange={NAVKEY}
+              ariaLabel="巡检目标台账树"
+              rootLabel="全部台账"
+              rootCount={businessTargets.length}
+              countOf={(d) =>
+                businessTargets.filter((b) => devOfTarget(b)?.id === d.id).length
+              }
+              hideEmpty
+              extraGroup={
+                spaceTargets.length
+                  ? {
+                      name: "空间与区域",
+                      leaves: spaceTargets.map((b) => ({
+                        value: "s:" + b.id,
+                        label: labelOfBt(b.id),
+                      })),
+                    }
+                  : undefined
+              }
             />
-            <span>{m.label}</span>
-          </label>
-        ))}
-      </div>
+            {/* 中栏：台账列表 */}
+            <div className="pick-main">
+              <div className="filter-bar">
+                <input
+                  placeholder="搜索台账 / 设备 / 算法"
+                  value={btKw}
+                  onChange={(e) => BTKW(e.target.value)}
+                />
+              </div>
+              <div className="pick-list">
+                {btList.map((b) => {
+                  const req = reqOfTarget(b);
+                  return (
+                    <button
+                      key={b.id}
+                      className={"pick" + (draft.targetId === b.id ? " on" : "")}
+                      onClick={() => pickTarget(b.id)}
+                    >
+                      <span className="pick-body">
+                        <b>{subjectOf(b)}</b>
+                        {req?.name && <i>· {req.name}</i>}
+                        {belongOf(b) && <em>{belongOf(b)}</em>}
+                      </span>
+                      <small>
+                        {req?.capture || "—"}
+                        {b.unit ? ` · ${b.unit}` : ""} · {b.algorithm || "—"}
+                      </small>
+                    </button>
+                  );
+                })}
+                {!btList.length && (
+                  <p className="muted">
+                    没有匹配的台账，请在左栏换设备 / 区域或调整关键词。
+                  </p>
+                )}
+              </div>
+            </div>
+            {/* 右栏：台账详情（只读口径 + 自动勾选的上装） */}
+            <aside className="pick-picked">
+              <div className="pick-picked-head">
+                <b>台账详情</b>
+              </div>
+              {selBt ? (
+                <div className="pick-detail">
+                  <p className="pick-detail-name">{labelOfBt(selBt.id)}</p>
+                  <div className="bt-sum-kv">
+                    <span>类型</span>
+                    <b>
+                      {selBt.targetKind || (selBt.instrumentId ? "仪表" : "环境")}
+                    </b>
+                    <span>区域</span>
+                    <b>{areaOfTarget(selBt) || "—"}</b>
+                    <span>设备</span>
+                    <b>{devOfTarget(selBt)?.name || selBt.anchor || "—"}</b>
+                    <span>巡检要求</span>
+                    <b>{reqOfTarget(selBt)?.name || "—"}</b>
+                    <span>采集方式</span>
+                    <b>
+                      {reqOfTarget(selBt)?.capture ||
+                        insOf(selBt.instrumentId)?.capture ||
+                        "—"}
+                    </b>
+                    <span>算法</span>
+                    <b>{selBt.algorithm || "—"}</b>
+                    <span>判定标准</span>
+                    <b>{judgeTextOf(selBt)}</b>
+                    <span>告警等级</span>
+                    <b>{selBt.alarm?.level || "—"}</b>
+                  </div>
+                  <h6>自动勾选的上装</h6>
+                  <div className="pick-detail-tags">
+                    {[
+                      ...new Set(
+                        actionsOfTarget(selBt).map(
+                          (x) => atomicActionCapability[x],
+                        ),
+                      ),
+                    ].map((k) => (
+                      <Badge key={k}>{k}</Badge>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="pick-empty">未选择</p>
+              )}
+            </aside>
+          </div>
+        </div>
+
+        {!businessTargets.length && (
+          <Note>
+            还没有巡检目标台账：业务目标 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准。
+            请先在「巡检目标台账」里建，或点上方「＋ 快速新建巡检目标台账」。
+          </Note>
+        )}
+      </section>
+
+      {/*
+        ② 上装开关：明确「这一项巡检需要哪些上装参与」。
+        选中台账时按其算法自动置开；也可手动开关，开 = 记入该上装主动作，关 = 移除该上装全部动作。
+      */}
+      <section className="item-step">
+        <h4 className="item-step-h">
+          <i>2</i>
+          <span>明确本项需要哪些上装工作</span>
+          <small className="step-tail">
+            已开 {openedPayloads} 类上装 · 原子动作 {draft.actions.length} 个
+          </small>
+        </h4>
+        <div className="payload-switches">
+          {payloadGroups.map((g) => {
+            const on = g.actions.some((x) => draft.actions.includes(x));
+            return (
+              <div key={g.name} className={"payload-switch" + (on ? " on" : "")}>
+                <div className="payload-switch-head">
+                  <button
+                    type="button"
+                    className={on ? "switch-btn on" : "switch-btn"}
+                    onClick={() => togglePayload(g)}
+                  >
+                    {g.name} {on ? "开" : "关"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {!draft.actions.length && (
+          <Note>
+            还没有上装参与：先选巡检目标（按其算法自动置开），或手动打开上装开关。
+          </Note>
+        )}
+      </section>
+
+      {/* ③ 实时操控对准最佳位置（平台自动记录参数）＋ ④ 参数总览与保存 */}
+      <section className="item-step">
+        <h4 className="item-step-h">
+          <i>3</i>
+          <span>
+            通过视频面板实时操作机器 / 云台，把机器调到能看到本巡检项的最佳位置
+          </span>
+          <small className="step-tail">平台自动记录参数</small>
+        </h4>
+        {!draft.actions.length ? (
+          <Note>选好巡检目标与上装后，这里出现视频面板与操控台。</Note>
+        ) : (
+          <div className="item-cockpit">
+            <div className="item-cockpit-left">
+              <ControlCockpit
+                draft={draft}
+                recordingAction={recordingAction}
+                onRecordingActionChange={setRecordingAction}
+                cfgOf={cfgOf}
+                updCfg={updCfg}
+              />
+            </div>
+            <div className="item-cockpit-right">
+              <h4 className="item-step-h">
+                <i>4</i>
+                <span>保存本项参数</span>
+              </h4>
+              <ParamSummary draft={draft} cfgOf={cfgOf} onSave={onSave} />
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   );
+
+  if (inline)
+    return (
+      <div className="field-collect-drawer">
+        <div className="field-collect-drawer-head">
+          <b>{draft.id ? `编辑巡检项 · ${draft.name || "未命名"}` : "添加巡检项"}</b>
+        </div>
+        <div className="field-collect-drawer-body">{content}</div>
+        <div className="field-collect-drawer-foot">
+          <Btn onClick={onCancel}>取消</Btn>
+          <Btn primary onClick={onSave}>
+            保存本项
+          </Btn>
+        </div>
+      </div>
+    );
 
   return (
     <Modal
       title={draft.id ? `编辑巡检项 · ${draft.name || "未命名"}` : "添加巡检项"}
-      drawer
-      drawerWidth={860}
+      wide
       onClose={onCancel}
       footer={
         <>
@@ -155,338 +487,177 @@ export function InspectItemDrawer({
         </>
       }
     >
-      {modeBar}
-
-      <Field label="巡检项名称">
-        <input
-          value={draft.name}
-          placeholder="例如 压力读数 / 泵体滴漏"
-          onChange={(e) => onChange({ name: e.target.value })}
-        />
-      </Field>
-
-      <Field label="巡检目标台账（检什么 · 怎么判）">
-        <div className="actions">
-          <select
-            value={draft.targetId}
-            onChange={(e) => onChange({ targetId: e.target.value })}
-          >
-            <option value="">请选择巡检目标台账</option>
-            {businessTargets.map((b) => (
-              <option key={b.id} value={b.id}>
-                {labelOfBt(b.id)}
-                {b.inspect ? "" : "（已关闭是否巡检）"}
-              </option>
-            ))}
-          </select>
-          <Btn onClick={onOpenBt}>＋ 快速新建巡检目标台账</Btn>
-        </div>
-      </Field>
-
-      {!businessTargets.length && (
-        <Note>
-          还没有巡检目标台账：业务目标 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准。
-          请先在「巡检目标台账」里建，或点上方「＋ 快速新建」。
-        </Note>
-      )}
-
-      <Field label="机器操作内容 · 原子动作（按上装选动作模板 · 到点后做什么）">
-        <div className="payload-groups">
-          {payloadGroups.map((g) => (
-            <div className="payload-group" key={g.name}>
-              <div className="payload-head">
-                <b>{g.name}</b>
-                <small>
-                  {g.caption} · {atomicActionCapability[g.actions[0]]}
-                </small>
-              </div>
-              <div className="actions">
-                {g.actions.map((a) => (
-                  <label key={a} className="inline-filter">
-                    <input
-                      type="checkbox"
-                      checked={draft.actions.includes(a)}
-                      onChange={(e) => toggleAction(a, e.target.checked)}
-                    />
-                    <span>{a}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Field>
-
-      {mode === "manual" && (
-        <ManualActionPanel draft={draft} cfgOf={cfgOf} updCfg={updCfg} />
-      )}
-
-      {mode === "cockpit" && (
-        <>
-          {!draft.actions.length ? (
-            <Note>先勾选上方原子动作，再到操控台边调边看。</Note>
-          ) : (
-            <ControlCockpit
-              draft={draft}
-              recordingAction={recordingAction}
-              onRecordingActionChange={setRecordingAction}
-              cfgOf={cfgOf}
-              updCfg={updCfg}
-            />
-          )}
-        </>
-      )}
-
+      {content}
     </Modal>
   );
 }
 
-/** 手动模式：为每个选中的原子动作单独配参数 */
-function ManualActionPanel({
+/** 数值参数：输入 + 「查询（回读已记录值）/ 设置（写入记录）」 */
+function QuerySet({
+  label,
+  unit,
+  value,
+  min,
+  max,
+  step,
+  onSet,
+}: {
+  label: string;
+  unit?: string;
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  onSet: (v: number) => void;
+}) {
+  const [v, setV] = useState(String(value));
+  // 切换动作 / 外部记录值变化时同步输入框
+  useEffect(() => setV(String(value)), [value]);
+  return (
+    <div className="qset">
+      <span className="lbl">{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+      />
+      {unit && <span>{unit}</span>}
+      <Btn onClick={() => setV(String(value))}>查询</Btn>
+      <Btn primary onClick={() => onSet(Number(v))}>
+        设置
+      </Btn>
+    </div>
+  );
+}
+
+/** 开关型辅助按钮（补光灯 / 报警灯 / 雨刷 / 防冻 / 透雾） */
+function Switch({
+  label,
+  on,
+  onChange,
+}: {
+  label: string;
+  on: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={on ? "switch-btn on" : "switch-btn"}
+      onClick={() => onChange(!on)}
+    >
+      {label} {on ? "开" : "关"}
+    </button>
+  );
+}
+
+/** 参数总览（右栏）：实时回显当前巡检项所有已记录参数，并提供保存入口 */
+function ParamSummary({
   draft,
   cfgOf,
-  updCfg,
+  onSave,
 }: {
   draft: InspectSpec;
   cfgOf: (a: AtomicAction) => AtomicActionConfig;
-  updCfg: (a: AtomicAction, patch: Partial<AtomicActionConfig>) => void;
+  onSave: () => void;
 }) {
-  if (!draft.actions.length)
-    return (
-      <p className="muted">先勾选上方原子动作，再逐项手动输入参数。</p>
-    );
+  const auxFlags = (c: AtomicActionConfig) => {
+    const e = c.extra || {};
+    const on: string[] = [];
+    if ((c.light ?? 0) > 0) on.push("补光灯");
+    if (e.alarmLight) on.push("报警灯");
+    if (e.wiper) on.push("雨刷");
+    if (e.antiFreeze) on.push("防冻");
+    if (e.defog) on.push("透雾");
+    if (e.emergencyStop) on.push("急停");
+    return on;
+  };
+
   return (
-    <Field label="机器操作内容 · 逐项动作编排（手动输入）">
-      <div className="action-cards">
-        {draft.actions.map((a) => {
-          const c = cfgOf(a);
-          const ptz = c.ptz || draft.pose.ptz;
-          return (
-            <div className="action-card" key={a}>
-              <div className="action-card-head">
-                <b>{a}</b>
-                <Badge>{atomicActionCapability[a]}</Badge>
-              </div>
-              <ActionParamForm a={a} c={c} ptz={ptz} updCfg={updCfg} />
+    <div className="param-summary">
+      {!draft.actions.length && (
+        <p className="ps-empty">
+          勾选原子动作并在左侧操控台操作后，参数会自动汇总到这里。
+        </p>
+      )}
+      {draft.actions.map((a) => {
+        const c = cfgOf(a);
+        const ptz = c.ptz || draft.pose.ptz;
+        const aux = auxFlags(c);
+        return (
+          <div className="ps-item" key={a}>
+            <div className="ps-head">
+              <b>{a}</b>
+              <Badge>{atomicActionCapability[a]}</Badge>
             </div>
-          );
-        })}
+            <div className="ps-kv">
+              <b>水平角</b>
+              <span>{ptz.pan}°</span>
+              <b>俯仰角</b>
+              <span>{ptz.tilt}°</span>
+              <b>变倍</b>
+              <span>{ptz.zoom}</span>
+              <b>聚焦</b>
+              <span>{c.focus ?? "—"}</span>
+              <b>升降</b>
+              <span>{c.lift ?? 0}</span>
+              <b>补光</b>
+              <span>{c.light ?? 0}%</span>
+              <b>停留</b>
+              <span>{c.dwellSec ?? 5}s</span>
+              <b>预置位</b>
+              <span>{c.preset || "—"}</span>
+              {a === "采集气体" && (
+                <>
+                  <b>采集方式</b>
+                  <span>{c.gasMode ?? "泵吸式"}</span>
+                  <b>传感器</b>
+                  <span>{c.sensorKind || "—"}</span>
+                </>
+              )}
+              {a === "采集红外热像" && (
+                <>
+                  <b>发射率</b>
+                  <span>{c.emissivity ?? "—"}</span>
+                  <b>测温距离</b>
+                  <span>{c.thermalDistance ?? "—"}m</span>
+                </>
+              )}
+              {a === "录制声音" && (
+                <>
+                  <b>关注频段</b>
+                  <span>{c.soundBand || "—"}</span>
+                </>
+              )}
+              {a === "分析不安全行为" && (
+                <>
+                  <b>行为类别</b>
+                  <span>{(c.behaviorTypes || []).join(" / ") || "—"}</span>
+                </>
+              )}
+              {aux.length > 0 && (
+                <>
+                  <b>辅助</b>
+                  <span>{aux.join(" / ")}</span>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <div className="save-row">
+        <Btn primary onClick={onSave}>
+          保存本项
+        </Btn>
       </div>
-    </Field>
+    </div>
   );
 }
 
-/** 参数表单（手动与操控台共用输入区） */
-function ActionParamForm({
-  a,
-  c,
-  ptz,
-  updCfg,
-  hidePtz,
-}: {
-  a: AtomicAction;
-  c: AtomicActionConfig;
-  ptz: PTZ;
-  updCfg: (a: AtomicAction, patch: Partial<AtomicActionConfig>) => void;
-  hidePtz?: boolean;
-}) {
-  return (
-    <>
-      {!hidePtz && (
-        <div className="ptz-row">
-          {(
-            [
-              ["pan", "水平", -180, 180],
-              ["tilt", "俯仰", -90, 90],
-              ["zoom", "变焦", 1, 30],
-            ] as const
-          ).map(([k, label, min, max]) => (
-            <label key={k} className="inline-filter">
-              <span>{label}</span>
-              <input
-                type="range"
-                min={min}
-                max={max}
-                aria-label={`${label}滑杆`}
-                value={ptz[k]}
-                onChange={(e) =>
-                  updCfg(a, {
-                    ptz: { ...ptz, [k]: Number(e.target.value) },
-                  })
-                }
-              />
-              <input
-                type="number"
-                min={min}
-                max={max}
-                aria-label={label}
-                value={ptz[k]}
-                onChange={(e) =>
-                  updCfg(a, {
-                    ptz: { ...ptz, [k]: Number(e.target.value) },
-                  })
-                }
-              />
-            </label>
-          ))}
-        </div>
-      )}
-      <div className="actions">
-        <label className="inline-filter">
-          <span>观察方向：</span>
-          <input
-            value={c.viewDir ?? ""}
-            placeholder="例如 正对表盘"
-            onChange={(e) => updCfg(a, { viewDir: e.target.value })}
-          />
-        </label>
-        <label className="inline-filter">
-          <span>补光：</span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            aria-label="补光"
-            value={c.light ?? 40}
-            onChange={(e) => updCfg(a, { light: Number(e.target.value) })}
-          />
-          <span>{c.light ?? 40}%</span>
-        </label>
-        <label className="inline-filter">
-          <span>升降：</span>
-          <input
-            type="number"
-            step="0.1"
-            aria-label="升降高度"
-            value={c.lift ?? 0}
-            onChange={(e) => updCfg(a, { lift: Number(e.target.value) })}
-          />
-        </label>
-        <label className="inline-filter">
-          <span>停留：</span>
-          <input
-            type="number"
-            aria-label="停留秒数"
-            value={c.dwellSec ?? 5}
-            onChange={(e) => updCfg(a, { dwellSec: Number(e.target.value) })}
-          />
-          <span>秒</span>
-        </label>
-        <label className="inline-filter">
-          <span>避障：</span>
-          <select
-            aria-label="避障策略"
-            value={c.avoidPolicy ?? "标准"}
-            onChange={(e) => updCfg(a, { avoidPolicy: e.target.value })}
-          >
-            {AVOID.map((x) => (
-              <option key={x}>{x}</option>
-            ))}
-          </select>
-        </label>
-        <label className="inline-filter">
-          <span>预置位：</span>
-          <input
-            value={c.preset ?? ""}
-            placeholder="例如 P-03"
-            onChange={(e) => updCfg(a, { preset: e.target.value })}
-          />
-        </label>
-      </div>
-
-      {/* 采集方式专属参数：按能力结构化录入，不再塞进 extra 黑盒 */}
-      {a === "采集气体" && (
-        <div className="actions">
-          <label className="inline-filter">
-            <span>采集方式：</span>
-            <select
-              aria-label="气体采集方式"
-              value={c.gasMode ?? "泵吸式"}
-              onChange={(e) =>
-                updCfg(a, { gasMode: e.target.value as "泵吸式" | "扩散式" })
-              }
-            >
-              <option>泵吸式</option>
-              <option>扩散式</option>
-            </select>
-          </label>
-          <label className="inline-filter">
-            <span>传感器种类：</span>
-            <input
-              value={c.sensorKind ?? ""}
-              placeholder="如 4 合 1 / 6 合 1 / 具体气体组分"
-              onChange={(e) => updCfg(a, { sensorKind: e.target.value })}
-            />
-          </label>
-        </div>
-      )}
-      {a === "采集红外热像" && (
-        <div className="actions">
-          <label className="inline-filter">
-            <span>发射率：</span>
-            <input
-              type="number"
-              step="0.01"
-              min={0}
-              max={1}
-              aria-label="红外发射率"
-              value={c.emissivity ?? ""}
-              onChange={(e) =>
-                updCfg(a, { emissivity: Number(e.target.value) })
-              }
-            />
-          </label>
-          <label className="inline-filter">
-            <span>测温距离：</span>
-            <input
-              type="number"
-              aria-label="测温距离"
-              value={c.thermalDistance ?? ""}
-              onChange={(e) =>
-                updCfg(a, { thermalDistance: Number(e.target.value) })
-              }
-            />
-            <span>米</span>
-          </label>
-        </div>
-      )}
-      {a === "录制声音" && (
-        <div className="actions">
-          <label className="inline-filter">
-            <span>关注频段：</span>
-            <input
-              value={c.soundBand ?? ""}
-              placeholder="如 20Hz–20kHz"
-              onChange={(e) => updCfg(a, { soundBand: e.target.value })}
-            />
-          </label>
-        </div>
-      )}
-      {a === "分析不安全行为" && (
-        <div className="actions">
-          <span>行为类别：</span>
-          {BEHAVIOR_TYPES.map((t) => (
-            <label key={t} className="inline-filter">
-              <input
-                type="checkbox"
-                checked={(c.behaviorTypes || []).includes(t)}
-                onChange={(e) => {
-                  const set = new Set(c.behaviorTypes || []);
-                  if (e.target.checked) set.add(t);
-                  else set.delete(t);
-                  updCfg(a, { behaviorTypes: [...set] });
-                }}
-              />
-              <span>{t}</span>
-            </label>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-/** 操控台：边调边看，自动记录当前动作参数 */
+/** 操控台：人实际操控机器 / 云台 / 上装，操作即自动记录到当前动作参数 */
 function ControlCockpit({
   draft,
   recordingAction,
@@ -500,9 +671,8 @@ function ControlCockpit({
   cfgOf: (a: AtomicAction) => AtomicActionConfig;
   updCfg: (a: AtomicAction, patch: Partial<AtomicActionConfig>) => void;
 }) {
-  const [tab, setTab] = useState<
-    "robot" | "gimbal" | "status" | "lens" | "aux"
-  >("gimbal");
+  /** 左列子页签：云台控制（默认）/ 机器人移动 */
+  const [subTab, setSubTab] = useState<"gimbal" | "robot">("gimbal");
 
   const a = (recordingAction || draft.actions[0]) as AtomicAction;
   const c = cfgOf(a);
@@ -510,22 +680,14 @@ function ControlCockpit({
 
   const setPtz = (patch: Partial<PTZ>) =>
     updCfg(a, { ptz: { ...ptz, ...patch }, source: "cockpit" });
-  const setExtra = (
-    patch: Record<string, string | number | boolean>,
-  ) => {
+  const setExtra = (patch: Record<string, string | number | boolean>) => {
     const extra = { ...(c.extra || {}), ...patch };
     updCfg(a, { extra, source: "cockpit" });
   };
   const extraNum = (key: string, def = 0) => Number(c.extra?.[key] ?? def);
   const extraBool = (key: string) => Boolean(c.extra?.[key]);
-
-  const tabs = [
-    { k: "robot", label: "机器人移动", icon: Move },
-    { k: "gimbal", label: "云台控制", icon: Crosshair },
-    { k: "status", label: "云台状态", icon: ScanEye },
-    { k: "lens", label: "镜头控制", icon: Focus },
-    { k: "aux", label: "辅助功能", icon: Settings2 },
-  ] as const;
+  /** 该动作是否被勾选（上装参数按勾选显示） */
+  const has = (x: AtomicAction) => draft.actions.includes(x);
 
   return (
     <div className="cockpit">
@@ -548,59 +710,101 @@ function ControlCockpit({
         </div>
       </div>
 
-      <div className="cockpit-recorder">
-        <label>
-          正在记录参数的动作：
-          <select
-            value={a}
-            onChange={(e) =>
-              onRecordingActionChange(e.target.value as AtomicAction)
-            }
-          >
-            {draft.actions.map((x) => (
-              <option key={x} value={x}>
-                {x}（{atomicActionCapability[x]}）
-              </option>
-            ))}
-          </select>
-        </label>
-        <Badge>{atomicActionCapability[a]}</Badge>
-        <small className="muted">操作下方控件即自动记录到该动作参数</small>
-      </div>
-
-      <div className="cockpit-tabs">
-        {tabs.map((t) => {
-          const Icon = t.icon;
-          return (
+      <div className="cockpit-cols">
+        {/* 左列：云台控制（可切机器人移动） */}
+        <div className="cockpit-section">
+          <div className="cockpit-tabs">
             <button
-              key={t.k}
-              className={tab === t.k ? "active" : ""}
-              onClick={() => setTab(t.k)}
+              className={subTab === "gimbal" ? "active" : ""}
+              onClick={() => setSubTab("gimbal")}
             >
-              <Icon size={14} />
-              {t.label}
+              云台控制
             </button>
-          );
-        })}
-      </div>
+            <button
+              className={subTab === "robot" ? "active" : ""}
+              onClick={() => setSubTab("robot")}
+            >
+              机器人移动
+            </button>
+          </div>
 
-      <div className="cockpit-body">
-        {tab === "robot" && (
-          <div className="cockpit-grid two-col">
-            <div className="cockpit-section">
-              <b>移动速度</b>
-              <label className="inline-filter">
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={extraNum("moveSpeed", 30)}
-                  onChange={(e) =>
-                    setExtra({ moveSpeed: Number(e.target.value) })
-                  }
-                />
-                <span>{extraNum("moveSpeed", 30)}%</span>
-              </label>
+          {subTab === "gimbal" ? (
+            <>
+              <div className="cockpit-sub2">
+                <div>
+                  <label className="inline-filter">
+                    <span>单次转动速度</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={extraNum("turnSpeed", 30)}
+                      onChange={(e) =>
+                        setExtra({ turnSpeed: Number(e.target.value) })
+                      }
+                    />
+                    <span>{extraNum("turnSpeed", 30)}%</span>
+                  </label>
+                  <b>云台转向控制</b>
+                  <div className="dpad">
+                    <button onClick={() => setPtz({ tilt: ptz.tilt + 1 })}>上</button>
+                    <div className="dpad-mid">
+                      <button onClick={() => setPtz({ pan: ptz.pan - 1 })}>左</button>
+                      <button onClick={() => setPtz({ pan: ptz.pan + 1 })}>右</button>
+                    </div>
+                    <button onClick={() => setPtz({ tilt: ptz.tilt - 1 })}>下</button>
+                  </div>
+                </div>
+                <div>
+                  <label className="inline-filter">
+                    <span>单次升降速度</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={extraNum("liftSpeed", 30)}
+                      onChange={(e) =>
+                        setExtra({ liftSpeed: Number(e.target.value) })
+                      }
+                    />
+                    <span>{extraNum("liftSpeed", 30)}%</span>
+                  </label>
+                  <b>云台升降控制</b>
+                  <div className="dpad small">
+                    <button
+                      onClick={() =>
+                        updCfg(a, {
+                          lift: (c.lift ?? 0) + 1,
+                          source: "cockpit",
+                        })
+                      }
+                    >
+                      上升
+                    </button>
+                    <button
+                      onClick={() =>
+                        updCfg(a, {
+                          lift: Math.max(0, (c.lift ?? 0) - 1),
+                          source: "cockpit",
+                        })
+                      }
+                    >
+                      下降
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <QuerySet
+                label="升降高度"
+                min={0}
+                max={100}
+                value={c.lift ?? 0}
+                onSet={(v) => updCfg(a, { lift: v, source: "cockpit" })}
+              />
+            </>
+          ) : (
+            <>
+              <b>机器人移动控制</b>
               <div className="dpad">
                 <button onClick={() => setExtra({ moveY: -1 })}>前</button>
                 <div className="dpad-mid">
@@ -609,272 +813,216 @@ function ControlCockpit({
                 </div>
                 <button onClick={() => setExtra({ moveY: 1 })}>后</button>
               </div>
-            </div>
-            <div className="cockpit-section">
-              <b>安全控制</b>
-              <label className="toggle-row">
-                <input
-                  type="checkbox"
-                  checked={extraBool("emergencyStop")}
-                  onChange={(e) =>
-                    setExtra({ emergencyStop: e.target.checked })
-                  }
-                />
-                <span>急停</span>
-              </label>
-            </div>
-          </div>
-        )}
+              <div className="actions">
+                <button
+                  type="button"
+                  className={extraBool("emergencyStop") ? "switch-btn on" : "switch-btn"}
+                  onClick={() => setExtra({ emergencyStop: true })}
+                >
+                  急停
+                </button>
+                <button
+                  type="button"
+                  className="switch-btn"
+                  onClick={() => setExtra({ emergencyStop: false })}
+                >
+                  解除
+                </button>
+              </div>
+            </>
+          )}
+        </div>
 
-        {tab === "gimbal" && (
-          <div className="cockpit-grid two-col">
-            <div className="cockpit-section">
-              <b>速度 / 高度</b>
-              <label className="inline-filter">
-                <span>单次转动速度</span>
+        {/* 中列：云台状态 */}
+        <div className="cockpit-section">
+          <b>云台状态</b>
+          <QuerySet
+            label="垂直角度"
+            unit="°"
+            min={-90}
+            max={90}
+            value={ptz.tilt}
+            onSet={(v) => setPtz({ tilt: v })}
+          />
+          <QuerySet
+            label="水平角度"
+            unit="°"
+            min={-180}
+            max={180}
+            value={ptz.pan}
+            onSet={(v) => setPtz({ pan: v })}
+          />
+          <div className="qset">
+            <span className="lbl">预置位</span>
+            <input
+              value={c.preset ?? ""}
+              placeholder="请输入预置位"
+              onChange={(e) =>
+                updCfg(a, { preset: e.target.value, source: "cockpit" })
+              }
+            />
+            <Btn onClick={() => setExtra({ presetSaved: true })}>添加</Btn>
+            <Btn onClick={() => setExtra({ presetRecalled: true })}>召回</Btn>
+            <Btn onClick={() => updCfg(a, { preset: "" })}>删除</Btn>
+          </div>
+        </div>
+
+        {/* 右列：镜头控制 */}
+        <div className="cockpit-section">
+          <b>镜头控制</b>
+          <QuerySet
+            label="镜头变倍"
+            min={1}
+            max={30}
+            value={ptz.zoom}
+            onSet={(v) => setPtz({ zoom: v })}
+          />
+          <QuerySet
+            label="镜头聚焦"
+            min={0}
+            max={100}
+            value={c.focus ?? 50}
+            onSet={(v) => updCfg(a, { focus: v, source: "cockpit" })}
+          />
+          <div className="qset">
+            <span className="lbl">聚焦模式</span>
+            {(["自动", "手动", "半自动"] as const).map((mode) => (
+              <label key={mode} className="inline-filter">
                 <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={extraNum("turnSpeed", 30)}
-                  onChange={(e) =>
-                    setExtra({ turnSpeed: Number(e.target.value) })
-                  }
+                  type="radio"
+                  name="focus-mode"
+                  checked={(c.extra?.focusMode as string) === mode}
+                  onChange={() => setExtra({ focusMode: mode })}
                 />
-                <span>{extraNum("turnSpeed", 30)}%</span>
+                <span>{mode}</span>
               </label>
-              <label className="inline-filter">
-                <span>单次升降速度</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={extraNum("liftSpeed", 30)}
-                  onChange={(e) =>
-                    setExtra({ liftSpeed: Number(e.target.value) })
-                  }
-                />
-                <span>{extraNum("liftSpeed", 30)}%</span>
-              </label>
-              <label className="inline-filter">
-                <span>升降高度</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={c.lift ?? 0}
-                  onChange={(e) =>
-                    updCfg(a, { lift: Number(e.target.value), source: "cockpit" })
-                  }
-                />
-              </label>
-              <div className="dpad small">
-                <button onClick={() => setPtz({ tilt: ptz.tilt + 1 })}>上</button>
-                <div className="dpad-mid">
-                  <button onClick={() => setPtz({ pan: ptz.pan - 1 })}>左</button>
-                  <button onClick={() => setPtz({ pan: ptz.pan + 1 })}>右</button>
+            ))}
+          </div>
+          <div className="qset">
+            <span className="lbl">光圈控制</span>
+            <Btn
+              onClick={() =>
+                setExtra({ iris: Math.max(0, extraNum("iris", 50) - 5) })
+              }
+            >
+              －
+            </Btn>
+            <span>{extraNum("iris", 50)}</span>
+            <Btn
+              onClick={() =>
+                setExtra({ iris: Math.min(100, extraNum("iris", 50) + 5) })
+              }
+            >
+              ＋
+            </Btn>
+          </div>
+        </div>
+      </div>
+
+      {/* 上装参数：按已勾选的原子动作显示各自特性参数 */}
+      {(has("采集红外热像") ||
+        has("采集气体") ||
+        has("录制声音") ||
+        has("分析不安全行为")) && (
+        <div className="cockpit-aux">
+          <div className="cockpit-section">
+            <b>上装参数</b>
+            <div className="cockpit-aux-grid">
+              {has("采集红外热像") && (
+                <div>
+                  <QuerySet
+                    label="发射率"
+                    step={0.01}
+                    min={0}
+                    max={1}
+                    value={c.emissivity ?? 0.95}
+                    onSet={(v) => updCfg(a, { emissivity: v })}
+                  />
+                  <QuerySet
+                    label="测温距离"
+                    unit="米"
+                    min={0}
+                    value={c.thermalDistance ?? 0}
+                    onSet={(v) => updCfg(a, { thermalDistance: v })}
+                  />
                 </div>
-                <button onClick={() => setPtz({ tilt: ptz.tilt - 1 })}>下</button>
-              </div>
-            </div>
-            <div className="cockpit-section">
-              <b>角度 / 预置位</b>
-              <label className="inline-filter">
-                <span>水平角度</span>
-                <input
-                  type="number"
-                  min={-180}
-                  max={180}
-                  value={ptz.pan}
-                  onChange={(e) =>
-                    setPtz({ pan: Number(e.target.value) })
-                  }
-                />
-              </label>
-              <label className="inline-filter">
-                <span>垂直角度</span>
-                <input
-                  type="number"
-                  min={-90}
-                  max={90}
-                  value={ptz.tilt}
-                  onChange={(e) =>
-                    setPtz({ tilt: Number(e.target.value) })
-                  }
-                />
-              </label>
-              <label className="inline-filter">
-                <span>预置位</span>
-                <input
-                  value={c.preset ?? ""}
-                  placeholder="例如 P-03"
-                  onChange={(e) =>
-                    updCfg(a, { preset: e.target.value, source: "cockpit" })
-                  }
-                />
-              </label>
-              <div className="actions">
-                <Btn onClick={() => setExtra({ presetSaved: true })}>添加</Btn>
-                <Btn onClick={() => setExtra({ presetRecalled: true })}>召回</Btn>
-                <Btn onClick={() => updCfg(a, { preset: "" })}>删除</Btn>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tab === "status" && (
-          <div className="cockpit-grid four-col">
-            <div className="status-tile">
-              <span>水平角度</span>
-              <strong>{ptz.pan}°</strong>
-            </div>
-            <div className="status-tile">
-              <span>垂直角度</span>
-              <strong>{ptz.tilt}°</strong>
-            </div>
-            <div className="status-tile">
-              <span>变焦</span>
-              <strong>{ptz.zoom}</strong>
-            </div>
-            <div className="status-tile">
-              <span>升降高度</span>
-              <strong>{c.lift ?? 0}</strong>
-            </div>
-            <div className="status-tile">
-              <span>预置位</span>
-              <strong>{c.preset || "—"}</strong>
-            </div>
-            <div className="status-tile">
-              <span>补光</span>
-              <strong>{c.light ?? 0}%</strong>
-            </div>
-          </div>
-        )}
-
-        {tab === "lens" && (
-          <div className="cockpit-grid two-col">
-            <div className="cockpit-section">
-              <b>镜头调节</b>
-              <label className="inline-filter">
-                <span>镜头变倍</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={30}
-                  value={ptz.zoom}
-                  onChange={(e) => setPtz({ zoom: Number(e.target.value) })}
-                />
-                <span>{ptz.zoom}</span>
-              </label>
-              <label className="inline-filter">
-                <span>镜头聚焦</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={extraNum("focus", 50)}
-                  onChange={(e) => setExtra({ focus: Number(e.target.value) })}
-                />
-                <span>{extraNum("focus", 50)}</span>
-              </label>
-              <label className="inline-filter">
-                <span>光圈控制</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={extraNum("iris", 50)}
-                  onChange={(e) => setExtra({ iris: Number(e.target.value) })}
-                />
-                <span>{extraNum("iris", 50)}</span>
-              </label>
-            </div>
-            <div className="cockpit-section">
-              <b>聚焦模式</b>
-              <div className="actions">
-                {(["自动", "手动", "半自动"] as const).map((m) => (
-                  <label key={m} className="inline-filter">
+              )}
+              {has("录制声音") && (
+                <div>
+                  <div className="qset">
+                    <span className="lbl">关注频段</span>
                     <input
-                      type="radio"
-                      name="focus-mode"
-                      checked={(c.extra?.focusMode as string) === m}
-                      onChange={() => setExtra({ focusMode: m })}
+                      value={c.soundBand ?? ""}
+                      placeholder="如 20Hz–20kHz"
+                      onChange={(e) => updCfg(a, { soundBand: e.target.value })}
                     />
-                    <span>{m}</span>
-                  </label>
-                ))}
-              </div>
+                  </div>
+                </div>
+              )}
+              {has("分析不安全行为") && (
+                <div>
+                  <div className="qset">
+                    <span className="lbl">行为类别</span>
+                    <div className="actions">
+                      {BEHAVIOR_TYPES.map((t) => (
+                        <label key={t} className="inline-filter">
+                          <input
+                            type="checkbox"
+                            checked={(c.behaviorTypes || []).includes(t)}
+                            onChange={(e) => {
+                              const set = new Set(c.behaviorTypes || []);
+                              if (e.target.checked) set.add(t);
+                              else set.delete(t);
+                              updCfg(a, { behaviorTypes: [...set] });
+                            }}
+                          />
+                          <span>{t}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {tab === "aux" && (
-          <div className="cockpit-grid">
-            <div className="cockpit-section">
-              <b>辅助开关</b>
-              <div className="aux-grid">
-                <AuxToggle
-                  icon={Lightbulb}
-                  label="补光灯"
-                  checked={(c.light ?? 0) > 0}
-                  onChange={(on) =>
-                    updCfg(a, { light: on ? 60 : 0, source: "cockpit" })
-                  }
-                />
-                <AuxToggle
-                  icon={Bell}
-                  label="报警灯"
-                  checked={extraBool("alarmLight")}
-                  onChange={(on) => setExtra({ alarmLight: on })}
-                />
-                <AuxToggle
-                  icon={CloudRain}
-                  label="雨刷"
-                  checked={extraBool("wiper")}
-                  onChange={(on) => setExtra({ wiper: on })}
-                />
-                <AuxToggle
-                  icon={Snowflake}
-                  label="防冻"
-                  checked={extraBool("antiFreeze")}
-                  onChange={(on) => setExtra({ antiFreeze: on })}
-                />
-                <AuxToggle
-                  icon={CloudFog}
-                  label="透雾"
-                  checked={extraBool("defog")}
-                  onChange={(on) => setExtra({ defog: on })}
-                />
-              </div>
-            </div>
+      {/* 底部通栏：辅助功能 */}
+      <div className="cockpit-aux">
+        <div className="cockpit-section">
+          <b>辅助功能</b>
+          <div className="cockpit-aux-grid">
+            <Switch
+              label="补光灯"
+              on={(c.light ?? 0) > 0}
+              onChange={(on) =>
+                updCfg(a, { light: on ? 60 : 0, source: "cockpit" })
+              }
+            />
+            <Switch
+              label="报警灯"
+              on={extraBool("alarmLight")}
+              onChange={(on) => setExtra({ alarmLight: on })}
+            />
+            <Switch
+              label="雨刷"
+              on={extraBool("wiper")}
+              onChange={(on) => setExtra({ wiper: on })}
+            />
+            <Switch
+              label="防冻"
+              on={extraBool("antiFreeze")}
+              onChange={(on) => setExtra({ antiFreeze: on })}
+            />
+            <Switch
+              label="透雾"
+              on={extraBool("defog")}
+              onChange={(on) => setExtra({ defog: on })}
+            />
           </div>
-        )}
+        </div>
       </div>
     </div>
-  );
-}
-
-/** 辅助功能开关 */
-function AuxToggle({
-  icon: Icon,
-  label,
-  checked,
-  onChange,
-}: {
-  icon: typeof Lightbulb;
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="aux-toggle">
-      <Icon size={16} />
-      <span>{label}</span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-    </label>
   );
 }

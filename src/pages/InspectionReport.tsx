@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
-import { pointOf, fmtTime, judgeOf } from "../data/selectors";
+import { pointOf, fmtTime, judgeOf, isAbnormal } from "../data/selectors";
 import { Btn, Badge, Panel, Table, Field, Note, Empty, Modal } from "../components/UI";
+import type { Result } from "../data/types";
 /**
  * 巡检报表：分析与报表 › 巡检报表
  * 按任务聚合的巡检结果报表，支持关键词 / 任务 / 状态筛选（默认展示"完成"任务），
- * 每行可勾选并「预览」查看该任务全部点位明细文档；支持单选 / 多选任务后「导出 PDF / Word」（演示占位）。
+ * 每行可勾选并「预览」查看该任务全部点位明细文档；**勾选任务后才出现「导出 PDF」**（仅 PDF，演示占位）。
+ * 报表口径：有巡检结果的任务即进报表；「异常」列按 judgeOf 唯一判定口径统计
+ *（异常即告警，明细可在告警事件页检查受理）；
+ * 导出条件：该任务有巡检结果即可导出，异常结果照常入报表。
  */
 export function InspectionReport() {
   const { s } = useStore();
@@ -15,9 +19,10 @@ export function InspectionReport() {
     [statusF, SF] = useViewState("report.status", "完成");
   // 选中任务（用于导出）：支持单选（勾一个）与多选（勾多个）
   const [selected, SETSEL] = useState<string[]>([]);
+  // 多选模式：默认关闭；点顶部「多选」按钮才进入，此时才显示 checkbox 列和全选条
+  const [multi, SETMULTI] = useState(false);
   // 导出 / 预览弹窗：导出为演示占位（点击提示），预览为只读查看任务全部巡检结果明细
   const [exportOpen, EXPORT] = useState(false);
-  const [exportKind, SETKIND] = useState<"PDF" | "Word">("PDF");
   const [previewId, PREVIEW] = useState<string | null>(null);
 
   // 有巡检结果的任务，按任务维度聚合
@@ -27,12 +32,14 @@ export function InspectionReport() {
     if (g) g.push(r);
     else byTask.set(r.taskId, [r]);
   }
-  const taskOptions = s.tasks.filter((t) => byTask.has(t.id));
+  /** 报表口径：有结果的任务即进报表（结果判定即结论，异常结果照常入报表） */
+  const byTaskFinal = byTask;
+  const taskOptions = s.tasks.filter((t) => byTaskFinal.has(t.id));
   const statuses = [
     "全部",
     ...Array.from(new Set(s.tasks.map((t) => t.state).filter(Boolean))),
   ];
-  const groups = [...byTask.entries()]
+  const groups = [...byTaskFinal.entries()]
     .filter(([taskId]) => {
       const t = s.tasks.find((x) => x.id === taskId);
       return (
@@ -49,15 +56,26 @@ export function InspectionReport() {
     });
 
   const ids = groups.map(([id]) => id);
-  const allSelected = ids.length > 0 && ids.every((id) => selected.includes(id));
+  /** 任务可导出条件：有巡检结果即可导出（异常结果如实入报表） */
+  const canExportOf = (list: Result[]) => list.length > 0;
+  /** 不可导出的原因（用于勾选框提示）：无结果 */
+  const blockReasonOf = (list: Result[]) =>
+    list.length ? "" : "无巡检结果，不可导出（可预览查看）";
+  /** 当前筛选中可导出的任务：异常或未复核的不可导出（但可「预览」查看） */
+  const exportableIds = ids.filter((id) => canExportOf(byTaskFinal.get(id) || []));
+  const allSelected =
+    exportableIds.length > 0 &&
+    exportableIds.every((id) => selected.includes(id));
   const toggle = (id: string) =>
     SETSEL((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
-  const selectAll = () => SETSEL(allSelected ? [] : ids);
+  const selectAll = () => SETSEL(allSelected ? [] : exportableIds);
   const clearSel = () => SETSEL([]);
-  // 导出范围：优先用勾选的任务；未勾选时默认导出当前筛选全部
-  const exportIds = selected.length ? selected : ids;
+  // 导出范围：只导出勾选的任务（无勾选不显示导出按钮）
+  const exportIds = selected.filter((id) =>
+    canExportOf(byTaskFinal.get(id) || []),
+  );
   const exportNames = exportIds.map(
     (id) => s.tasks.find((t) => t.id === id)?.name || id,
   );
@@ -67,27 +85,23 @@ export function InspectionReport() {
       <Panel
         title="巡检结果报表"
         extra={
-          <div className="toolbar-actions">
-            <Btn onClick={() => {
-              SETKIND("PDF");
-              EXPORT(true);
-            }}>
-              导出 PDF
+          <>
+            <Btn
+              onClick={() => {
+                SETMULTI((m) => !m);
+                SETSEL([]);
+              }}
+            >
+              {multi ? "退出多选" : "多选"}
             </Btn>
-            <Btn onClick={() => {
-              SETKIND("Word");
-              EXPORT(true);
-            }}>
-              导出 Word
-            </Btn>
-          </div>
+            {multi && exportIds.length > 0 && (
+              <Btn primary onClick={() => EXPORT(true)}>
+                导出 PDF（{exportIds.length}）
+              </Btn>
+            )}
+          </>
         }
       >
-        <div className="report-tip">
-          <Note>
-            勾选任务后点「导出」生成报告（支持单选 / 多选）；不勾选则导出当前筛选全部。点「预览」查看该任务的完整结果文档。
-          </Note>
-        </div>
         <div className="filter-bar">
           <Field label="关键词（任务 / 编号 / 机器人）">
             <input
@@ -114,34 +128,35 @@ export function InspectionReport() {
             </select>
           </Field>
         </div>
-        <div className="select-bar">
-          <span>
-            已选 <b>{selected.length}</b> 个任务
-          </span>
-          <div className="toolbar-actions">
-            <Btn onClick={selectAll}>
-              {allSelected ? "取消全选" : "全选当前"}
-            </Btn>
-            {selected.length > 0 && (
-              <Btn onClick={clearSel}>清空</Btn>
-            )}
+        {multi && (
+          <div className="select-bar">
+            <span>
+              已选 <b>{selected.length}</b> 个任务
+            </span>
+            <div className="toolbar-actions">
+              <Btn onClick={selectAll}>
+                {allSelected ? "取消全选" : "全选当前"}
+              </Btn>
+              {selected.length > 0 && (
+                <Btn onClick={clearSel}>清空</Btn>
+              )}
+            </div>
           </div>
-        </div>
+        )}
         {!groups.length ? (
           <Empty>没有符合筛选条件的巡检任务</Empty>
         ) : (
           <Table
-            heads={["", "任务", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]}
+            heads={
+              multi
+                ? ["", "任务", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]
+                : ["任务", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]
+            }
             rows={groups.map(([taskId, list]) => {
               const t = s.tasks.find((x) => x.id === taskId);
-              const abn = list.filter((r) => r.abnormal).length;
-              return [
-                <input
-                  type="checkbox"
-                  aria-label={`选择 ${t?.name || taskId}`}
-                  checked={selected.includes(taskId)}
-                  onChange={() => toggle(taskId)}
-                />,
+              const abn = list.filter(isAbnormal).length;
+              const canExport = canExportOf(list);
+              const base = [
                 <>
                   <b>{t?.name || taskId}</b>
                   <small>{taskId}</small>
@@ -153,6 +168,19 @@ export function InspectionReport() {
                 <Badge>{t?.state}</Badge>,
                 <Btn onClick={() => PREVIEW(taskId)}>预览</Btn>,
               ];
+              return multi
+                ? [
+                    <input
+                      type="checkbox"
+                      aria-label={`选择 ${t?.name || taskId}`}
+                      checked={selected.includes(taskId)}
+                      disabled={!canExport}
+                      title={canExport ? undefined : blockReasonOf(list)}
+                      onChange={() => toggle(taskId)}
+                    />,
+                    ...base,
+                  ]
+                : base;
             })}
           />
         )}
@@ -161,12 +189,11 @@ export function InspectionReport() {
       {previewId && (() => {
         const pt = s.tasks.find((t) => t.id === previewId);
         const plist = s.results.filter((x) => x.taskId === previewId);
-        const abn = plist.filter((r) => r.abnormal).length;
+        const abn = plist.filter(isAbnormal).length;
         return (
           <Modal
             title={`巡检结果报告 · ${pt?.name || previewId}`}
-            drawer
-            drawerWidth={700}
+            wide
             onClose={() => PREVIEW(null)}
             footer={
               <>
@@ -247,12 +274,11 @@ export function InspectionReport() {
           </Modal>
         );
       })()}
-      {/* 导出占位：演示环境点击提示，生产环境将导出选中 / 当前筛选的巡检结果报告 */}
+      {/* 导出占位：演示环境点击提示，生产环境将导出已勾选任务的巡检结果报告（仅 PDF） */}
       {exportOpen && (
-        <Modal title={`导出 ${exportKind} 报告`} onClose={() => EXPORT(false)}>
+        <Modal title="导出 PDF 报告" onClose={() => EXPORT(false)}>
           <Note>
-            将导出 <b>{exportIds.length}</b> 个任务的「巡检结果报告」（{exportKind}
-            {selected.length ? "，按已勾选任务" : "，按当前筛选全部"}）：
+            将导出 <b>{exportIds.length}</b> 个任务的「巡检结果报告」（PDF，按已勾选任务）：
             <ul className="export-list">
               {exportNames.map((n) => (
                 <li key={n}>{n}</li>

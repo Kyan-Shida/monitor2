@@ -37,7 +37,7 @@ const spec = (
     viewDir: "正对目标",
   },
 });
-/** 把巡检点置为可下发状态（保存会打回待验证、地图回草稿，本用例只验证指令集来源） */
+/** 把巡检点置为可下发状态（保存会打回待验证、地图回未发布，本用例只验证指令集来源） */
 function enable(s: State, pointId: string) {
   s.points.find((p) => p.id === pointId)!.state = "已启用";
   s.maps.find((m) => m.id === "MAP-A03")!.state = "已发布";

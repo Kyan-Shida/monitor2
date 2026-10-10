@@ -1,6 +1,6 @@
-﻿/**
+/**
  * @file seed.ts
- * @description 全部演示种子数据（点位/地图/机器人/模板/计划/任务/结果/告警/日志/工单…），
+ * @description 全部演示种子数据（点位/地图/机器人/模板/计划/任务/结果/告警/日志…），
  *              含「地图 → 巡检任务」链路新增集合（devices/logicalPoints/routes/siteSurveys/trackSamples/trialReceipts）
  * @interaction 由 store.tsx 注入 Context；engine/metrics/selectors 消费
  */
@@ -16,9 +16,16 @@ import type {
   Instrument,
   Requirement,
   BusinessTarget,
+  RobotPayload,
+  AlgoConfig,
   CaptureKind,
 } from "./types";
 import { defaultRangeOfUnit } from "./alarmRules";
+import {
+  kindOfUnit,
+  type AlarmTemplate,
+  type ApplyKind,
+} from "./alarmTemplates";
 import { defaultRequirementOfInstrument } from "./deviceMaster";
 import { captureAction } from "./types";
 import { SAMPLE_MAP_IMAGE } from "./sampleMap";
@@ -28,7 +35,6 @@ const points: Point[] = [
     name: "V001 出口压力表",
     targetId: "O101",
     mapId: "MAP-A03",
-    version: 7,
     device: "V001 原料储罐",
     object: "出口压力表",
     item: "压力读数",
@@ -38,7 +44,7 @@ const points: Point[] = [
     state: "已启用",
     x: 36,
     y: 33,
-    validated: "R01 / 能力 v2 / m3 / p7",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
     pose: { x: 36, y: 33, yaw: 90 },
     logicalIds: ["LP001"],
     actionPlan: {
@@ -56,7 +62,6 @@ const points: Point[] = [
     name: "V001 出口阀门",
     targetId: "O102",
     mapId: "MAP-A03",
-    version: 4,
     device: "V001 原料储罐",
     object: "出口阀门",
     item: "阀门状态",
@@ -66,7 +71,7 @@ const points: Point[] = [
     state: "已启用",
     x: 62,
     y: 60,
-    validated: "R01 / 能力 v2 / m3 / p4",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
     logicalIds: ["LP002"],
     calibrate: "待校准",
     pose: { x: 62, y: 60, yaw: 0 },
@@ -76,7 +81,6 @@ const points: Point[] = [
     name: "V002 表面温度",
     targetId: "O103",
     mapId: "MAP-A03",
-    version: 2,
     device: "V002 缓冲罐",
     object: "罐壁",
     item: "表面温度",
@@ -86,7 +90,7 @@ const points: Point[] = [
     state: "已启用",
     x: 74,
     y: 29,
-    validated: "R01 / 能力 v2 / m3 / p2",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
   },
   // ── 演示用：扩充点位，支撑告警事件与告警排行 TOP10 的数据量 ──
   {
@@ -94,7 +98,6 @@ const points: Point[] = [
     name: "V003 出口压力表",
     targetId: "O104",
     mapId: "MAP-A03",
-    version: 3,
     device: "V003 原料储罐",
     object: "出口压力表",
     item: "压力读数",
@@ -104,14 +107,13 @@ const points: Point[] = [
     state: "已启用",
     x: 45,
     y: 20,
-    validated: "R01 / 能力 v2 / m3 / p7",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
   },
   {
     id: "P005",
     name: "V003 出口阀门",
     targetId: "O105",
     mapId: "MAP-A03",
-    version: 3,
     device: "V003 原料储罐",
     object: "出口阀门",
     item: "阀门状态",
@@ -121,14 +123,13 @@ const points: Point[] = [
     state: "已启用",
     x: 12,
     y: 48,
-    validated: "R01 / 能力 v2 / m3 / p4",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
   },
   {
     id: "P006",
     name: "V004 罐壁温度",
     targetId: "O106",
     mapId: "MAP-A03",
-    version: 3,
     device: "V004 缓冲罐",
     object: "罐壁",
     item: "表面温度",
@@ -138,14 +139,13 @@ const points: Point[] = [
     state: "已启用",
     x: 78,
     y: 48,
-    validated: "R01 / 能力 v2 / m3 / p2",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
   },
   {
     id: "P007",
     name: "装置区 A 段管廊气体浓度",
     targetId: "O107",
     mapId: "MAP-A03",
-    version: 3,
     device: "装置区 A 段管廊",
     object: "可燃气体探头",
     item: "气体浓度",
@@ -155,14 +155,13 @@ const points: Point[] = [
     state: "已启用",
     x: 88,
     y: 14,
-    validated: "R03 / 能力 v3 / m1 / p1",
+    validated: "R03 / 能力第 3 版 / 地图第 1 版",
   },
   {
     id: "P008",
     name: "V004 出口压力表",
     targetId: "O108",
     mapId: "MAP-A03",
-    version: 3,
     device: "V004 缓冲罐",
     object: "出口压力表",
     item: "压力读数",
@@ -172,14 +171,13 @@ const points: Point[] = [
     state: "已启用",
     x: 66,
     y: 68,
-    validated: "R01 / 能力 v2 / m3 / p7",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
   },
   {
     id: "P009",
     name: "V003 罐壁温度",
     targetId: "O109",
     mapId: "MAP-A03",
-    version: 3,
     device: "V003 原料储罐",
     object: "罐壁",
     item: "表面温度",
@@ -189,14 +187,13 @@ const points: Point[] = [
     state: "已启用",
     x: 20,
     y: 32,
-    validated: "R01 / 能力 v2 / m3 / p2",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
   },
   {
     id: "P010",
     name: "装置区 B 段管廊气体浓度",
     targetId: "O110",
     mapId: "MAP-A03",
-    version: 3,
     device: "装置区 B 段管廊",
     object: "可燃气体探头",
     item: "气体浓度",
@@ -206,14 +203,13 @@ const points: Point[] = [
     state: "已启用",
     x: 86,
     y: 42,
-    validated: "R03 / 能力 v3 / m1 / p1",
+    validated: "R03 / 能力第 3 版 / 地图第 1 版",
   },
   {
     id: "P011",
     name: "V004 出口阀门",
     targetId: "O111",
     mapId: "MAP-A03",
-    version: 3,
     device: "V004 缓冲罐",
     object: "出口阀门",
     item: "阀门状态",
@@ -223,7 +219,7 @@ const points: Point[] = [
     state: "已启用",
     x: 42,
     y: 62,
-    validated: "R01 / 能力 v2 / m3 / p4",
+    validated: "R01 / 能力第 2 版 / 地图第 3 版",
   },
 ];
 /**
@@ -267,38 +263,310 @@ const task = (
   id,
   name,
   source: "计划生成",
-  priority: "普通",
   taskType: "综合巡检任务",
   atomicActions: ["拍照", "采集红外热像"],
   state,
   robotId,
   mapId: "MAP-A03",
   mapVersion: 3,
-  calibrationVersion: 7,
-  items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, calibrationVersion: 7 })),
+  items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3 })),
   stage: 0,
   index: 0,
   done: [],
   skipped: [],
   retries: 0,
-  duration: 24,
-  /** 默认不要求特殊移动能力；罐顶等点位在具体任务中另行声明 */
-  requiredMobility: [],
   /** 演示数据统一按「相对当前时间」生成，避免多日后打开时今日 / 本月统计为空 */
   created: dueIn(-75),
 });
+// ── 告警模板与平台标准规则库（后台管理 › 告警模板管理）──────────────────
+/**
+ * 演示用告警模板（名称 + 触发条件 + 处理流程）
+ * @description 模板按检测类型匹配（由点位单位换算，见 alarmTemplates.kindOfUnit）。
+ *              四个启用模板的量程与 `alarmRules.DEFAULT_RANGE` 完全一致，
+ *              因此接入模板不给现有判定结果带来任何变化；
+ *              末尾「连续确认」模板默认**停用**，用于演示触发逻辑（连续 N 次）怎么配。
+ */
+const ALARM_TEMPLATES: AlarmTemplate[] = [
+  {
+    id: "TPL-01",
+    name: "压力超限告警",
+    kinds: ["压力"],
+    trigger: {
+      type: "数值范围",
+      unit: "MPa",
+      min: 0.2,
+      max: 0.8,
+      expected: "",
+      mode: "单次即触发",
+      consecutive: 1,
+    },
+    level: "二级",
+    flow: [
+      "核对压力表读数与外部 AI 识别值是否一致",
+      "对照工艺卡片确认当前工况允许的压力区间",
+      "压力持续超限：通知值班长，转现场处置",
+      "复测确认后在处置页填写处理结果（受理 / 忽略 + 是否误报）",
+    ],
+    alarmSeconds: 10,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-2880),
+  },
+  {
+    id: "TPL-02",
+    name: "温度超限告警",
+    kinds: ["温度", "液位"],
+    trigger: {
+      type: "数值范围",
+      unit: "℃",
+      min: 0,
+      max: 60,
+      expected: "",
+      mode: "单次即触发",
+      consecutive: 1,
+    },
+    level: "二级",
+    flow: [
+      "确认测温部位（罐壁 / 管道）与热像画面是否对准",
+      "排除阳光、反光等外部热源干扰后复测",
+      "持续超限：通知工艺确认介质温度，必要时降温",
+      "在处置页记录处理结果与依据",
+    ],
+    alarmSeconds: 5,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-4320),
+  },
+  {
+    id: "TPL-03",
+    name: "气体浓度超限告警",
+    kinds: ["气体浓度"],
+    trigger: {
+      type: "数值范围",
+      unit: "%LEL",
+      min: 0,
+      max: 20,
+      expected: "",
+      mode: "单次即触发",
+      consecutive: 1,
+    },
+    level: "二级",
+    flow: [
+      "立即通知值班长与现场班组，确认周边作业情况",
+      "核查气体检测仪标定有效期与采样口是否堵塞",
+      "浓度持续上升：按应急预案撤离并通风置换",
+      "复测合格后在处置页记录处理结果",
+    ],
+    alarmSeconds: 15,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-5760),
+  },
+  {
+    id: "TPL-04",
+    name: "阀门状态异常告警",
+    kinds: ["阀门状态"],
+    trigger: {
+      type: "期望状态",
+      unit: "",
+      min: 0,
+      max: 0,
+      expected: "开启",
+      mode: "单次即触发",
+      consecutive: 1,
+    },
+    level: "二级",
+    flow: [
+      "核对阀位指示与工艺要求的开 / 关状态",
+      "确认是否处于检修隔离状态（隔离期间不判定）",
+      "状态不符：通知现场复位并复测",
+      "在处置页记录处理结果与依据",
+    ],
+    alarmSeconds: 10,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-7200),
+  },
+  {
+    id: "TPL-05",
+    name: "压力波动确认告警（连续 2 次）",
+    kinds: ["压力"],
+    // 演示「触发逻辑」：连续 2 次超限才触发，用于抑制工况波动造成的抖动误报；
+    // 默认停用 —— 启用并停用 TPL-01 后，压力点将改按连续确认触发
+    trigger: {
+      type: "数值范围",
+      unit: "MPa",
+      min: 0.2,
+      max: 0.8,
+      expected: "",
+      mode: "连续确认",
+      consecutive: 2,
+    },
+    level: "二级",
+    flow: [
+      "第 1 次超限只记录结果，不派工单",
+      "连续第 2 次仍超限 → 生成告警，通知值班长",
+      "现场核验压力表与工艺工况",
+    ],
+    alarmSeconds: 8,
+    enabled: false,
+    version: 1,
+    updatedAt: dueIn(-1440),
+  },
+  {
+    // 环境 / 区域类：区域气体泵吸 ppm 口径（与探头 %LEL 的 TPL-03 按单位区分）
+    id: "TPL-06",
+    name: "区域可燃气体浓度超限告警",
+    kinds: ["气体浓度"],
+    trigger: {
+      type: "数值范围",
+      unit: "ppm",
+      min: 0,
+      max: 50,
+      expected: "",
+      mode: "单次即触发",
+      consecutive: 1,
+    },
+    level: "一级",
+    flow: [
+      "立即通知值班长与现场班组，确认周边作业与人员",
+      "核查泵吸采样管路是否通畅、标定是否在有效期",
+      "浓度持续上升：按应急预案撤离并通风置换",
+      "复测合格后在处置页记录处理结果（受理 / 忽略 + 是否误报）",
+    ],
+    alarmSeconds: 30,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-2160),
+  },
+  {
+    // 区域红外：℃ 0–120（探头测温 TPL-02 是 0–60，两者按阈值 / 关联关系区分）
+    id: "TPL-07",
+    name: "区域高温告警",
+    kinds: ["温度"],
+    trigger: {
+      type: "数值范围",
+      unit: "℃",
+      min: 0,
+      max: 120,
+      expected: "",
+      mode: "单次即触发",
+      consecutive: 1,
+    },
+    level: "二级",
+    flow: [
+      "确认热像扫描范围与锚点是否一致，排除阳光 / 反光干扰",
+      "定位最高温点并对照工艺允许温度",
+      "持续超限：通知工艺确认介质温度，必要时降温",
+    ],
+    alarmSeconds: 15,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-3600),
+  },
+  {
+    // 环境 / 区域类：声纹没有量纲，检测类型由巡检要求声明（REQ-SOUND › 声纹）
+    id: "TPL-08",
+    name: "声纹异常告警",
+    kinds: ["声纹"],
+    trigger: {
+      type: "期望状态",
+      unit: "",
+      min: 0,
+      max: 0,
+      expected: "无异常噪声",
+      mode: "连续确认",
+      consecutive: 2,
+    },
+    level: "二级",
+    flow: [
+      "回放录音确认异响类型（摩擦 / 撞击 / 啸叫）",
+      "对可疑部位停机检查（轴承、联轴器、阀门）",
+      "在处置页记录处理结果与依据",
+    ],
+    alarmSeconds: 10,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-2880),
+  },
+  {
+    id: "TPL-09",
+    name: "AI 不安全行为告警",
+    kinds: ["不安全行为"],
+    trigger: {
+      type: "期望状态",
+      unit: "",
+      min: 0,
+      max: 0,
+      expected: "无不安全行为",
+      mode: "单次即触发",
+      consecutive: 1,
+    },
+    level: "一级",
+    flow: [
+      "立即通知现场负责人制止并纠正行为",
+      "复核画面确认是否为误识别（遮挡 / 远处人员）",
+      "在处置页记录处理结果与依据",
+    ],
+    alarmSeconds: 30,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-1440),
+  },
+  {
+    id: "TPL-10",
+    name: "外观异常告警",
+    kinds: ["外观"],
+    trigger: {
+      type: "期望状态",
+      unit: "",
+      min: 0,
+      max: 0,
+      expected: "无异常",
+      mode: "单次即触发",
+      consecutive: 1,
+    },
+    level: "三级",
+    flow: [
+      "与基准图逐项比对，确认差异是否真实（积水 / 杂物 / 破损）",
+      "需要现场处理的转现场班组；属于环境变化的更新基准图",
+    ],
+    alarmSeconds: 5,
+    enabled: true,
+    version: 1,
+    updatedAt: dueIn(-2160),
+  },
+];
+/**
+ * 取某检测类型的启用模板（种子数据专用，避免初始化顺序问题）
+ * @description 口径与 `alarmTemplates.templateFor` 一致：检测类型优先由巡检要求声明
+ *              （环境 / 区域类常常没有量纲），同类型多模板时按单位优先
+ * @param unit 点位 / 台账单位
+ * @param detectKind 巡检要求的检测类型（可选）
+ * @returns 命中的模板；无命中时返回 undefined
+ */
+const seedTemplateOf = (unit: string, detectKind?: ApplyKind) => {
+  const kind = detectKind || kindOfUnit(unit);
+  const same = ALARM_TEMPLATES.filter((t) => t.enabled && t.kinds.includes(kind));
+  return (
+    (unit && same.find((t) => t.trigger.unit && t.trigger.unit === unit)) ||
+    same[0]
+  );
+};
 /**
  * 生成一条巡检检测结果（演示种子数据）
- * @description 原始采集值即外部 AI 识别输入，识别值默认等于原始值；修正场景由复核记录表达
+ * @description 原始采集值即外部 AI 识别输入，识别值默认等于原始值；
+ *              异常结果都会有一条对应的告警事件（异常即告警），不再有人工复核环节
  * @param id 结果 ID
  * @param taskId 所属任务 ID
  * @param point 关联巡检点位（提供检测项 / 单位）
  * @param raw 原始采集值
  * @param final 最终值
  * @param abnormal 业务判断是否异常
- * @param status 复核状态（待复核 / 已确认 / 已识别 / 无效）
+ * @param status 结果状态（已识别 / 已确认 / 无效）
  * @param minutes 采集时间，相对当前时间的分钟数（负数表示过去）
  * @param confidence 外部 AI 识别置信度，默认 0.92
+ * @param triggerReason 未做判定的原因（规则未配置 / 识别无效时填写）
  * @returns 规范化后的检测结果
  */
 const result = (
@@ -311,21 +579,54 @@ const result = (
   status: string,
   minutes: number,
   confidence = 0.92,
+  triggerReason?: string,
 ): Result => ({
   id,
   taskId,
   pointId: point.id,
   item: point.item,
+  /**
+   * 判定规则快照（与采集时一致的口径）：告警列表的「告警阈值 / 风险原因」据此展示，
+   * 不用当前规则倒推历史判定
+   */
+  ruleSnapshot: (() => {
+    // 与引擎同源：先按检测类型匹配后台管理的启用模板，取模板的触发条件 / 等级 / 触发逻辑
+    const tpl = seedTemplateOf(point.unit);
+    const range = defaultRangeOfUnit(tpl ? tpl.trigger.unit : point.unit);
+    return {
+      id: "RULE-" + point.id,
+      name: point.name + "标准",
+      pointId: point.id,
+      type: tpl
+        ? tpl.trigger.type
+        : range
+          ? ("数值范围" as const)
+          : ("期望状态" as const),
+      unit: tpl ? tpl.trigger.unit || point.unit : point.unit,
+      min: tpl ? tpl.trigger.min : (range?.min ?? 0),
+      max: tpl ? tpl.trigger.max : (range?.max ?? 0),
+      expected: tpl?.trigger.expected || "开启",
+      level: tpl?.level || "二级",
+      enabled: ["P001", "P002", "P003"].includes(point.id),
+      // 引用后台管理的告警模板：模板 ID 与触发逻辑随快照带出，告警处置页据此展示处理流程
+      templateId: tpl?.id,
+      triggerMode: tpl?.trigger.mode ?? "单次即触发",
+      consecutive: tpl?.trigger.consecutive ?? 1,
+      version: 1,
+    };
+  })(),
   raw,
   recognized: raw,
   final,
   unit: point.unit,
   abnormal,
   status,
+  triggerReason,
+  // 带未判定原因 = AI 未给出可用结论 → AI 状态异常（三级告警），触发告警的判定与引擎同源
+  aiAbnormal: !!triggerReason,
   source: "机器人采集 / 外部 AI 识别 v1.2",
   confidence,
   time: dueIn(minutes),
-  reviews: [],
 });
 /**
  * 生成一个已结束任务的执行事件（下发 → 开始 → 逐项采集回执 → 结束）
@@ -387,7 +688,151 @@ const taskLogs = (
   });
   return logs;
 };
-// ── 设备主数据（阶段③：清单导入 → 待审核 → 生效）────────────────────────
+// ── 机器人上装能力（后台管理 › 机器人上装能力）────────────────
+/**
+ * 上装能力主数据：与上装分组常量同源（4 类采集方式），改为后台可维护的清单。
+ * @description 采集方式决定可用原子动作（见 `atomicActionCapability`），
+ *              机器人能力 / 任务指令集 / 派单校验都从这里反查，不再各处写死 4 类。
+ */
+const robotPayloads: RobotPayload[] = [
+  {
+    id: "PL-VIS",
+    name: "可见光相机",
+    abilities: [{ kind: "可见光", actions: ["拍照", "录像片段", "分析不安全行为"] }],
+    models: ["机器狗", "四轮车", "挂轨"],
+    state: "启用",
+  },
+  {
+    id: "PL-IR",
+    name: "红外热像仪",
+    abilities: [{ kind: "红外", actions: ["采集红外热像"] }],
+    models: ["机器狗", "四轮车", "挂轨"],
+    state: "启用",
+  },
+  {
+    id: "PL-GAS",
+    name: "泵吸式气体检测",
+    abilities: [{ kind: "气体", actions: ["采集气体"] }],
+    models: ["机器狗", "四轮车"],
+    state: "启用",
+  },
+  {
+    id: "PL-SND",
+    name: "声纹采集阵",
+    abilities: [{ kind: "声音", actions: ["录制声音"] }],
+    models: ["机器狗"],
+    state: "启用",
+  },
+];
+
+// ── 算法（AI 能力）清单（后台管理 › 算法配置）──────────────────
+/**
+ * 算法清单：**与巡检要求 / 目标台账里出现的算法名称一一对应**（按名称引用），
+ * 覆盖 REQ-* 各条巡检要求默认算法 + 目标台账里手工指定的算法。
+ * @description 只登记名称与适配信息，算法本体在平台侧；`adapt` 为空表示待配置检测类型适配。
+ */
+const algoConfigs: AlgoConfig[] = [
+  {
+    id: "ALG-01",
+    name: "表计读数识别 v1.2",
+    deploy: "云端",
+    adapt: ["读数识别"],
+    updatedAt: "2026-01-27 22:42:05",
+    state: "启用",
+  },
+  {
+    id: "ALG-02",
+    name: "红外热像温升分析 v1.3",
+    deploy: "本体",
+    adapt: ["红外测温"],
+    updatedAt: "2026-01-20 10:15:32",
+    state: "启用",
+  },
+  {
+    id: "ALG-03",
+    name: "红外热像区域测温",
+    deploy: "本体",
+    adapt: ["红外测温"],
+    updatedAt: "2026-02-03 09:08:41",
+    state: "启用",
+  },
+  {
+    id: "ALG-04",
+    name: "气体浓度判读 v1.1",
+    deploy: "云端",
+    adapt: ["气体检测"],
+    updatedAt: "2026-01-18 16:20:07",
+    state: "启用",
+  },
+  {
+    id: "ALG-05",
+    name: "阀位 / 开关状态判别 v1.4",
+    deploy: "云端",
+    adapt: ["缺陷识别"],
+    updatedAt: "2026-01-25 11:36:58",
+    state: "启用",
+  },
+  {
+    id: "ALG-06",
+    name: "液滴 / 油渍分割 v2",
+    deploy: "云端",
+    adapt: ["缺陷识别"],
+    updatedAt: "2026-02-01 14:02:19",
+    state: "启用",
+  },
+  {
+    id: "ALG-07",
+    name: "外观缺陷检测 v1.0",
+    deploy: "云端",
+    adapt: ["缺陷识别"],
+    updatedAt: "2025-12-28 09:45:11",
+    state: "启用",
+  },
+  {
+    id: "ALG-08",
+    name: "设备异响识别 v0.9",
+    deploy: "本体",
+    adapt: ["声纹识别"],
+    updatedAt: "2026-01-12 15:57:23",
+    state: "启用",
+  },
+  {
+    // 未适配检测类型的算法：界面显示「待配置」，可用于验证新算法接入流程
+    id: "ALG-09",
+    name: "多模态算法",
+    deploy: "云端",
+    adapt: [],
+    updatedAt: "2026-01-27 22:42:05",
+    state: "启用",
+  },
+  // 环境 / 区域类（TGT-01）：气体泵吸、AI 行为、环境拍照各自的算法
+  {
+    id: "ALG-10",
+    name: "区域气体浓度判读 v1.0",
+    deploy: "本体",
+    adapt: ["气体检测"],
+    updatedAt: "2026-02-05 10:12:36",
+    state: "启用",
+  },
+  {
+    id: "ALG-11",
+    name: "AI 不安全行为识别 v1.0",
+    deploy: "云端",
+    adapt: ["行为识别"],
+    updatedAt: "2026-02-06 14:26:03",
+    state: "启用",
+  },
+  {
+    id: "ALG-12",
+    name: "可见光图像比对 v1.0",
+    deploy: "云端",
+    adapt: ["缺陷识别"],
+    updatedAt: "2026-02-06 14:31:48",
+    state: "启用",
+  },
+];
+
+// ── 设备主数据（阶段③：清单导入 → 生效）────────────────────────
 /**
  * 设备主数据（来源：业主设备清单）
  * @description `items[].target` 与 `Point.object` **同名对齐**，是「点位 ↔ 设备主数据」的关联依据；
@@ -434,10 +879,7 @@ const devices: DeviceAsset[] = [
         priority: "普通",
       },
     ],
-    reviewState: "已通过",
     state: "在用",
-    importBatch: "IMP-20260920-01",
-    importedAt: "2026-09-20 09:10",
   },
   {
     id: "DEV-V002",
@@ -450,6 +892,7 @@ const devices: DeviceAsset[] = [
       {
         id: "II-V002-T",
         target: "罐壁",
+        targetKind: "区域",
         kind: "红外",
         unit: "℃",
         inspect: true,
@@ -457,10 +900,7 @@ const devices: DeviceAsset[] = [
         priority: "高",
       },
     ],
-    reviewState: "已通过",
     state: "在用",
-    importBatch: "IMP-20260920-01",
-    importedAt: "2026-09-20 09:10",
   },
   {
     id: "DEV-V003",
@@ -493,6 +933,7 @@ const devices: DeviceAsset[] = [
       {
         id: "II-V003-T",
         target: "罐壁",
+        targetKind: "区域",
         kind: "红外",
         unit: "℃",
         inspect: true,
@@ -500,10 +941,7 @@ const devices: DeviceAsset[] = [
         priority: "高",
       },
     ],
-    reviewState: "已通过",
     state: "在用",
-    importBatch: "IMP-20260920-01",
-    importedAt: "2026-09-20 09:10",
   },
   {
     id: "DEV-V004",
@@ -516,6 +954,7 @@ const devices: DeviceAsset[] = [
       {
         id: "II-V004-T",
         target: "罐壁",
+        targetKind: "区域",
         kind: "红外",
         unit: "℃",
         inspect: true,
@@ -541,10 +980,7 @@ const devices: DeviceAsset[] = [
         priority: "普通",
       },
     ],
-    reviewState: "已通过",
     state: "在用",
-    importBatch: "IMP-20260920-01",
-    importedAt: "2026-09-20 09:10",
   },
   {
     id: "DEV-PLA",
@@ -563,10 +999,7 @@ const devices: DeviceAsset[] = [
         priority: "紧急",
       },
     ],
-    reviewState: "已通过",
     state: "在用",
-    importBatch: "IMP-20260920-01",
-    importedAt: "2026-09-20 09:10",
   },
   {
     id: "DEV-PLB",
@@ -585,57 +1018,9 @@ const devices: DeviceAsset[] = [
         priority: "紧急",
       },
     ],
-    reviewState: "已通过",
     state: "在用",
-    importBatch: "IMP-20260920-01",
-    importedAt: "2026-09-20 09:10",
   },
-  // ── 以下为演示「导入 → 待审核 / 驳回 / 停用」三种后台状态，均无关联点位 ──
-  {
-    id: "DEV-V005",
-    name: "V005 新增储罐",
-    type: "储罐",
-    regionCode: "R-A03",
-    locationDesc: "一期罐区待建区",
-    height: 1.2,
-    items: [
-      {
-        id: "II-V005-L",
-        target: "液位计",
-        kind: "可见光",
-        unit: "m",
-        inspect: true,
-        cycle: "每日",
-        priority: "普通",
-      },
-    ],
-    reviewState: "待审核",
-    state: "在用",
-    importBatch: "IMP-20260929-01",
-    importedAt: "2026-09-29 08:40",
-  },
-  {
-    id: "DEV-V006",
-    name: "V006 备用泵",
-    type: "泵",
-    regionCode: "R-A03",
-    locationDesc: "一期罐区泵房",
-    items: [
-      {
-        id: "II-V006-S",
-        target: "运行状态",
-        kind: "可见光",
-        unit: "",
-        inspect: true,
-        cycle: "每周",
-        priority: "普通",
-      },
-    ],
-    reviewState: "已驳回",
-    reviewNote: "编码与现场铭牌不一致（清单 V006 / 铭牌 P-106），请核对后重新导入",
-    importBatch: "IMP-20260929-01",
-    importedAt: "2026-09-29 08:40",
-  },
+  // ── 以下为演示「停用」后台状态，无关联点位 ──
   {
     id: "DEV-V009",
     name: "V009 备用储罐",
@@ -654,11 +1039,8 @@ const devices: DeviceAsset[] = [
         priority: "普通",
       },
     ],
-    reviewState: "已通过",
     /** 已停用：含该设备点位的任务会被拦截（当前无点位，仅演示台账状态） */
     state: "停用",
-    importBatch: "IMP-20260920-01",
-    importedAt: "2026-09-20 09:10",
   },
 ];
 /**
@@ -717,6 +1099,9 @@ const requirements: Requirement[] = [
     name: "看滴漏",
     kind: "可见异常",
     description: "识别泵体 / 法兰 / 阀门根部的渗漏痕迹（液滴、油渍、结晶）",
+    targetKinds: ["仪表"],
+    capture: "可见光",
+    detectKind: "外观",
     algorithm: "液滴 / 油渍分割 v2",
     judge: "有无目标",
     needPhoto: true,
@@ -727,7 +1112,10 @@ const requirements: Requirement[] = [
     id: "REQ-HOT",
     name: "看高温",
     kind: "读数识别",
-    description: "以热像定位设备表面最高温，超过上限判异常",
+    description: "以热像定位设备表面 / 区域最高温，超过上限判异常",
+    targetKinds: ["仪表", "区域"],
+    capture: "红外",
+    detectKind: "温度",
     algorithm: "红外热像温升分析 v1.3",
     judge: "数值范围",
     unit: "℃",
@@ -741,6 +1129,8 @@ const requirements: Requirement[] = [
     name: "看仪表读数",
     kind: "读数识别",
     description: "识别机械 / 数显表读数并与量程比对",
+    targetKinds: ["仪表"],
+    capture: "可见光",
     algorithm: "表计读数识别 v1.2",
     judge: "数值范围",
     needPhoto: true,
@@ -752,6 +1142,9 @@ const requirements: Requirement[] = [
     name: "看外观破损",
     kind: "可见异常",
     description: "锈蚀、变形、破损、被遮挡、指示缺失",
+    targetKinds: ["仪表"],
+    capture: "可见光",
+    detectKind: "外观",
     algorithm: "外观缺陷检测 v1.0",
     judge: "有无目标",
     needPhoto: true,
@@ -762,6 +1155,9 @@ const requirements: Requirement[] = [
     name: "看气体浓度",
     kind: "读数识别",
     description: "读取可燃气体探头数值，超过上限判异常",
+    targetKinds: ["仪表"],
+    capture: "气体",
+    detectKind: "气体浓度",
     algorithm: "气体浓度判读 v1.1",
     judge: "数值范围",
     unit: "%LEL",
@@ -770,10 +1166,29 @@ const requirements: Requirement[] = [
     cycle: "每日",
   },
   {
+    // TGT-01 环境 / 区域类：沿锚点泵吸采样，量与探头不同（ppm），单独一套要求与模板
+    id: "REQ-GAS-AREA",
+    name: "看区域气体浓度",
+    kind: "读数识别",
+    description: "沿参照物锚点泵吸采样，读取区域可燃气体浓度，超过上限判异常",
+    targetKinds: ["区域"],
+    capture: "气体",
+    detectKind: "气体浓度",
+    algorithm: "区域气体浓度判读 v1.0",
+    judge: "数值范围",
+    unit: "ppm",
+    min: 0,
+    max: 50,
+    cycle: "每日",
+  },
+  {
     id: "REQ-STATE",
     name: "看阀位状态",
     kind: "状态判别",
     description: "判别阀门开 / 关并期望状态比对",
+    targetKinds: ["仪表"],
+    capture: "可见光",
+    detectKind: "阀门状态",
     algorithm: "阀位 / 开关状态判别 v1.4",
     judge: "期望状态",
     expected: "开启",
@@ -782,25 +1197,45 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-SOUND",
-    name: "听异响",
+    name: "听异响（声纹）",
     kind: "声音判别",
-    description: "录音判别异常噪声（摩擦、撞击、啸叫）",
+    description: "录音判别异常噪声（摩擦、撞击、啸叫），仪表异响与区域声纹共用本要求",
+    targetKinds: ["仪表", "区域"],
+    capture: "声音",
+    detectKind: "声纹",
     algorithm: "设备异响识别 v0.9",
     judge: "等级评分",
     needReview: true,
     cycle: "每班",
   },
+  {
+    id: "REQ-AI",
+    name: "看 AI 不安全行为",
+    kind: "可见异常",
+    description: "识别区域内未戴安全帽、越界、违规作业等不安全行为",
+    targetKinds: ["区域"],
+    capture: "可见光",
+    detectKind: "不安全行为",
+    algorithm: "AI 不安全行为识别 v1.0",
+    judge: "有无目标",
+    needPhoto: true,
+    cycle: "每班",
+  },
+  {
+    id: "REQ-ENV-VIS",
+    name: "环境拍照比对",
+    kind: "可见异常",
+    description: "按锚点固定视角拍照并与基准图比对（积水、杂物、破损、指示缺失）",
+    targetKinds: ["环境"],
+    capture: "可见光",
+    detectKind: "外观",
+    algorithm: "可见光图像比对 v1.0",
+    judge: "期望状态",
+    expected: "无异常",
+    needPhoto: true,
+    cycle: "每日",
+  },
 ];
-/**
- * 由设备清单派生区域（工厂树第一层）
- * @param devs 设备主数据
- * @returns 区域列表（按清单里出现的厂区去重）
- */
-const deriveAreas = (devs: DeviceAsset[]): Area[] =>
-  [...new Set(devs.map((d) => d.region || "未分区"))].map((name, i) => ({
-    id: "A" + String(i + 1).padStart(2, "0"),
-    name,
-  }));
 /**
  * 由设备清单的「检测目标」派生仪表（工厂树第三层）
  * @description 每个检测目标就是一台被巡检的仪表；采集方式与单位随清单带入
@@ -845,11 +1280,6 @@ const deriveBusinessTargets = (
   ins: Instrument[],
   devs: DeviceAsset[],
 ): BusinessTarget[] => {
-  /**
-   * 默认开启告警的仪表：与改造前"已配置判定规则"的三个巡检点（P001~P003）对齐；
-   * 其余目标默认只记录结果，可在「巡检目标台账 › 告警设置」里逐个打开
-   */
-  const ALARM_ON = ["II-V001-P", "II-V001-V", "II-V002-T"];
   return ins.map((x) => {
     const item = devs
       .find((d) => d.id === x.deviceId)
@@ -860,6 +1290,8 @@ const deriveBusinessTargets = (
     const range = req.judge === "数值范围" ? defaultRangeOfUnit(x.unit) : undefined;
     return {
       id: "BT-" + x.id,
+      // 分类随设备清单的检测项（罐壁 / 管廊等空间目标→区域类），缺省按仪表类
+      targetKind: item?.targetKind || "仪表",
       instrumentId: x.id,
       requirementId: req.id,
       algorithm: req.algorithm,
@@ -880,10 +1312,17 @@ const deriveBusinessTargets = (
       require: req.description,
       // 告警设置：**平台唯一的告警配置入口**（阈值即上面的 min/max/expected）
       alarm: {
-        on: ALARM_ON.includes(x.id),
-        level: item?.priority === "紧急" ? "紧急" : "重要",
-        trigger: "单次超限即告警（一期不支持连续多次）",
+        // 平台没有「告警开关」：判定异常即告警；来源统一走模板（可在台账里改成手动输入）
+        source: "模板",
+        level: item?.priority === "紧急" ? "一级" : "二级",
+        trigger: "单次异常即告警",
         notify: ["设备岗"],
+        /**
+         * 关联的告警模板（后台管理 › 告警模板管理）：
+         * 演示数据按**巡检要求的检测类型 + 单位**带出默认关联，可在台账里改成别的模板；
+         * 规则判定 / 处置流程 / 声光报警都按关联模板走（一处维护、多点引用）
+         */
+        templateId: seedTemplateOf(x.unit, req.detectKind)?.id,
       },
       createdAt: "2026-09-20 09:10",
     };
@@ -912,10 +1351,9 @@ export function seed(): State {
     ...d,
   }));
   /**
-   * 工厂树与巡检目标台账：仪表 ← **已通过审核**设备的检测目标；业务目标 ← 仪表 + 巡检要求。
-   * 未通过审核 / 被驳回的清单不进入工厂树（与设备主数据的"待审核不生效"口径一致）
+   * 工厂树与巡检目标台账：仪表 ← 设备清单的检测目标；业务目标 ← 仪表 + 巡检要求。
    */
-  const ins = deriveInstruments(devs.filter((d) => d.reviewState === "已通过"));
+  const ins = deriveInstruments(devs);
   const biz = deriveBusinessTargets(ins, devs);
   /**
    * TGT-01：空间 / 区域（非装置）类目标示例 —— **不关联设备台账**，
@@ -926,19 +1364,21 @@ export function seed(): State {
       id: "BT-ENV-GAS",
       targetKind: "区域",
       anchor: "3# 罐区北侧立柱",
-      requirementId: "REQ-GAS",
+      requirementId: "REQ-GAS-AREA",
       goal: "确认 3# 罐区可燃气体浓度在安全范围内",
       require: "沿罐区北侧立柱 3 米高度泵吸采样，读数超上限即异常",
-      algorithm: "气体浓度判读 v1.1",
+      algorithm: "区域气体浓度判读 v1.0",
       judge: "数值范围",
       unit: "ppm",
       min: 0,
       max: 50,
       criteria: "取泵吸稳定后 10 秒均值，超过 50 ppm 判异常",
+      // 区域类也走同一套主数据链路：巡检要求（区域气体）→ 算法 → 告警模板（ppm 口径）
       alarm: {
-        on: true,
-        level: "紧急",
-        trigger: "单次超限即告警（一期不支持连续多次）",
+        source: "模板",
+        templateId: "TPL-06",
+        level: "一级",
+        trigger: "单次异常即告警",
         notify: ["设备岗", "值班长"],
       },
       needPhoto: false,
@@ -961,10 +1401,12 @@ export function seed(): State {
       min: 0,
       max: 120,
       criteria: "以区域最高温为准，超过 120 ℃ 判异常",
+      // 区域红外：关联区域高温模板（℃ 0–120 口径，与探头测温的 TPL-02 区分开）
       alarm: {
-        on: true,
-        level: "重要",
-        trigger: "单次超限即告警（一期不支持连续多次）",
+        source: "模板",
+        templateId: "TPL-07",
+        level: "二级",
+        trigger: "单次异常即告警",
         notify: ["设备岗"],
       },
       needPhoto: false,
@@ -1001,7 +1443,7 @@ export function seed(): State {
     ];
   });
   return {
-    schema: 6,
+    schema: 7,
     points: pts,
     maps: [
       {
@@ -1019,11 +1461,14 @@ export function seed(): State {
         // 示例底图：打开地图即可在图上标注点位（可随时替换/清除）
         image: SAMPLE_MAP_IMAGE,
         // 地图是**纯点云**：不含任何定位ID、巡检点与业务信息
+        // 版本历史：最新在前；只记空间版本 V
         history: [
-          "m1 首次建图（点云）",
-          "m2 补充设备区域点云",
-          "m3 已发布 · 原始资料完整",
+          { version: 3, note: "定版发布 · 原始资料（点云 + 视频）完整", at: "2026-09-28 14:32" },
+          { version: 2, note: "补充装置区 A / B 段管廊点云", at: "2026-09-12 09:20" },
+          { version: 1, note: "机器人首次走行建图（纯点云底图）", at: "2026-08-30 16:05" },
         ],
+        // 最近更新时间：用于地图列表「更新时间」列
+        updatedAt: "2026-09-28 14:32",
         frames: {
           resolution: 0.05,
           origin: { x: 0, y: 0, yaw: 0 },
@@ -1044,13 +1489,12 @@ export function seed(): State {
     /**
      * 巡检点标定数据（**独立模块，与地图分开放**）
      * @description 地图是纯点云、不含任何点位；采集时产出的「巡检点标定文件」解析后全部落在这里，
-     *              按 mapId 关联地图、自带版本 c{n}，与地图空间版本 m{n} 解耦。
+     *              按 mapId 关联地图、不设独立版本（版本只跟地图空间版本 V{n} 走）。
      */
     mapCalibrations: [
       {
         id: "CAL-MAP-A03",
         mapId: "MAP-A03",
-        version: 7,
         updatedAt: "2026-09-20 10:30",
         targets: [
           // 已被现有巡检点绑定（一对一占用）
@@ -1061,6 +1505,7 @@ export function seed(): State {
             kind: p.kind as CaptureKind,
             x: p.x,
             y: p.y,
+            world: { x: p.x, y: p.y, z: 0 },
             state: "已确认" as const,
             pointId: p.id,
           })),
@@ -1072,6 +1517,7 @@ export function seed(): State {
             kind: t.kind,
             x: t.x,
             y: t.y,
+            world: { x: t.x, y: t.y, z: 0 },
             state: "待确认" as const,
           })),
         ],
@@ -1088,12 +1534,10 @@ export function seed(): State {
         state: "执行中",
         mapId: "MAP-A03",
         mapVersion: 3,
-        calibrationVersion: 7,
         current: "T009",
         x: 27,
         y: 55,
         deviceType: "机器狗",
-        mobility: ["爬楼", "越障", "跨楼层"],
         constraints: { minBattery: 40, needChargingPlan: true },
         health: 92,
         firmware: "DOG-2.4.1",
@@ -1108,11 +1552,9 @@ export function seed(): State {
         state: "空闲",
         mapId: "MAP-A03",
         mapVersion: 2,
-        calibrationVersion: 6,
         x: 18,
         y: 72,
         deviceType: "四轮车",
-        mobility: ["高速", "大负载", "道路行驶"],
         constraints: { minBattery: 25, needChargingPlan: true, maxSpeed: 1.5 },
         health: 88,
         firmware: "AGV-1.9.0",
@@ -1126,11 +1568,9 @@ export function seed(): State {
         state: "充电",
         mapId: "MAP-B01",
         mapVersion: 1,
-        calibrationVersion: 1,
         x: 87,
         y: 73,
         deviceType: "挂轨",
-        mobility: ["固定轨道", "长时在线"],
         constraints: {
           minBattery: 15,
           needChargingPlan: false,
@@ -1145,7 +1585,6 @@ export function seed(): State {
         id: "TMP01",
         name: "V001 每班综合巡检",
         points: ["P001", "P002", "P003"],
-        priority: "普通",
         end: "返航",
         state: "启用",
         version: 1,
@@ -1173,7 +1612,6 @@ export function seed(): State {
       { ...task("T010", "罐区午前例行巡检", "待调度"), deadline: dueIn(12) },
       {
         ...task("T011", "V001 异常现场核验", "待调度"),
-        priority: "高",
         source: "人工临时",
         deadline: dueIn(6),
       },
@@ -1182,23 +1620,19 @@ export function seed(): State {
         created: dueIn(-118),
         startedAt: dueIn(-110),
         finishedAt: dueIn(-88),
-        items: [{ ...points[0], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[0], mapVersion: 3 }],
         done: ["P001"],
         index: 1,
       },
       task("T012", "罐区交班补充巡检", "已分配", "R01"),
-      {
-        // 罐顶点位需爬楼：用于演示"按机型能力匹配机器"（四轮车不可派）
-        ...task("T013", "罐区阀门复核", "已分配", "R01"),
-        requiredMobility: ["爬楼"],
-      },
+      task("T013", "罐区阀门复核", "已分配", "R01"),
       task("T014", "二号机器人版本更新后巡检", "已分配", "R02"),
       // ── 演示用：已结束任务，供「执行回溯」列表展示 ──
       {
         ...task("T020", "罐区早班综合巡检", "完成", "R01"),
         startedAt: dueIn(-180),
         finishedAt: dueIn(-150),
-        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, calibrationVersion: 7 })),
+        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3 })),
         done: points.slice(0, 3).map((p) => p.id),
         index: 3,
       },
@@ -1206,7 +1640,7 @@ export function seed(): State {
         ...task("T021", "V001 例行压力检测", "部分完成", "R01"),
         startedAt: dueIn(-160),
         finishedAt: dueIn(-140),
-        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, calibrationVersion: 7 })),
+        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3 })),
         done: ["P001"],
         skipped: ["P002"],
         index: 2,
@@ -1216,7 +1650,7 @@ export function seed(): State {
         ...task("T022", "装置区红外测温巡检", "失败", "R02"),
         startedAt: dueIn(-200),
         finishedAt: dueIn(-170),
-        items: [{ ...points[2], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[2], mapVersion: 3 }],
         skipped: ["P003"],
         index: 1,
         failure: "红外传感器异常",
@@ -1225,13 +1659,13 @@ export function seed(): State {
         ...task("T023", "罐区阀门紧急复核", "取消", "R01"),
         startedAt: dueIn(-90),
         finishedAt: dueIn(-80),
-        items: [{ ...points[1], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[1], mapVersion: 3 }],
         index: 1,
       },
       {
         ...task("T024", "罐区夜间补充巡检", "超期", "R02"),
         deadline: dueIn(-30),
-        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3, calibrationVersion: 7 })),
+        items: points.slice(0, 3).map((p) => ({ ...p, mapVersion: 3 })),
         index: 0,
       },
       // ── 演示用：已完成任务（每个任务均有对应巡检结果，供「巡检结果」按任务维度分组展示）──
@@ -1264,7 +1698,7 @@ export function seed(): State {
         created: dueIn(-705),
         startedAt: dueIn(-675),
         finishedAt: dueIn(-650),
-        items: [{ ...points[0], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[0], mapVersion: 3 }],
         done: ["P001"],
         index: 1,
       },
@@ -1281,7 +1715,7 @@ export function seed(): State {
         created: dueIn(-490),
         startedAt: dueIn(-460),
         finishedAt: dueIn(-430),
-        items: [{ ...points[1], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[1], mapVersion: 3 }],
         done: ["P002"],
         index: 1,
       },
@@ -1298,7 +1732,7 @@ export function seed(): State {
         created: dueIn(-300),
         startedAt: dueIn(-270),
         finishedAt: dueIn(-240),
-        items: [{ ...points[0], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[0], mapVersion: 3 }],
         done: ["P001"],
         index: 1,
       },
@@ -1307,7 +1741,7 @@ export function seed(): State {
         created: dueIn(-210),
         startedAt: dueIn(-180),
         finishedAt: dueIn(-150),
-        items: [{ ...points[2], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[2], mapVersion: 3 }],
         done: ["P003"],
         index: 1,
       },
@@ -1322,7 +1756,7 @@ export function seed(): State {
       // ── 演示用：扩充点位对应的已完成任务（供告警 / 结果 / 排行取数）──
       {
         ...task("T040", "罐区夜间综合巡检", "完成", "R01"),
-        items: points.filter(p => !["P007", "P010"].includes(p.id)).map(p => ({...p, mapVersion:3, calibrationVersion:7})),
+        items: points.filter(p => !["P007", "P010"].includes(p.id)).map(p => ({...p, mapVersion:3})),
         created: dueIn(-140),
         startedAt: dueIn(-120),
         finishedAt: dueIn(-70),
@@ -1344,7 +1778,7 @@ export function seed(): State {
         created: dueIn(-190),
         startedAt: dueIn(-170),
         finishedAt: dueIn(-148),
-        items: [{ ...points[5], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[5], mapVersion: 3 }],
         done: ["P006"],
         index: 1,
       },
@@ -1354,8 +1788,8 @@ export function seed(): State {
         startedAt: dueIn(-45),
         finishedAt: dueIn(-24),
         items: [
-          { ...points[6], mapVersion: 1, calibrationVersion: 1 },
-          { ...points[9], mapVersion: 1, calibrationVersion: 1 },
+          { ...points[6], mapVersion: 1 },
+          { ...points[9], mapVersion: 1 },
         ],
         done: ["P007", "P010"],
         index: 2,
@@ -1365,7 +1799,7 @@ export function seed(): State {
         created: dueIn(-11100),
         startedAt: dueIn(-11080),
         finishedAt: dueIn(-11040),
-        items: [{ ...points[8], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[8], mapVersion: 3 }],
         done: ["P009"],
         index: 1,
       },
@@ -1374,28 +1808,14 @@ export function seed(): State {
         created: dueIn(-15100),
         startedAt: dueIn(-15080),
         finishedAt: dueIn(-15040),
-        items: [{ ...points[0], mapVersion: 3, calibrationVersion: 7 }],
+        items: [{ ...points[0], mapVersion: 3 }],
         done: ["P001"],
         index: 1,
       },
     ],
     results: [
-      {
-        id: "RES001",
-        taskId: "T008",
-        pointId: "P001",
-        item: "压力读数",
-        raw: "0.92",
-        recognized: "0.92",
-        final: "0.92",
-        unit: "MPa",
-        abnormal: true,
-        status: "待复核",
-        source: "机器人采集 / 外部表计识别 v1.2",
-        confidence: 0.93,
-        time: dueIn(-95),
-        reviews: [],
-      },
+      // T008 罐区早班压力检测：压力超上限（手写演示结果，与 result() 同口径，带规则快照）
+      result("RES001", "T008", points[0], "0.92", "0.92", true, "已确认", -95, 0.93),
       // ── 演示用：已完成 / 部分完成任务对应的巡检结果（按任务维度分组展示）──
       // T020 罐区早班综合巡检（完成）
       result("RES002", "T020", points[0], "0.62", "0.62", false, "已确认", -172),
@@ -1413,10 +1833,10 @@ export function seed(): State {
       result("RES011", "T031", points[2], "45.1", "45.1", false, "已确认", -908),
       // T032 罐区夜班综合巡检（完成，阀门未按期望开启）
       result("RES012", "T032", points[0], "0.66", "0.66", false, "已识别", -802),
-      result("RES013", "T032", points[1], "关闭", "关闭", true, "待复核", -795),
+      result("RES013", "T032", points[1], "关闭", "关闭", true, "已确认", -795),
       result("RES014", "T032", points[2], "58.4", "58.4", false, "已确认", -788),
-      // T033 V001 压力专项检测（完成，压力超上限待复核）
-      result("RES015", "T033", points[0], "0.90", "0.90", true, "待复核", -660),
+      // T033 V001 压力专项检测（完成，压力超上限已确认）
+      result("RES015", "T033", points[0], "0.90", "0.90", true, "已确认", -660),
       // T034 罐区中班综合巡检（完成，罐壁温度超限）
       result("RES016", "T034", points[0], "0.58", "0.58", false, "已确认", -562),
       result("RES017", "T034", points[1], "开启", "开启", false, "已确认", -555),
@@ -1431,22 +1851,35 @@ export function seed(): State {
       result("RES023", "T037", points[0], "0.77", "0.77", false, "已确认", -255),
       // T038 V002 罐壁温度巡检（完成）
       result("RES024", "T038", points[2], "33.2", "33.2", false, "已确认", -165),
-      // T039 罐区交班综合巡检（完成，压力超上限待复核）
-      result("RES025", "T039", points[0], "0.83", "0.83", true, "待复核", -92),
+      // T039 罐区交班综合巡检（完成，压力超上限已确认）
+      result("RES025", "T039", points[0], "0.83", "0.83", true, "已确认", -92),
       result("RES026", "T039", points[1], "开启", "开启", false, "已确认", -85),
       result("RES027", "T039", points[2], "40.6", "40.6", false, "已识别", -78),
       // ── 演示用：扩充点位的巡检结果（告警事件的数据来源）──
-      result("RES028", "T040", points[3], "0.86", "0.86", true, "待复核", -84),
-      result("RES029", "T040", points[4], "关闭", "关闭", true, "待复核", -80),
+      result("RES028", "T040", points[3], "0.86", "0.86", true, "已确认", -84),
+      result("RES029", "T040", points[4], "关闭", "关闭", true, "已确认", -80),
       result("RES030", "T040", points[7], "0.74", "0.74", false, "已确认", -76),
       result("RES031", "T041", points[5], "63.5", "63.5", true, "已确认", -152),
-      result("RES032", "T042", points[6], "26", "26", true, "待复核", -26),
+      result("RES032", "T042", points[6], "26", "26", true, "已确认", -26),
       result("RES033", "T043", points[8], "62.8", "62.8", true, "已确认", -11045),
       result("RES034", "T044", points[0], "0.89", "0.89", true, "已确认", -15045),
       result("RES035", "T040", points[8], "58.2", "58.2", false, "已确认", -74),
       result("RES036", "T042", points[9], "18.6", "18.6", false, "已确认", -30),
-      result("RES037", "T040", points[10], "关闭", "关闭", true, "待复核", -68),
+      result("RES037", "T040", points[10], "关闭", "关闭", true, "已确认", -68),
       result("RES038", "T040", points[0], "0.79", "0.79", false, "已确认", -72),
+      // AI 状态异常（三级告警）演示：图像模糊未识别出有效读数，风险信息本身无异常
+      result(
+        "RES039",
+        "T042",
+        points[9],
+        "未识别",
+        "未识别",
+        false,
+        "已识别",
+        -40,
+        0.32,
+        "图像模糊，未识别出有效读数",
+      ),
     ],
     alarms: [
       {
@@ -1455,7 +1888,7 @@ export function seed(): State {
         taskId: "T008",
         pointId: "P001",
         name: "V001 出口压力超上限",
-        level: "重要",
+        level: "二级",
         category: "业务",
         state: "待确认",
         notes: [],
@@ -1468,7 +1901,7 @@ export function seed(): State {
         taskId: "T040",
         pointId: "P004",
         name: "V003 出口压力超上限",
-        level: "重要",
+        level: "二级",
         category: "业务",
         state: "待确认",
         notes: [],
@@ -1480,7 +1913,7 @@ export function seed(): State {
         taskId: "T040",
         pointId: "P005",
         name: "V003 出口阀门异常关闭",
-        level: "紧急",
+        level: "一级",
         category: "业务",
         state: "处理中",
         notes: ["已通知维修班现场核查阀位"],
@@ -1492,9 +1925,9 @@ export function seed(): State {
         taskId: "T041",
         pointId: "P006",
         name: "V004 罐壁温度偏高",
-        level: "重要",
+        level: "二级",
         category: "业务",
-        state: "待复查",
+        state: "待确认",
         notes: [],
         time: dueIn(-152),
       },
@@ -1504,7 +1937,7 @@ export function seed(): State {
         taskId: "T042",
         pointId: "P007",
         name: "装置区 A 段管廊气体浓度偏高",
-        level: "紧急",
+        level: "一级",
         category: "业务",
         state: "待确认",
         notes: [],
@@ -1516,10 +1949,18 @@ export function seed(): State {
         taskId: "T031",
         pointId: "P001",
         name: "V001 出口压力超上限",
-        level: "重要",
+        level: "二级",
         category: "业务",
         state: "已恢复",
-        notes: ["处置后连续两次复测正常"],
+        notes: [
+          "处置后连续两次复测正常",
+          "处理：受理",
+          "处理说明：现场泄压后复测连续两次正常",
+        ],
+        handledAt: dueIn(-880),
+        handleResult: "受理",
+        handleNote: "现场泄压后复测连续两次正常",
+        falsePositive: false,
         time: dueIn(-922),
       },
       {
@@ -1528,10 +1969,33 @@ export function seed(): State {
         taskId: "T032",
         pointId: "P002",
         name: "V001 出口阀门异常关闭",
-        level: "重要",
+        level: "二级",
         category: "业务",
         state: "已关闭",
-        notes: [],
+        notes: ["处理：受理", "处理说明：现场复位阀位后复测正常"],
+        handledAt: dueIn(-762),
+        handleResult: "受理",
+        handleNote: "现场复位阀位后复测正常",
+        falsePositive: false,
+        // 反馈（复检）：受理后按处置流程回填（引用模板 TPL-04 的 4 步流程，已完成 2 步）
+        verify: {
+          startedAt: dueIn(-762),
+          steps: [
+            {
+              text: "核对阀位指示与工艺要求的开 / 关状态",
+              done: true,
+              at: dueIn(-735),
+            },
+            {
+              text: "确认是否处于检修隔离状态（隔离期间不判定）",
+              done: true,
+              at: dueIn(-700),
+            },
+            { text: "状态不符：通知现场复位并复测", done: false },
+            { text: "在处置页记录处理结果与依据", done: false },
+          ],
+          state: "待反馈",
+        },
         time: dueIn(-795),
       },
       {
@@ -1540,10 +2004,14 @@ export function seed(): State {
         taskId: "T033",
         pointId: "P001",
         name: "V001 出口压力波动超限",
-        level: "一般",
+        level: "三级",
         category: "业务",
         state: "已关闭",
-        notes: [],
+        notes: ["处理：忽略", "处理说明：波动在工艺允许区间内，记录备查"],
+        handledAt: dueIn(-640),
+        handleResult: "忽略",
+        handleNote: "波动在工艺允许区间内，记录备查",
+        falsePositive: false,
         time: dueIn(-660),
       },
       {
@@ -1552,35 +2020,18 @@ export function seed(): State {
         taskId: "T034",
         pointId: "P003",
         name: "V002 罐壁温度超限",
-        level: "重要",
+        level: "二级",
         category: "业务",
         state: "已关闭",
-        notes: [],
+        notes: [
+          "处理：忽略（误报）",
+          "处理说明：热像测温受罐体反光影响，复测未超限",
+        ],
+        handledAt: dueIn(-530),
+        handleResult: "忽略",
+        handleNote: "热像测温受罐体反光影响，复测未超限",
+        falsePositive: true,
         time: dueIn(-548),
-      },
-      {
-        id: "AL010",
-        resultId: "RES023",
-        taskId: "T037",
-        pointId: "P001",
-        name: "V001 出口压力接近上限",
-        level: "一般",
-        category: "业务",
-        state: "已关闭",
-        notes: [],
-        time: dueIn(-255),
-      },
-      {
-        id: "AL011",
-        resultId: "RES014",
-        taskId: "T032",
-        pointId: "P003",
-        name: "V002 罐壁温度接近上限",
-        level: "一般",
-        category: "业务",
-        state: "已恢复",
-        notes: [],
-        time: dueIn(-788),
       },
       {
         id: "AL012",
@@ -1588,23 +2039,11 @@ export function seed(): State {
         taskId: "T039",
         pointId: "P001",
         name: "V001 出口压力超上限",
-        level: "重要",
+        level: "二级",
         category: "业务",
         state: "待确认",
         notes: [],
         time: dueIn(-92),
-      },
-      {
-        id: "AL013",
-        resultId: "RES027",
-        taskId: "T039",
-        pointId: "P003",
-        name: "V002 罐壁温度较上一班次回升",
-        level: "一般",
-        category: "业务",
-        state: "已恢复",
-        notes: [],
-        time: dueIn(-78),
       },
       {
         id: "AL014",
@@ -1612,23 +2051,11 @@ export function seed(): State {
         taskId: "T040",
         pointId: "P011",
         name: "V004 出口阀门异常关闭",
-        level: "重要",
+        level: "二级",
         category: "业务",
         state: "处理中",
         notes: [],
         time: dueIn(-68),
-      },
-      {
-        id: "AL015",
-        resultId: "RES035",
-        taskId: "T040",
-        pointId: "P009",
-        name: "V003 罐壁温度接近上限",
-        level: "一般",
-        category: "业务",
-        state: "已恢复",
-        notes: [],
-        time: dueIn(-74),
       },
       {
         id: "AL016",
@@ -1636,10 +2063,39 @@ export function seed(): State {
         taskId: "T043",
         pointId: "P009",
         name: "V003 罐壁温度超限",
-        level: "重要",
+        level: "二级",
         category: "业务",
         state: "已关闭",
-        notes: [],
+        notes: ["处理：受理", "处理说明：已排查罐壁保温层，复测恢复"],
+        handledAt: dueIn(-11000),
+        handleResult: "受理",
+        handleNote: "已排查罐壁保温层，复测恢复",
+        falsePositive: false,
+        // 反馈（复检）：处置流程 4 步全部回馈完成 → 有效闭环
+        verify: {
+          startedAt: dueIn(-11000),
+          steps: [
+            {
+              text: "确认测温部位（罐壁 / 管道）与热像画面是否对准",
+              done: true,
+              at: dueIn(-10950),
+            },
+            {
+              text: "排除阳光、反光等外部热源干扰后复测",
+              done: true,
+              at: dueIn(-10900),
+            },
+            {
+              text: "持续超限：通知工艺确认介质温度，必要时降温",
+              done: true,
+              at: dueIn(-10850),
+            },
+            { text: "在处置页记录处理结果与依据", done: true, at: dueIn(-10700) },
+          ],
+          state: "有效闭环",
+          closedAt: dueIn(-10700),
+          note: "保温层排查完成，复测罐壁温度回到 42 ℃，判定有效闭环",
+        },
         time: dueIn(-11045),
       },
       {
@@ -1648,11 +2104,50 @@ export function seed(): State {
         taskId: "T044",
         pointId: "P001",
         name: "V001 出口压力超上限",
-        level: "重要",
+        level: "二级",
         category: "业务",
-        state: "已关闭",
-        notes: [],
+        state: "处理中",
+        notes: [
+          "处理：受理",
+          "处理说明：现场已复位，等待复检回馈",
+          "进入反馈（复检）流程：4 步处置流程（引用模板 TPL-01）；受理后超过 30 天未闭环自动判定为无效闭环",
+        ],
+        handledAt: dueIn(-47520),
+        handleResult: "受理",
+        handleNote: "现场已复位，等待复检回馈",
+        falsePositive: false,
+        // 反馈（复检）：受理已超过 30 天仍未闭环 → 展示为「无效闭环（超 30 天自动判定）」（派生值，不回写数据）
+        verify: {
+          startedAt: dueIn(-47520),
+          steps: [
+            {
+              text: "核对压力表读数与外部 AI 识别值是否一致",
+              done: true,
+              at: dueIn(-47400),
+            },
+            { text: "对照工艺卡片确认当前工况允许的压力区间", done: false },
+            { text: "压力持续超限：通知值班长，转现场处置", done: false },
+            {
+              text: "复测确认后在处置页填写处理结果（受理 / 忽略 + 是否误报）",
+              done: false,
+            },
+          ],
+          state: "待反馈",
+        },
         time: dueIn(-15045),
+      },
+      {
+        id: "AL022",
+        resultId: "RES039",
+        taskId: "T042",
+        pointId: points[9].id,
+        // AI 状态异常：识别未给出可用结论，固定三级告警（风险信息本身无异常）
+        name: points[9].name + " AI 识别异常",
+        level: "三级",
+        category: "业务",
+        state: "待确认",
+        notes: ["AI 状态异常（三级）：图像模糊，未识别出有效读数"],
+        time: dueIn(-40),
       },
       // ── 演示用：机器人本体异常告警（与业务告警同表，分类=机器人；无业务点位/任务，仅关联 robotId）──
       {
@@ -1660,7 +2155,7 @@ export function seed(): State {
         category: "机器人",
         robotId: "R02",
         name: "装置巡检二号通信离线",
-        level: "紧急",
+        level: "一级",
         state: "待确认",
         notes: [],
         handle: "推送值班主管，立即排查通信链路与基站覆盖",
@@ -1671,7 +2166,7 @@ export function seed(): State {
         category: "机器人",
         robotId: "R01",
         name: "罐区巡检一号急停触发",
-        level: "紧急",
+        level: "一级",
         state: "处理中",
         notes: ["已通知现场班组确认周边安全"],
         handle: "现场确认安全后复位急停，复核任务可继续执行",
@@ -1682,7 +2177,7 @@ export function seed(): State {
         category: "机器人",
         robotId: "R03",
         name: "装置巡检三号红外传感器异常",
-        level: "重要",
+        level: "二级",
         state: "处理中",
         notes: ["传感器信号丢失，热像采集失败"],
         handle: "现场检查镜头/传感器，清洁或返修后重新标定",
@@ -1693,7 +2188,7 @@ export function seed(): State {
         category: "机器人",
         robotId: "R03",
         name: "装置巡检三号定位丢失",
-        level: "重要",
+        level: "二级",
         state: "待确认",
         notes: [],
         handle: "重新建图/校准，定位恢复前暂停该区段任务",
@@ -1704,7 +2199,7 @@ export function seed(): State {
         category: "机器人",
         robotId: "R03",
         name: "装置巡检三号电量低于返航阈值",
-        level: "一般",
+        level: "三级",
         state: "待确认",
         notes: [],
         handle: "安排返航充电，避免任务中途耗尽",
@@ -1715,7 +2210,7 @@ export function seed(): State {
         category: "机器人",
         robotId: "R02",
         name: "罐区巡检二号里程达保养阈值",
-        level: "一般",
+        level: "三级",
         state: "已恢复",
         notes: ["已纳入计划性保养"],
         handle: "按里程计划保养（履带/轮组/电池）",
@@ -1726,14 +2221,65 @@ export function seed(): State {
         category: "机器人",
         robotId: "R03",
         name: "装置巡检三号固件校验异常",
-        level: "一般",
+        level: "三级",
         state: "已关闭",
         notes: ["重启后校验通过"],
         handle: "已重启恢复，持续观察固件完整性",
         time: dueIn(-300),
       },
     ],
-    syncs: [],
+    /** 告警模板（后台管理 › 告警模板管理）：名称 + 触发条件 + 处理流程 */
+    alarmTemplates: ALARM_TEMPLATES,
+    /**
+     * 地图下发记录（**最新在前**）：每个「空间版本 V{n}」下发给哪台机器、结果如何。
+     * @description 与机器人当前激活版本互为印证：
+     *              - R01 已激活 m3 / c7（= 本图当前版本，已同步）
+     *              - R02 仍停在 m2 / c6（历史上同步过 V2，本图 V3 待下发）
+     *              - R03 属「装置区」，与一期罐区地图不匹配，从未下发（「不适用区域」）
+     */
+    syncs: [
+      {
+        // 当前版本已下发给 R02，但对方尚未回激活回执：地图"下发到位"=已发布，机器仍停在旧版本
+        id: "SYNC-A03-05",
+        mapId: "MAP-A03",
+        robotId: "R02",
+        mapVersion: 3,
+        state: "待激活",
+        at: "2026-09-28 14:42",
+      },
+      {
+        id: "SYNC-A03-04",
+        mapId: "MAP-A03",
+        robotId: "R01",
+        mapVersion: 3,
+        state: "已同步",
+        at: "2026-09-28 14:40",
+      },
+      {
+        id: "SYNC-A03-03",
+        mapId: "MAP-A03",
+        robotId: "R02",
+        mapVersion: 2,
+        state: "已同步",
+        at: "2026-09-22 10:05",
+      },
+      {
+        id: "SYNC-A03-02",
+        mapId: "MAP-A03",
+        robotId: "R01",
+        mapVersion: 2,
+        state: "已同步",
+        at: "2026-09-22 09:58",
+      },
+      {
+        id: "SYNC-A03-01",
+        mapId: "MAP-A03",
+        robotId: "R01",
+        mapVersion: 1,
+        state: "已同步",
+        at: "2026-08-30 16:20",
+      },
+    ],
     changes: [
       {
         id: "CH001",
@@ -1948,7 +2494,7 @@ export function seed(): State {
         -675,
         -650,
         [["P001 出口压力表", "压力 0.90 MPa（超上限 0.8）", 205]],
-        "检测完成，P001 压力超上限，已进入待复核",
+        "检测完成，P001 压力超上限，已触发告警",
       ),
       ...taskLogs(
         "T034",
@@ -1988,7 +2534,7 @@ export function seed(): State {
           ["P002 出口阀门", "阀位 开启", 140],
           ["P003 罐壁温度", "罐壁温度 40.6℃", 30],
         ],
-        "全部检测项完成，P001 压力超上限，已进入待复核",
+        "全部检测项完成，P001 压力超上限，已触发告警",
       ),
       // ── 演示用：扩充任务的执行事件与证据（供执行回溯 / 回溯内置页展示）──
       ...taskLogs(
@@ -2035,7 +2581,7 @@ export function seed(): State {
         -11080,
         -11040,
         [["P009 罐壁温度", "罐壁温度 62.8℃（超上限 60）", 30]],
-        "P009 罐壁温度超限，已闭环",
+        "P009 罐壁温度超限，已处置",
       ),
       ...taskLogs(
         "T044",
@@ -2044,7 +2590,7 @@ export function seed(): State {
         -15080,
         -15040,
         [["P001 出口压力表", "压力 0.89 MPa（超上限 0.8）", 205]],
-        "P001 出口压力超上限，已闭环",
+        "P001 出口压力超上限，已处置",
       ),
     ],
     requests: [],
@@ -2113,80 +2659,7 @@ export function seed(): State {
         detail: "15 分钟",
       },
     ],
-    // ── schema 2 新增集合（工单 / 验收 / 接管 / 反馈 / 现场 / 资产 / 排班 / 通知）──
-    workOrders: [
-      {
-        id: "WO001",
-        alarmId: "AL001",
-        pointId: "P001",
-        title: "V001 出口压力超上限处置",
-        level: "高",
-        state: "待派单",
-        slaLeft: 12,
-        slaState: "正常",
-        spares: [],
-        note: "待指派维修工现场核验压力表与取压管路",
-        created: dueIn(-90),
-        timeline: [
-          {
-            time: hhmmIn(-90),
-            actor: "系统",
-            action: "工单生成",
-            detail: "由告警 AL001 自动生成",
-          },
-        ],
-      },
-      // ── 演示用：新增告警对应的处置工单（SLA 倒计时 / 派单演示）──
-      {
-        id: "WO002",
-        alarmId: "AL014",
-        pointId: "P011",
-        title: "V004 出口阀门异常关闭处置",
-        level: "普通",
-        state: "待派单",
-        slaLeft: 8,
-        slaState: "预警",
-        spares: [],
-        note: "现场核查阀位并确认是否需要重新调整",
-        created: dueIn(-68),
-        timeline: [
-          {
-            time: hhmmIn(-68),
-            actor: "系统",
-            action: "工单生成",
-            detail: "由告警 AL014 自动生成",
-          },
-        ],
-      },
-      {
-        id: "WO003",
-        alarmId: "AL005",
-        pointId: "P007",
-        title: "装置区 A 段管廊气体报警处置",
-        level: "高",
-        state: "处置中",
-        slaLeft: -6,
-        slaState: "已升级",
-        spares: [],
-        note: "已通知现场班组长，等待复测与通风确认",
-        created: dueIn(-30),
-        timeline: [
-          {
-            time: hhmmIn(-30),
-            actor: "系统",
-            action: "工单生成",
-            detail: "由告警 AL005 自动生成",
-          },
-          {
-            time: hhmmIn(-12),
-            actor: "系统",
-            action: "SLA 升级",
-            detail: "超时未闭环，已升级至值班主管",
-          },
-        ],
-      },
-    ],
-    acceptances: [],
+    // ── schema 2 新增集合（接管 / 反馈 / 现场 / 资产 / 排班 / 通知）──
     takeovers: [],
     feedbacks: [
       {
@@ -2309,10 +2782,21 @@ export function seed(): State {
       },
     ],
     // ── 「地图 → 巡检任务」链路新增示例数据（schema 6，可选集合）──────────
-    /** 设备主数据：导入 → 待审核 → 生效（含「是否巡检」开关）；明细见模块级 `devices` */
+    /** 设备主数据：导入即生效（含「是否巡检」开关）；明细见模块级 `devices` */
     devices: devs,
-    /** 区域（工厂树第一层：区域 → 设备 → 仪表） */
-    areas: deriveAreas(devs),
+    /** 机器人上装能力（后台可维护；机器人能力 / 任务指令集的上游口径） */
+    robotPayloads,
+    /** 算法（AI 能力）清单：目标台账按名称引用，列表显示「关联台账」条数 */
+    algoConfigs,
+    /**
+     * 区域（工厂树第一层：区域 → 设备 → 仪表）。
+     * 区域在此作为**可维护的主数据**（后台管理里可新增 / 改名 / 删除），
+     * 设备按安装位置前缀归属到区域；地图 / 机器人的"区域"下拉也取自这里。
+     */
+    areas: [
+      { id: "AREA-01", name: "一期罐区" },
+      { id: "AREA-02", name: "装置区" },
+    ],
     /** 仪表：设备清单里的检测目标，只是资产、**不能直接巡检** */
     instruments: ins,
     /** 巡检要求模板库（看滴漏 / 看高温 / 看仪表读数 / 看外观破损 / 看气体浓度 / 看阀位 / 听异响） */

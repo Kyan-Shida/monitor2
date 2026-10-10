@@ -1,7 +1,7 @@
 /**
  * @file MapOnboarding.tsx
  * @description 地图上线工作台（4 步，简化版）：上传底图 → 标注点位 → 定版发布 → 机器人同步。
- *              平台**不区分试验版 / 正式版**：定版即当前内容；直接同步也会自动定版。
+ *              平台**不区分试验版 / 正式版**：定版即当前内容；地图状态按"当前版本是否已下发给所有旧版本机器"派生。
  *              设备清单 / 逻辑点 / 试采 / 示教等业务编排下沉到各自页面，工作台只提供跳转链接。
  * @interaction 被 Maps.tsx 的 workflow tab 渲染；第 2 步内嵌 Annotation 做点位标注
  */
@@ -11,7 +11,8 @@ import { go } from "../data/navigation";
 import { Annotation } from "../pages/Annotation";
 import { MapBaseUpload } from "./MapBaseUpload";
 import { MapImageCanvas } from "./MapImageCanvas";
-import { targetsOf, calibrationVersionOf } from "../data/mapCalibration";
+import { targetsOf } from "../data/mapCalibration";
+import { mapVer } from "../data/versionLabel";
 import { Badge, Btn, Note, Panel, Table } from "./UI";
 
 /** One map, one workflow: trial deployment belongs to validation preparation. */
@@ -24,16 +25,9 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
   const [rid, setRid] = useState(robots.find((r) => r.state === "空闲")?.id || robots[0]?.id || "");
   const r = robots.find((x) => x.id === rid);
   const aligned = (robot: (typeof robots)[number] | undefined) =>
-    !!robot &&
-    robot.mapId === m.id &&
-    robot.mapVersion === m.version &&
-    robot.calibrationVersion === calibrationVersionOf(s, m.id);
+    !!robot && robot.mapId === m.id && robot.mapVersion === m.version;
   const sy = s.syncs.find(
-    (x) =>
-      x.mapId === m.id &&
-      x.robotId === rid &&
-      x.mapVersion === m.version &&
-      x.calibrationVersion === calibrationVersionOf(s, m.id),
+    (x) => x.mapId === m.id && x.robotId === rid && x.mapVersion === m.version,
   );
   const verified = points.filter((p) => p.state === "已启用").length;
   const planned = points.filter((p) => p.actionPlan).length;
@@ -49,7 +43,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
     <>
       <div className="context-bar">
         <b>{m.name} · 上线工作台</b>
-        <span>m{m.version} / c{calibrationVersionOf(s, m.id)}</span>
+        <span>{mapVer(m.version)}</span>
         <Badge>{m.state}</Badge>
         <Btn onClick={() => go("map-detail", m.id)}>地图详情</Btn>
       </div>
@@ -79,10 +73,6 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
               .map((t) => ({ id: t.id, x: t.x, y: t.y, label: t.kind, kind: t.kind, state: t.state }))}
             height={400}
           />
-          <Note>
-            上传一张巡检地图图片即可开始；底图与点位构成"地图"本身。坐标标定等高级项在
-            <b>「地图管理 › 建图与坐标」</b>的折叠区（后置）。
-          </Note>
         </Panel>
       )}
 
@@ -96,13 +86,9 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
               ["地图底图", m.image ? "已上传" : "待补齐"],
               ["巡检点", `${points.length} 个（${verified} 已启用）`],
               ["巡检项 / 视角", `${planned} / ${points.length} 已编排（在「编辑巡检点」维护）`],
-              ["当前内容版本", `m${m.version} / c${calibrationVersionOf(s, m.id)}`],
+              ["当前内容版本", mapVer(m.version)],
             ]}
           />
-          <Note>
-            平台不区分"试验版 / 正式版"：定版就是把当前内容发布为可下发版本，历史任务快照保持不变。
-            也可以在「地图下发」时自动定版。
-          </Note>
           <Btn
             primary
             disabled={m.state === "已发布"}
@@ -117,11 +103,6 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
 
       {step === 3 && (
         <Panel title="4 · 机器人同步与上线结果">
-          <Note>
-            {m.state === "已发布"
-              ? "逐台核对实际激活版本。验证机器人若已激活同一版本，无需重复传输。"
-              : "当前内容尚未定版；直接同步会自动定版为当前版本。"}
-          </Note>
           <select aria-label="同步机器人" value={rid} onChange={(e) => setRid(e.target.value)}>
             {robots.map((r) => (
               <option key={r.id} value={r.id}>
@@ -134,11 +115,10 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
             heads={["机器人", "实际激活版本", "上线结论"]}
             rows={robots.map((r) => [
               r.name,
-              `m${r.mapVersion} / c${r.calibrationVersion}`,
+              mapVer(r.mapVersion),
               <Badge>{m.state === "已发布" && aligned(r) ? "地图上线完成" : "待完成上线"}</Badge>,
             ])}
           />
-          <small>地图上线完成表示地图版本条件满足；实际任务仍需检查能力、电量和机器人状态。</small>
         </Panel>
       )}
 
@@ -166,7 +146,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
     return (
       <div className="onboarding-sync">
         <p>
-          实际版本：{r ? `m${r.mapVersion} / c${r.calibrationVersion}` : "未选择机器人"} ·{" "}
+          实际版本：{r ? mapVer(r.mapVersion) : "未选择机器人"} ·{" "}
           <Badge>{aligned(r) ? "版本已一致" : sy?.state || "待同步"}</Badge>
         </p>
         <div className="actions">

@@ -145,20 +145,6 @@ export function MapSpatialPreview({
 
   return (
     <div className="spatial-preview">
-      <div className="spatial-toolbar">
-        <div className="segmented">
-          {["二维业务图", "三维点云示意"].map((m) => (
-            <button
-              key={m}
-              className={mode === m ? "active" : ""}
-              onClick={() => M(m)}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
-        <Badge>m{map.version}</Badge>
-      </div>
       {mode === "二维业务图" ? (
         <MapCanvas
           points={cruiseOnly ? [] : points}
@@ -310,12 +296,6 @@ export function MapSpatialPreview({
           </label>
         </>
       )}
-      <small>
-        {cruiseOnly
-          ? "巡检点为地图携带的定位标记（带ID），坐标待厂商解析接入。"
-          : points.find((p) => p.id === picked)?.name ||
-            "两种视图共享业务点位身份与地图版本。实际坐标与格式待厂商接入。"}
-      </small>
     </div>
   );
 }

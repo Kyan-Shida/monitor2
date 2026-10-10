@@ -14,29 +14,36 @@ import { go } from "../data/navigation";
 import { Badge, Btn, Modal, Note, Panel } from "../components/UI";
 import { MapSpatialPreview } from "../components/MapSpatialPreview";
 import { MapDispatch } from "../components/MapDispatch";
+import { mapVer } from "../data/versionLabel";
 
 export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
   const { s } = useStore();
   const m = s.maps.find((x) => x.id === id) || s.maps[0];
   /** 抽屉：空串表示关闭；深链 `?tab=sync` 可直接打开下发抽屉 */
   const [drawer, DRAWER] = useState(tab === "sync" ? "下发" : "");
-  /** 草稿状态下的下发确认弹窗 */
-  const [confirmDispatch, SETCONFIRM] = useState(false);
   if (!m) return <Note>地图不存在，请从地图列表进入。</Note>;
   /** 旧深链 `?tab=workbench`：地图工作台已不再属于地图管理 */
   const legacyWorkbench = tab === "workbench";
 
-  const openDispatch = () => {
-    if (m.state === "草稿") SETCONFIRM(true);
-    else DRAWER("下发");
-  };
+  /** 下发入口：直接开抽屉 */
+  const openDispatch = () => DRAWER("下发");
+
+  /**
+   * 本图的业务使用数据（真实业务只关心三件事：图里有多少活、谁在用、用得对不对）
+   * - pts：本图上的巡检点（地图只是底图，点位是独立标定数据，按 mapId 关联）
+   * - holders：已激活本图的设备（robot.mapId 指向本图即视为在用）
+   * - stale：激活版本与本图当前版本不一致的设备——不下发就不算真正生效
+   */
+  const pts = s.points.filter((p) => p.mapId === m.id);
+  const holders = s.robots.filter((r) => r.mapId === m.id);
+  const stale = holders.filter((r) => r.mapVersion !== m.version);
 
   return (
     <>
       <div className="context-bar">
         <b>{m.name}</b>
         <span>
-          {m.id} · {m.region} · m{m.version}
+          {m.id} · {m.region} · {mapVer(m.version)}
         </span>
         <Badge>{m.state}</Badge>
         {/* 地图管理只保留一个动作：地图下发（同步给设备）；巡检点标定不在这里 */}
@@ -55,74 +62,122 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
         </Note>
       )}
 
-      {m.state === "草稿" && (
-        <Note>
-          <b>当前地图为草稿状态：</b>编辑内容尚未下发到设备，请点击「地图下发」定版并同步。
-        </Note>
-      )}
-
-      {/* MAP-03：地图下发只下发点云底图；巡检点用坐标 + 业务数据单独下发 */}
-      <Note>
-        地图就是<b>纯点云</b>，只记录"机器人能走哪"，<b>不含任何定位ID与巡检点</b>。
-        地图下发<b>只下发纯点云底图</b>；<b>巡检点</b>由同批采集产出的「巡检点标定文件」
-        在「巡检点管理」导入后，用<b>坐标 + 业务数据单独下发</b>；
-        标定数据与地图分开放（各自带版本 m / c）。
-      </Note>
-
+      {/* 身份：这张图是谁——一眼可读，不放任何技术细节 */}
       <Panel title="地图信息">
         <dl className="kv">
-          <dt>地图编号 / 名称</dt>
+          <dt>地图名称</dt>
           <dd>
-            {m.id} · {m.name}
+            <b>{m.name}</b>
           </dd>
+          <dt>地图编号</dt>
+          <dd>{m.id}</dd>
           <dt>所属区域</dt>
           <dd>{m.region}</dd>
-          <dt>版本</dt>
-          <dd>
-            空间版本 m{m.version}
-            {m.deviceListVersion ? ` · 设备清单 c${m.deviceListVersion}` : ""}
-            <small>点位标定数据带自己的版本 c，不改变地图空间版本</small>
-          </dd>
+          <dt>空间版本</dt>
+          <dd>第 {m.version} 版</dd>
           <dt>状态</dt>
           <dd>
             <Badge>{m.state}</Badge>
-            {m.state === "草稿" && (
-              <small>内容尚未定版：下发时会自动定版为当前版本（平台不区分试验 / 正式版）</small>
-            )}
           </dd>
-          <dt>来源批次</dt>
-          <dd>
-            {m.batch} · {m.source}
-          </dd>
-          <dt>地图文件</dt>
-          <dd>
-            {m.file}
-            <small>校验 {m.checksum} · 厂商格式解析待接入</small>
-          </dd>
-          <dt>原始资料</dt>
-          <dd>
-            {m.cloud || "点云缺失"} / {m.video || "视频缺失"}
-          </dd>
-          <dt>底图</dt>
-          <dd>{m.image ? "已上传（纯点云底图）" : "未上传"}</dd>
+          <dt>更新时间</dt>
+          <dd>{m.updatedAt || "—"}</dd>
         </dl>
       </Panel>
-      <Panel title="版本历史">
+
+      {/*
+        可用性链路：按「建图 → 有活 → 在跑 → 跑得对」的顺序排，任一步不通这张图就干不了活。
+        - 底图：没有底图就无法在图上标注巡检点（链路起点）
+        - 巡检点：0 个说明本图还没标定，生成不了任何巡检任务
+        - 已激活设备：0 台说明本图还没部署到机器人（刚导入属于正常状态）
+        - 版本同步：逐台亮出版本，谁落后一目了然，并直接给「去更新」入口；
+                    0 台不是沉默，而是提示「尚未下发给任何设备」并给下发入口
+      */}
+      <Panel title="使用情况">
+        <dl className="kv">
+          <dt>底图</dt>
+          <dd>
+            {m.image ? (
+              "已上传"
+            ) : (
+              <>
+                <Badge tone="amber">缺失</Badge> 无底图无法在图上标注巡检点
+              </>
+            )}
+          </dd>
+          <dt>巡检点</dt>
+          <dd>
+            {pts.length ? (
+              <>
+                {pts.length} 个
+                <Btn onClick={() => go("annotation", m.id)}>巡检点管理 →</Btn>
+              </>
+            ) : (
+              <>
+                <Badge tone="amber">未标定</Badge> 本图还不能生成巡检任务
+                <Btn onClick={() => go("annotation", m.id)}>去标定 →</Btn>
+              </>
+            )}
+          </dd>
+          <dt>已激活设备</dt>
+          <dd>
+            {holders.length
+              ? `${holders.length} 台 · ${holders.map((r) => r.id).join("、")}`
+              : "暂无设备激活本图"}
+          </dd>
+          <dt>版本同步</dt>
+          <dd>
+            {!holders.length ? (
+              <>
+                尚未下发给任何设备
+                <Btn onClick={openDispatch}>下发 →</Btn>
+              </>
+            ) : stale.length ? (
+              <>
+                {stale
+                  .map(
+                    (r) => `${r.id} 运行 ${mapVer(r.mapVersion)}（当前 ${mapVer(m.version)}）`,
+                  )
+                  .join("；")}
+                <Btn primary onClick={openDispatch}>去更新 →</Btn>
+              </>
+            ) : (
+              `全部已同步（当前 ${mapVer(m.version)}）`
+            )}
+          </dd>
+        </dl>
+      </Panel>
+
+      {/* 版本历史：只展示版本号 + 更新时间（变更明细属内部日志，不在详情页暴露） */}
+      <Panel
+        title="版本历史"
+        extra={
+          <span>
+            {m.history.length} 个版本 · 当前 {mapVer(m.version)}
+          </span>
+        }
+      >
         {m.history.length ? (
-          m.history.map((h, i) => (
-            <p className="event" key={i}>
-              {h}
-            </p>
-          ))
+          <ol className="vlog">
+            {[...m.history]
+              .sort((a, b) => b.version - a.version)
+              .map((h, i) => (
+                <li
+                  key={`${h.version}-${i}`}
+                  className={h.version === m.version ? "on" : ""}
+                >
+                  <b>{mapVer(h.version)}</b>
+                  <span>
+                    {h.version === m.version && <Badge>当前</Badge>}
+                  </span>
+                  <time>{h.at || "—"}</time>
+                </li>
+              ))}
+          </ol>
         ) : (
           <p className="muted">暂无版本记录</p>
         )}
       </Panel>
       <Panel title="地图预览（纯点云底图）">
-        <Note>
-          <b>本页只预览纯点云底图</b>：定位ID、标定点、巡检点与巡检路线都不属于地图，
-          统一在「巡检点管理」中导入 / 维护。
-        </Note>
         <MapSpatialPreview
           map={m}
           points={[]}
@@ -132,35 +187,15 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
         />
       </Panel>
 
+      {/* 技术存档（建图来源 / 地图文件 / 原始资料）不在地图详情展示：仅在溯源与厂商对接时查看 */}
+
       {drawer && (
         <Modal
           title={`${m.name} · 地图下发与机器同步`}
-          drawer
-          drawerWidth={920}
+          wide
           onClose={() => DRAWER("")}
         >
           <MapDispatch mapId={m.id} />
-        </Modal>
-      )}
-
-      {confirmDispatch && (
-        <Modal title="草稿地图即将下发" onClose={() => SETCONFIRM(false)}>
-          <p>
-            当前地图处于<b>草稿</b>状态，点击「确认下发」后将自动定版为当前版本，并把
-            m{m.version} 与最新标定数据同步给所选设备。
-          </p>
-          <div className="actions">
-            <Btn onClick={() => SETCONFIRM(false)}>取消</Btn>
-            <Btn
-              primary
-              onClick={() => {
-                SETCONFIRM(false);
-                DRAWER("下发");
-              }}
-            >
-              确认下发
-            </Btn>
-          </div>
         </Modal>
       )}
     </>

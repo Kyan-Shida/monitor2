@@ -23,7 +23,7 @@ test("机器人能力只表达采集方式：业务类型（仪表 / 阀门）�
   assert.deepEqual(captureKindsOfPoint(s, gas), ["气体"]);
   assert.equal(robotCoversPoint(s, gas, r2), false);
   // 引擎约束与"调度校验清单"同源
-  const t = { ...s.tasks[0], items: [{ ...gas, mapVersion: 3, calibrationVersion: 7 }] };
+  const t = { ...s.tasks[0], items: [{ ...gas, mapVersion: 3 }] };
   assert.ok(constraints(s, t, r2).includes("检测能力不足"));
 });
 
@@ -50,7 +50,7 @@ test("覆盖率按设备清单口径：清单要求但未落位的检测目标�
   let s = seed();
   // 清单口径：6 台在用设备共 12 个「是否巡检=开」的检测目标，其中 V001「罐顶呼吸阀」尚未落位
   const listed = (s.devices || [])
-    .filter((d) => d.reviewState === "已通过" && d.state !== "停用")
+    .filter((d) => d.state !== "停用")
     .flatMap((d) => d.items.filter((it) => it.inspect));
   assert.equal(listed.length, 12);
   assert.equal(metricValue(s, "coverage"), 91.7);

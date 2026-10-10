@@ -58,7 +58,7 @@ export function Supporting({ page }: { page: string }) {
       p.item,
       `${p.kind} / ${p.unit || "状态"}`,
       <>
-        <Badge>{p.state}</Badge> v{p.version}
+        <Badge>{p.state}</Badge>
       </>,
       <>
         {(() => {
@@ -74,7 +74,7 @@ export function Supporting({ page }: { page: string }) {
                   : "不自动判为正常"}
               </small>
               <small>
-                {rule?.level} · v{rule?.version}
+                {rule?.level} · 第 {rule?.version} 版
               </small>
             </>
           );
@@ -245,8 +245,7 @@ export function Supporting({ page }: { page: string }) {
         {rulePoint && (
           <Modal
             title={`当前生效的判定与告警规则 · ${s.points.find((p) => p.id === rulePoint)?.name}`}
-            drawer
-            drawerWidth={700}
+            wide
             onClose={() => setRulePoint("")}
           >
               {/* 只读：告警设置统一在「巡检目标台账 › 告警设置」维护 */}
@@ -304,26 +303,6 @@ export function Supporting({ page }: { page: string }) {
           </Panel>
         </div>
         <div className="grid two">
-          {/* ALM-04：处置结果推送第三方工单系统，平台不做工单闭环 */}
-          <Panel title="第三方工单推送（ALM-04）">
-            <Note>
-              平台只做到「处置意见 + 推送」：告警处置后可经中间件把有效告警与处置说明推送给工厂现成的
-              隐患治理 / 维修 / 作业票等工单系统。
-            </Note>
-            <Field label="目标工单系统">
-              <select defaultValue="隐患治理工单">
-                <option>隐患治理工单</option>
-                <option>检维修工单</option>
-                <option>作业票工单</option>
-              </select>
-            </Field>
-            <Field label="推送方式">
-              <input readOnly value="中间件（接口配置化，推送即结束）" />
-            </Field>
-            <p className="muted">
-              平台<b>不实现</b>工单流转与 SLA 闭环；后续业务流程交由第三方系统。
-            </p>
-          </Panel>
           {/* INT-01：多厂商标准化接口约定（方案项，先行登记） */}
           <Panel title="多厂商标准化接口（INT-01）">
             <Note>
@@ -358,16 +337,6 @@ export function Supporting({ page }: { page: string }) {
         s.tasks.length ? Math.round((completed / s.tasks.length) * 100) : 0,
       ],
       [
-        "有效结果占比",
-        s.results.length
-          ? Math.round(
-              (s.results.filter((r) => r.status !== "待复核").length /
-                s.results.length) *
-                100,
-            )
-          : 0,
-      ],
-      [
         "异常结果占比",
         s.results.length
           ? Math.round(
@@ -379,10 +348,10 @@ export function Supporting({ page }: { page: string }) {
     ];
     return (
       <>
-        {/* RPT-01/02：本页定性为「统计类报表」——只放聚合统计，不下钻明细行；明细统一在巡检结果查询 */}
+        {/* RPT-01/02：本页定性为「统计类报表」——只放聚合统计，不下钻明细行；明细统一在巡检结果 */}
         <Note>
           <b>报表定位（RPT-01）</b>：本页只放<b>聚合统计</b>（完成率、异常 / 报警走势、区域 / 设备分布），
-          <b>不下钻到明细行</b>；明细全部归「巡检结果查询」。
+          <b>不下钻到明细行</b>；明细全部归「巡检结果」。
           <b>报表节奏（RPT-02）</b>：先做 1 张总览报表（巡检完成情况 + 异常 / 报警走势），
           后续按业务参考安全生产信息化平台的巡检 / 隐患治理报表逐步补充。
         </Note>
@@ -450,7 +419,7 @@ export function Supporting({ page }: { page: string }) {
               r.item,
               `${r.final} ${r.unit}`,
               r.time,
-              <Btn onClick={() => go("review", r.id)}>追溯结果</Btn>,
+              <Btn onClick={() => go("result-detail", r.id)}>查看结果</Btn>,
             ])}
           />
         </Panel>
@@ -527,7 +496,7 @@ export function Supporting({ page }: { page: string }) {
       {modal && (
         <Modal
           title={edit ? "编辑配置" : "新增配置"}
-          drawer
+          wide
           onClose={() => M(false)}
         >
           <Field label="名称">

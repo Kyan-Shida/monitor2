@@ -1,12 +1,13 @@
 /**
  * @file DispatchFleetOverview.tsx
- * @description 调度中心左栏：平台机器人资源列（状态 / 电量 / 当前任务进度 / 待执行与可用时间），
+ * @description 调度中心左栏：平台机器人资源列（状态 / 电量 / 当前任务进度 / 待执行队列长度），
  *              按「全部 / 执行中 / 空闲 / 需关注」筛选；点击卡片即把右侧调度工作区切到该机器人
- * @interaction DispatchDesk.tsx（调度中心两栏布局的中左栏）；数据来自 data/selectors 的 queueFor / robotAvailability / stageOf
+ * @interaction DispatchDesk.tsx（调度中心两栏布局的中左栏）；数据来自 data/selectors 的 queueFor / stageOf
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { queueFor, robotAvailability, stageOf } from "../data/selectors";
+import { queueFor, stageOf } from "../data/selectors";
+import { mapVer } from "../data/versionLabel";
 import { Badge } from "./UI";
 export function DispatchFleetOverview({
   selected,
@@ -78,7 +79,7 @@ export function DispatchFleetOverview({
                 <Badge>{r.state}</Badge>
               </div>
               <div className="fleet-card-meta">
-                {r.region} · 电量 {r.battery}% · m{r.mapVersion}/c{r.calibrationVersion}
+                {r.region} · 电量 {r.battery}% · {mapVer(r.mapVersion)}
               </div>
               <div className="fleet-card-task">
                 {current ? (
@@ -95,7 +96,6 @@ export function DispatchFleetOverview({
               </div>
               <div className="fleet-card-foot">
                 <span>待执行 {waiting.length} 项</span>
-                <span>{robotAvailability(s, r)}</span>
               </div>
               {hint && <div className="fleet-card-note">⚠ {hint}</div>}
             </div>

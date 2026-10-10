@@ -23,6 +23,8 @@ export function AutoScrollList({
   rows,
   /** 滚动速度：像素 / 秒 */
   speed = 22,
+  /** 是否启用自动上下滚动播放；false 时列表保持静态，内容溢出可手动滚动 */
+  auto = true,
   className = "",
 }: {
   children: ReactNode;
@@ -30,6 +32,7 @@ export function AutoScrollList({
   height?: number;
   rows?: number;
   speed?: number;
+  auto?: boolean;
   className?: string;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -67,8 +70,8 @@ export function AutoScrollList({
 
   /** 生效的可视高度：rows 模式用换算值，避免与容器实测值出现时序错位 */
   const viewH = rows ? rowsH : boxH;
-  /** 仅当内容高于可视区才滚动；能全部展示时保持静态（不播放） */
-  const play = viewH > 0 && segH > viewH + 2;
+  /** 仅当内容高于可视区且开启自动滚动时才滚动；否则保持静态（不播放） */
+  const play = auto && viewH > 0 && segH > viewH + 2;
   const copies = play ? Math.max(2, Math.ceil(viewH / segH) + 1) : 1;
   const style = {
     "--scroll-h": `${segH}px`,
@@ -87,6 +90,7 @@ export function AutoScrollList({
       className={
         "auto-scroll" +
         (boxStyle ? "" : " fill") +
+        (auto ? "" : " manual") +
         (className ? " " + className : "")
       }
       ref={wrap}

@@ -12,7 +12,6 @@ function available() {
   s.plans[0].time = "17:00";
   const r = s.robots.find((r) => r.id === "R02")!;
   r.mapVersion = 3;
-  r.calibrationVersion = 7;
   return s;
 }
 test("plan auto-generates once, receives before time, cannot start early, completes autonomously", () => {
@@ -133,7 +132,7 @@ test("configured rule controls live result and preserves original rule snapshot 
   );
 });
 
-test("point rules treat inclusive bounds as normal; empty/missing rules require review; new points remain unconfigured", () => {
+test("point rules treat inclusive bounds as normal; empty/disabled rules record without judgement; new points remain unconfigured", () => {
   let s = seed();
   const task = s.tasks.find((t) => t.id === "T009")!;
   task.stage = 6;
@@ -143,28 +142,28 @@ test("point rules treat inclusive bounds as normal; empty/missing rules require 
   assert.equal(high.results[0].abnormal, true);
   assert.ok(high.alarms.some((a) => a.notes.some((n) => n.includes("0.81"))));
   let empty = run(s, { type: "TICK", id: task.id, value: "" });
-  assert.equal(empty.results[0].status, "待复核");
+  assert.equal(empty.results[0].status, "已识别");
   assert.equal(empty.alarms.length, s.alarms.length);
   s = run(s, {
     type: "SAVE_ALARM_RULE",
     rule: { ...rulesOf(s)[0], enabled: false },
   });
   const disabled = run(s, { type: "TICK", id: task.id, value: "0.92" });
-  assert.equal(disabled.results[0].status, "待复核");
-  // 未绑定业务目标的巡检点 = 未配置告警：不判定、进复核
+  assert.equal(disabled.results[0].status, "已识别");
+  // 未绑定业务目标的巡检点 = 未配置告警：不判定（只记录结果）
   s.points.push({ ...s.points[0], id: "P-new", inspectItems: [] });
   assert.equal(rulesOf(s).find((r) => r.pointId === "P-new")?.enabled, false);
   // 告警设置来自巡检目标台账：绑定了"已开启告警"的目标即视为已配置
   s.points.push({ ...s.points[0], id: "P-bind" });
   const bound = rulesOf(s).find((r) => r.pointId === "P-bind")!;
   assert.equal(bound.enabled, true);
-  assert.equal(bound.level, "重要");
+  assert.equal(bound.level, "二级");
   assert.equal(bound.max, 0.8);
 });
 
 test("customer history additions retain task snapshots and original active task scope", () => {
   const s = seed();
-  assert.equal(s.schema, 6);
+  assert.equal(s.schema, 7);
   assert.equal(s.tasks.find(t=>t.id==="T009")!.items.length,3);
   const history=s.tasks.find(t=>t.id==="T040")!;
   assert.equal(history.index,history.items.length);
