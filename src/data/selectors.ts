@@ -138,6 +138,160 @@ export function robotQueue(s: State, r: Robot): Task[] {
   const q = queueFor(s, r.id).filter((t) => t.id !== cur?.id);
   return cur ? [cur, ...q] : q;
 }
+/**
+ * 排程粗估步长（分钟）
+ * @description 平台不掌握真实工时（只掌握电量这类可实测信息），这里给出的是**示意口径**：
+ *              按「剩余执行阶段数」与「巡检项条数」折算，供调度中心的时间轴与预计可用时间展示；
+ *              步长按「一次巡检任务在 4 小时窗口里占几成」标定，使时间轴可读；
+ *              机器人到位后以本体实际回报为准，估算偏差不作为考核依据。
+ */
+const STAGE_MIN = 8;
+const TASK_BASE_MIN = 10;
+const PER_ITEM_MIN = 3;
+const CHARGE_MIN = 45;
+/** 地图版本变化时的同步窗口（旧版按标定版本判断，该版本维度已并入地图空间版本） */
+const SYNC_MIN = 15;
+
+/**
+ * 相对当前时刻的钟点文案
+ * @param minutes 相对当前时间的分钟数
+ * @returns `HH:mm` 形式的时刻
+ */
+export const timeAt = (minutes: number) => {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + minutes);
+  return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+};
+
+/** 排程窗口：队列里一个任务 / 充电 / 同步在时间轴上占的一段 */
+export interface Window {
+  id: string;
+  kind: "task" | "charging" | "maintenance";
+  start: number;
+  end: number;
+  label: string;
+  task?: Task;
+}
+
+/**
+ * 单个任务的粗估时长（分钟）
+ * @param t 任务
+ * @returns 基础开销 + 巡检项条数折算的分钟数
+ */
+const taskMinutes = (t: Task) =>
+  TASK_BASE_MIN + (t.items?.length || 0) * PER_ITEM_MIN;
+
+/**
+ * 当前任务按剩余执行阶段折算的剩余分钟
+ * @param t 当前任务
+ * @returns 剩余分钟（至少 1 分钟，避免出现 0 长度的窗口）
+ */
+function minutesLeft(t: Task): number {
+  const remain = Math.max(1, stages.length - 1 - (t.stage || 0));
+  return remain * STAGE_MIN;
+}
+
+/**
+ * 该机器人的排程窗口
+ * @description 队列中每个任务的「预计开始」与调度中心时间轴同源（同一份 schedule()），
+ *              避免表格与时间轴出现两套时间口径
+ * @param s 状态
+ * @param r 机器人
+ * @returns 按开始时间递增的窗口列表
+ */
+export function schedule(s: State, r: Robot): Window[] {
+  const out: Window[] = [];
+  let cursor = 0;
+  const cur = currentTask(s, r);
+  if (cur) {
+    const end = minutesLeft(cur);
+    out.push({
+      id: cur.id,
+      kind: "task",
+      start: 0,
+      end,
+      label: cur.name,
+      task: cur,
+    });
+    cursor = end;
+  }
+  if (r.state === "充电") {
+    out.push({
+      id: r.id + "charge",
+      kind: "charging",
+      start: cursor,
+      end: cursor + CHARGE_MIN,
+      label: "充电窗口（估计）",
+    });
+    cursor += CHARGE_MIN;
+  }
+  const q = queueFor(s, r.id);
+  let mv = `${r.mapId}/${r.mapVersion}`;
+  for (const t of q) {
+    // 队列跨地图版本时先留一段同步窗口：机器人换图重定位后才能执行
+    const target = `${t.mapId}/${t.mapVersion}`;
+    if (mv !== target) {
+      out.push({
+        id: t.id + "sync",
+        kind: "maintenance",
+        start: cursor,
+        end: cursor + SYNC_MIN,
+        label: "地图同步窗口",
+      });
+      cursor += SYNC_MIN;
+      mv = target;
+    }
+    out.push({
+      id: t.id,
+      kind: "task",
+      start: cursor,
+      end: cursor + taskMinutes(t),
+      label: t.name,
+      task: t,
+    });
+    cursor += taskMinutes(t);
+  }
+  return out;
+}
+
+/**
+ * 任务的调度优先级（由所绑巡检目标台账推导）
+ * @description 任务自身不再带优先级字段（旧版 `Task.priority` 已随数据模型收口下线），
+ *              改由它携带的巡检点所绑**巡检目标台账**推导：任一目标为「紧急 / 高」即取高档，
+ *              全部为普通或查不到台账时按「普通」处理
+ * @param s 状态
+ * @param t 任务
+ * @returns 普通 / 高 / 紧急
+ */
+export function taskPriority(s: State, t: Task): string {
+  const ids = new Set<string>();
+  t.items.forEach((it) => {
+    if (it.targetId) ids.add(it.targetId);
+    (it.inspectItems || []).forEach((x) => ids.add(x.targetId));
+  });
+  const hit = [...ids]
+    .map((id) => (s.businessTargets || []).find((b) => b.id === id))
+    .filter(Boolean);
+  if (hit.some((b) => b!.priority === "紧急")) return "紧急";
+  if (hit.some((b) => b!.priority === "高")) return "高";
+  return "普通";
+}
+
+/**
+ * 机器人的预计可用时间文案
+ * @description 离线 / 故障 / 接管 / 维护时不做时间预估；否则按排程窗口末尾推算
+ * @param s 状态
+ * @param r 机器人
+ * @returns 可用时间文案
+ */
+export function robotAvailability(s: State, r: Robot) {
+  if (["离线", "故障", "人工接管", "维护"].includes(r.state))
+    return "待处理后评估";
+  const windows = schedule(s, r);
+  const end = windows.at(-1)?.end || 0;
+  return end ? `${timeAt(end)}（约${end}分钟后）` : "现在";
+}
+
 export const pointOf = (s: State, r: Result) =>
   s.tasks
     .find((t) => t.id === r.taskId)
