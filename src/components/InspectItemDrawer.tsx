@@ -7,20 +7,22 @@
  * @interaction 被 pages/PointEdit.tsx、pages/PointOnsite.tsx 调用
  */
 import { useEffect, useMemo, useState } from "react";
-import { Thermometer, Video } from "lucide-react";
-import { Badge, Btn, Field, Modal, Note } from "./UI";
+import { ChevronDown, ChevronRight, Thermometer, Video } from "lucide-react";
+import { Badge, Btn, Field, Modal, Note, Table } from "./UI";
 import { DeviceTree } from "./DeviceTree";
 import { useStore } from "../data/store";
 import { areaNameOf } from "../data/deviceMaster";
 import {
+  abilityFields,
   atomicActionCapability,
+  atomicActionOfAbility,
   BEHAVIOR_TYPES,
-  payloadGroups,
 } from "../data/types";
 import type {
   AtomicAction,
   AtomicActionConfig,
   BusinessTarget,
+  InspectAbility,
   InspectSpec,
   PTZ,
 } from "../data/types";
@@ -78,6 +80,11 @@ export interface InspectItemDrawerProps {
   onOpenBt: () => void;
   /** inline 模式：去掉 Modal 外壳，作为常驻面板渲染（实地采集页面用） */
   inline?: boolean;
+  /**
+   * 只渲染内容（去掉 inline 自带的标题条与底部动作条）
+   * @description 供内置页使用：标题与「保存本项 / 取消」由页面顶栏承担
+   */
+  bare?: boolean;
 }
 
 /**
@@ -93,6 +100,7 @@ export function InspectItemDrawer({
   labelOfBt,
   onOpenBt,
   inline,
+  bare,
 }: InspectItemDrawerProps) {
   const [recordingAction, setRecordingAction] = useState<AtomicAction | "">(
     draft.actions[0] || "",
@@ -188,35 +196,94 @@ export function InspectItemDrawer({
       setRecordingAction(next[0] || "");
   }
 
-  /** 选择巡检目标台账：按其巡检要求自动匹配上装与原子动作 */
+  /** 选择巡检目标台账：按其算法自动带出对应能力（能力项表格里的行） */
   function pickTarget(id: string) {
     const bt = businessTargets.find((b) => b.id === id);
-    applyActions(bt ? actionsOfTarget(bt) : [], { targetId: id });
+    const acts = bt ? actionsOfTarget(bt) : [];
+    /** 动作 → 能力参数（能在后台能力清单里对上的，就自动落一行能力项） */
+    const params = [
+      ...new Set(
+        acts
+          .map(
+            (a) =>
+              Object.entries(atomicActionOfAbility).find(
+                ([, act]) => act === a,
+              )?.[0],
+          )
+          .filter((x): x is string => !!x),
+      ),
+    ];
+    applyActions(acts, {
+      targetId: id,
+      abilities: params.map((p, i) => ({
+        id: `AB-${Date.now().toString(36)}-${i}`,
+        param: p,
+        fields: {},
+      })),
+    });
   }
 
-  /** 上装开关：开 = 记入该上装的主动作；关 = 移除该上装全部动作 */
-  function togglePayload(g: (typeof payloadGroups)[number]) {
-    const on = g.actions.some((x) => draft.actions.includes(x));
+  /** 能力项清单（本项巡检要用哪些能力） */
+  const abilities = draft.abilities || [];
+  /** 能力参数候选：取自「后台管理 › 机器人能力」两级清单里的**能力参数** */
+  const abilityParams = (s.robotAbilities || []).flatMap((k) => k.params);
+  /** 能力参数 → 能力类型（表格第二列只读带出） */
+  const kindOfAbility = (param: string) =>
+    (s.robotAbilities || []).find((k) =>
+      k.params.some((p) => p.name === param),
+    )?.name || "";
+  /**
+   * 能力项变化：同步推导原子动作（任务指令集 / 参数编排以 actions 为键）
+   * @param next 新的能力项清单
+   */
+  function applyAbilities(next: InspectAbility[]) {
     applyActions(
-      on
-        ? draft.actions.filter((x) => !g.actions.includes(x))
-        : [...new Set([...draft.actions, g.actions[0]])],
+      [
+        ...new Set(
+          next
+            .map((x) => atomicActionOfAbility[x.param])
+            .filter((x): x is AtomicAction => !!x),
+        ),
+      ],
+      { abilities: next },
     );
   }
-
-  /** 单勾某个原子动作（上装开启后的细分动作） */
-  function setAction(x: AtomicAction, checked: boolean) {
-    applyActions(
-      checked
-        ? [...new Set([...draft.actions, x])]
-        : draft.actions.filter((y) => y !== x),
+  /** 新增一行能力项（默认取第一个可用能力参数） */
+  function addAbility() {
+    const first = abilityParams[0]?.name || "";
+    applyAbilities([
+      ...abilities,
+      { id: "AB-" + Date.now().toString(36), param: first, fields: {} },
+    ]);
+  }
+  /** 先选能力类型（大类），再在其子项里挑能力参数（避免 30 项平铺） */
+  function setAbilityKind(i: number, kindName: string) {
+    const first = (s.robotAbilities || []).find((k) => k.name === kindName)
+      ?.params[0]?.name;
+    if (first) setAbilityParam(i, first);
+  }
+  /** 改某行的能力参数（换能力即清掉旧能力的特有配置） */
+  function setAbilityParam(i: number, param: string) {
+    applyAbilities(
+      abilities.map((x, j) => (j === i ? { ...x, param, fields: {} } : x)),
     );
   }
-
-  /** 已开启的上装类数（步骤②头部回显） */
-  const openedPayloads = payloadGroups.filter((g) =>
-    g.actions.some((x) => draft.actions.includes(x)),
-  ).length;
+  /** 改某行能力的特有配置项 */
+  function setAbilityField(
+    i: number,
+    key: string,
+    value: number | boolean | string,
+  ) {
+    applyAbilities(
+      abilities.map((x, j) =>
+        j === i ? { ...x, fields: { ...x.fields, [key]: value } } : x,
+      ),
+    );
+  }
+  /** 删除某行能力项 */
+  function removeAbility(i: number) {
+    applyAbilities(abilities.filter((_, j) => j !== i));
+  }
 
   const content = (
     /*
@@ -380,32 +447,98 @@ export function InspectItemDrawer({
       <section className="item-step">
         <h4 className="item-step-h">
           <i>2</i>
-          <span>明确本项需要哪些上装工作</span>
+          <span>明确本项需要哪些能力</span>
           <small className="step-tail">
-            已开 {openedPayloads} 类上装 · 原子动作 {draft.actions.length} 个
+            已选 {abilities.length} 项能力 · 原子动作 {draft.actions.length} 个
           </small>
         </h4>
-        <div className="payload-switches">
-          {payloadGroups.map((g) => {
-            const on = g.actions.some((x) => draft.actions.includes(x));
-            return (
-              <div key={g.name} className={"payload-switch" + (on ? " on" : "")}>
-                <div className="payload-switch-head">
-                  <button
-                    type="button"
-                    className={on ? "switch-btn on" : "switch-btn"}
-                    onClick={() => togglePayload(g)}
-                  >
-                    {g.name} {on ? "开" : "关"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+        {/* 能力项表格：能力参数取自「后台管理 › 机器人能力」，选完带出能力类型与特有配置 */}
+        <div className="task-toolbar">
+          <Btn primary onClick={addAbility}>
+            ＋ 新增一行
+          </Btn>
         </div>
+        <Table
+          heads={["能力类型", "能力参数", "配置", "操作"]}
+          rows={abilities.map((ab, i) => {
+            const kindName = kindOfAbility(ab.param);
+            const kindObj = (s.robotAbilities || []).find(
+              (k) => k.name === kindName,
+            );
+            return [
+            <select
+              aria-label="能力类型"
+              value={kindName || ""}
+              onChange={(e) => setAbilityKind(i, e.target.value)}
+            >
+              {(s.robotAbilities || []).map((k) => (
+                <option key={k.id} value={k.name}>
+                  {k.name}
+                </option>
+              ))}
+            </select>,
+            <select
+              aria-label="能力参数"
+              value={ab.param}
+              onChange={(e) => setAbilityParam(i, e.target.value)}
+            >
+              {(kindObj?.params || []).map((p) => (
+                <option key={p.id} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>,
+            <div className="ability-fields">
+              {(abilityFields[ab.param] || []).map((f) =>
+                f.control === "switch" ? (
+                  <label key={f.key} className="inline-filter">
+                    <input
+                      type="checkbox"
+                      checked={!!ab.fields[f.key]}
+                      onChange={(e) => setAbilityField(i, f.key, e.target.checked)}
+                    />
+                    <span>{f.label}</span>
+                  </label>
+                ) : f.control === "number" ? (
+                  <label key={f.key} className="inline-filter">
+                    <span>{f.label}</span>
+                    <input
+                      type="number"
+                      aria-label={f.label}
+                      placeholder={`请输入${f.label}`}
+                      value={
+                        ab.fields[f.key] === undefined
+                          ? ""
+                          : Number(ab.fields[f.key])
+                      }
+                      onChange={(e) =>
+                        setAbilityField(i, f.key, Number(e.target.value))
+                      }
+                    />
+                    {f.unit && <span>{f.unit}</span>}
+                  </label>
+                ) : (
+                  <Btn
+                    key={f.key}
+                    onClick={() => setAbilityField(i, f.key, "已配置")}
+                  >
+                    {f.action || f.label}
+                  </Btn>
+                ),
+              )}
+              {!(abilityFields[ab.param] || []).length && (
+                <span className="muted">—</span>
+              )}
+            </div>,
+            <Btn danger onClick={() => removeAbility(i)}>
+              删除
+            </Btn>,
+            ];
+          })}
+        />
         {!draft.actions.length && (
           <Note>
-            还没有上装参与：先选巡检目标（按其算法自动置开），或手动打开上装开关。
+            还没有能力参与：先选巡检目标，再点「＋ 新增一行」挑能力。
           </Note>
         )}
       </section>
@@ -420,7 +553,7 @@ export function InspectItemDrawer({
           <small className="step-tail">平台自动记录参数</small>
         </h4>
         {!draft.actions.length ? (
-          <Note>选好巡检目标与上装后，这里出现视频面板与操控台。</Note>
+          <Note>选择巡检目标与能力后，此处显示视频面板与操控台。</Note>
         ) : (
           <div className="item-cockpit">
             <div className="item-cockpit-left">
@@ -430,6 +563,7 @@ export function InspectItemDrawer({
                 onRecordingActionChange={setRecordingAction}
                 cfgOf={cfgOf}
                 updCfg={updCfg}
+                onPoseAt={(at) => onChange({ pose: { ...draft.pose, at } })}
               />
             </div>
             <div className="item-cockpit-right">
@@ -437,13 +571,21 @@ export function InspectItemDrawer({
                 <i>4</i>
                 <span>保存本项参数</span>
               </h4>
-              <ParamSummary draft={draft} cfgOf={cfgOf} onSave={onSave} />
+              <ParamSummary
+                draft={draft}
+                action={recordingAction}
+                cfgOf={cfgOf}
+              />
             </div>
           </div>
         )}
       </section>
     </div>
   );
+
+  // 内置页（bare）：标题与动作条搬到页面顶栏，这里只留内容
+  if (bare)
+    return <div className="field-collect-drawer-body">{content}</div>;
 
   if (inline)
     return (
@@ -545,12 +687,13 @@ function Switch({
 /** 参数总览（右栏）：实时回显当前巡检项所有已记录参数，并提供保存入口 */
 function ParamSummary({
   draft,
+  action,
   cfgOf,
-  onSave,
 }: {
   draft: InspectSpec;
+  /** 当前正在记录参数的动作；缺省取第一个动作 */
+  action?: AtomicAction | "";
   cfgOf: (a: AtomicAction) => AtomicActionConfig;
-  onSave: () => void;
 }) {
   const auxFlags = (c: AtomicActionConfig) => {
     const e = c.extra || {};
@@ -564,82 +707,82 @@ function ParamSummary({
     return on;
   };
 
+  if (!draft.actions.length)
+    return (
+      <div className="param-summary">
+        <p className="ps-empty">
+          在操控台操作后，参数将自动记录于此。
+        </p>
+      </div>
+    );
+
+  const a = (action || draft.actions[0]) as AtomicAction;
+  const c = cfgOf(a);
+  const ptz = c.ptz || draft.pose.ptz;
+  const at = c.at || draft.pose.at;
+  const aux = auxFlags(c);
   return (
     <div className="param-summary">
-      {!draft.actions.length && (
-        <p className="ps-empty">
-          勾选原子动作并在左侧操控台操作后，参数会自动汇总到这里。
-        </p>
-      )}
-      {draft.actions.map((a) => {
-        const c = cfgOf(a);
-        const ptz = c.ptz || draft.pose.ptz;
-        const aux = auxFlags(c);
-        return (
-          <div className="ps-item" key={a}>
-            <div className="ps-head">
-              <b>{a}</b>
-              <Badge>{atomicActionCapability[a]}</Badge>
-            </div>
-            <div className="ps-kv">
-              <b>水平角</b>
-              <span>{ptz.pan}°</span>
-              <b>俯仰角</b>
-              <span>{ptz.tilt}°</span>
-              <b>变倍</b>
-              <span>{ptz.zoom}</span>
-              <b>聚焦</b>
-              <span>{c.focus ?? "—"}</span>
-              <b>升降</b>
-              <span>{c.lift ?? 0}</span>
-              <b>补光</b>
-              <span>{c.light ?? 0}%</span>
-              <b>停留</b>
-              <span>{c.dwellSec ?? 5}s</span>
-              <b>预置位</b>
-              <span>{c.preset || "—"}</span>
-              {a === "采集气体" && (
-                <>
-                  <b>采集方式</b>
-                  <span>{c.gasMode ?? "泵吸式"}</span>
-                  <b>传感器</b>
-                  <span>{c.sensorKind || "—"}</span>
-                </>
-              )}
-              {a === "采集红外热像" && (
-                <>
-                  <b>发射率</b>
-                  <span>{c.emissivity ?? "—"}</span>
-                  <b>测温距离</b>
-                  <span>{c.thermalDistance ?? "—"}m</span>
-                </>
-              )}
-              {a === "录制声音" && (
-                <>
-                  <b>关注频段</b>
-                  <span>{c.soundBand || "—"}</span>
-                </>
-              )}
-              {a === "分析不安全行为" && (
-                <>
-                  <b>行为类别</b>
-                  <span>{(c.behaviorTypes || []).join(" / ") || "—"}</span>
-                </>
-              )}
-              {aux.length > 0 && (
-                <>
-                  <b>辅助</b>
-                  <span>{aux.join(" / ")}</span>
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })}
-      <div className="save-row">
-        <Btn primary onClick={onSave}>
-          保存本项
-        </Btn>
+      {/* 一份清单：只罗列当前操作记录到的参数，不按能力 / 动作分块 */}
+      <div className="ps-item">
+        <div className="ps-head">
+          <b>本项参数记录</b>
+          <Badge>{atomicActionCapability[a]}</Badge>
+        </div>
+        <div className="ps-kv">
+          <b>位置坐标</b>
+          <span>{at ? `X ${at.x} / Y ${at.y} / Z ${at.z}` : "—"}</span>
+          <b>水平角</b>
+          <span>{ptz.pan}°</span>
+          <b>俯仰角</b>
+          <span>{ptz.tilt}°</span>
+          <b>变倍</b>
+          <span>{ptz.zoom}</span>
+          <b>聚焦</b>
+          <span>{c.focus ?? "—"}</span>
+          <b>升降</b>
+          <span>{c.lift ?? 0}</span>
+          <b>补光</b>
+          <span>{c.light ?? 0}%</span>
+          <b>停留</b>
+          <span>{c.dwellSec ?? 5}s</span>
+          <b>预置位</b>
+          <span>{c.preset || "—"}</span>
+          {a === "采集气体" && (
+            <>
+              <b>采集方式</b>
+              <span>{c.gasMode ?? "泵吸式"}</span>
+              <b>传感器</b>
+              <span>{c.sensorKind || "—"}</span>
+            </>
+          )}
+          {a === "采集红外热像" && (
+            <>
+              <b>发射率</b>
+              <span>{c.emissivity ?? "—"}</span>
+              <b>测温距离</b>
+              <span>{c.thermalDistance ?? "—"}m</span>
+            </>
+          )}
+          {a === "录制声音" && (
+            <>
+              <b>关注频段</b>
+              <span>{c.soundBand || "—"}</span>
+            </>
+          )}
+          {a === "分析不安全行为" && (
+            <>
+              <b>行为类别</b>
+              <span>{(c.behaviorTypes || []).join(" / ") || "—"}</span>
+            </>
+          )}
+          {aux.length > 0 && (
+            <>
+              <b>辅助</b>
+              <span>{aux.join(" / ")}</span>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -652,19 +795,35 @@ function ControlCockpit({
   onRecordingActionChange,
   cfgOf,
   updCfg,
+  onPoseAt,
 }: {
   draft: InspectSpec;
   recordingAction: AtomicAction | "";
   onRecordingActionChange: (a: AtomicAction | "") => void;
   cfgOf: (a: AtomicAction) => AtomicActionConfig;
   updCfg: (a: AtomicAction, patch: Partial<AtomicActionConfig>) => void;
+  /** 移动后坐标回写到巡检项主视角（保存巡检项时一并落库） */
+  onPoseAt?: (at: { x: number; y: number; z: number }) => void;
 }) {
-  /** 左列子页签：云台控制（默认）/ 机器人移动 */
-  const [subTab, setSubTab] = useState<"gimbal" | "robot">("gimbal");
-
+  /** 上装 / 下装两块默认收起：点标题按钮才展开对应操控内容（一块展开后很占地方） */
+  const [openUpper, SET_OPEN_UPPER] = useState(false);
+  const [openLower, SET_OPEN_LOWER] = useState(false);
   const a = (recordingAction || draft.actions[0]) as AtomicAction;
   const c = cfgOf(a);
   const ptz = c.ptz || draft.pose.ptz;
+  /** 移动后坐标：机器人移动 / 手动设定后记录进巡检项 */
+  const at = c.at || draft.pose.at || { x: 0, y: 0, z: 0 };
+  const setAt = (v: { x: number; y: number; z: number }) => {
+    updCfg(a, { at: v, source: "cockpit" });
+    onPoseAt?.(v);
+  };
+  /** 移动按钮：按 0.5 米步进改变坐标（原型模拟机器人位移） */
+  const moveBy = (dx: number, dy: number) =>
+    setAt({
+      x: Math.round((at.x + dx) * 100) / 100,
+      y: Math.round((at.y + dy) * 100) / 100,
+      z: at.z,
+    });
 
   const setPtz = (patch: Partial<PTZ>) =>
     updCfg(a, { ptz: { ...ptz, ...patch }, source: "cockpit" });
@@ -698,26 +857,22 @@ function ControlCockpit({
         </div>
       </div>
 
-      <div className="cockpit-cols">
-        {/* 左列：云台控制（可切机器人移动） */}
+      {/* 上装块：云台状态 + 镜头控制（相机 / 云台自己的调整）；默认收起，点标题展开 */}
+      <section className="cockpit-block">
+        <button
+          type="button"
+          className={"cockpit-block-head" + (openUpper ? " on" : "")}
+          onClick={() => SET_OPEN_UPPER(!openUpper)}
+        >
+          {openUpper ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          上装 · 云台与镜头
+        </button>
+        {openUpper && (
+        <>
+        <div className="cockpit-cols">
+        {/* 云台控制：转向 / 升降 */}
         <div className="cockpit-section">
-          <div className="cockpit-tabs">
-            <button
-              className={subTab === "gimbal" ? "active" : ""}
-              onClick={() => setSubTab("gimbal")}
-            >
-              云台控制
-            </button>
-            <button
-              className={subTab === "robot" ? "active" : ""}
-              onClick={() => setSubTab("robot")}
-            >
-              机器人移动
-            </button>
-          </div>
-
-          {subTab === "gimbal" ? (
-            <>
+          <>
               <div className="cockpit-sub2">
                 <div>
                   <label className="inline-filter">
@@ -790,35 +945,6 @@ function ControlCockpit({
                 onSet={(v) => updCfg(a, { lift: v, source: "cockpit" })}
               />
             </>
-          ) : (
-            <>
-              <b>机器人移动控制</b>
-              <div className="dpad">
-                <button onClick={() => setExtra({ moveY: -1 })}>前</button>
-                <div className="dpad-mid">
-                  <button onClick={() => setExtra({ moveX: -1 })}>左</button>
-                  <button onClick={() => setExtra({ moveX: 1 })}>右</button>
-                </div>
-                <button onClick={() => setExtra({ moveY: 1 })}>后</button>
-              </div>
-              <div className="actions">
-                <button
-                  type="button"
-                  className={extraBool("emergencyStop") ? "switch-btn on" : "switch-btn"}
-                  onClick={() => setExtra({ emergencyStop: true })}
-                >
-                  急停
-                </button>
-                <button
-                  type="button"
-                  className="switch-btn"
-                  onClick={() => setExtra({ emergencyStop: false })}
-                >
-                  解除
-                </button>
-              </div>
-            </>
-          )}
         </div>
 
         {/* 中列：云台状态 */}
@@ -975,6 +1101,87 @@ function ControlCockpit({
           </div>
         </div>
       )}
+        </>
+        )}
+      </section>
+
+      {/* 下装块：机器人移动 + 位姿（移动后坐标随移动按钮记录，保存巡检项时落库） */}
+      <section className="cockpit-block">
+        <button
+          type="button"
+          className={"cockpit-block-head" + (openLower ? " on" : "")}
+          onClick={() => SET_OPEN_LOWER(!openLower)}
+        >
+          {openLower ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          下装 · 机器人移动
+        </button>
+        {openLower && (
+        <div className="cockpit-cols">
+          <div className="cockpit-section">
+            <b>移动控制</b>
+            <div className="dpad">
+              <button onClick={() => moveBy(0, 0.5)}>前</button>
+              <div className="dpad-mid">
+                <button onClick={() => moveBy(-0.5, 0)}>左</button>
+                <button onClick={() => moveBy(0.5, 0)}>右</button>
+              </div>
+              <button onClick={() => moveBy(0, -0.5)}>后</button>
+            </div>
+            <div className="actions">
+              <button
+                type="button"
+                className={
+                  extraBool("emergencyStop") ? "switch-btn on" : "switch-btn"
+                }
+                onClick={() => setExtra({ emergencyStop: true })}
+              >
+                急停
+              </button>
+              <button
+                type="button"
+                className="switch-btn"
+                onClick={() => setExtra({ emergencyStop: false })}
+              >
+                解除
+              </button>
+            </div>
+          </div>
+          {/* 位姿与移动后坐标：点位坐标先记录，保存巡检项时一并落库 */}
+          <div className="cockpit-section">
+            <b>位姿与移动后坐标</b>
+            <QuerySet
+              label="坐标 X"
+              unit="米"
+              step={0.1}
+              value={at.x}
+              onSet={(v) => setAt({ ...at, x: v })}
+            />
+            <QuerySet
+              label="坐标 Y"
+              unit="米"
+              step={0.1}
+              value={at.y}
+              onSet={(v) => setAt({ ...at, y: v })}
+            />
+            <QuerySet
+              label="坐标 Z"
+              unit="米"
+              step={0.1}
+              value={at.z}
+              onSet={(v) => setAt({ ...at, z: v })}
+            />
+            <QuerySet
+              label="机器人朝向"
+              unit="°"
+              min={-180}
+              max={180}
+              value={extraNum("heading", 0)}
+              onSet={(v) => setExtra({ heading: v })}
+            />
+          </div>
+        </div>
+        )}
+      </section>
 
       {/* 底部通栏：辅助功能 */}
       <div className="cockpit-aux">

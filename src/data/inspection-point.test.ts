@@ -37,7 +37,7 @@ const spec = (
     viewDir: "正对目标",
   },
 });
-/** 把巡检点置为可下发状态（保存会打回待验证、地图回未发布，本用例只验证指令集来源） */
+/** 把巡检点置为可下发状态（保存会打回停用、地图回未发布，本用例只验证指令集来源） */
 function enable(s: State, pointId: string) {
   s.points.find((p) => p.id === pointId)!.state = "已启用";
   s.maps.find((m) => m.id === "MAP-A03")!.state = "已发布";
@@ -60,7 +60,7 @@ test("添加巡检点：名称 + 地图 + 标定点（带定位ID）+ 多个巡�
   assert.ok(p, "巡检点应写入标定数据（任务模板 / 临时任务据此下发）");
   assert.equal(p.mapId, "MAP-A03");
   assert.equal(p.targetId, "T-NEW");
-  assert.equal(p.state, "待验证");
+  assert.equal(p.state, "停用");
   // 多个巡检项共同组成一个巡检点：名称 / 业务目标 / 机器操作内容逐项保留
   assert.equal(p.inspectItems!.length, 2);
   assert.deepEqual(p.inspectItems![0].actions, ["拍照", "采集红外热像"]);

@@ -9,6 +9,7 @@
 import type {
   State,
   DeviceAsset,
+  DeviceKind,
   Point,
   InspectItem,
   CaptureKind,
@@ -242,6 +243,42 @@ export const defaultTargetKindOfTarget = (target: string): "仪表" | "区域" =
     : "仪表";
 
 /**
+ * 设备类型 → 设备形态（缺省口径）
+ * @description 有实体形态的装置（储罐 / 泵 / 分析仪…）→ 实体设备；
+ *              区域 / 空间类目标载体（管廊 / 管线 / 罐区 / 围堰 / 池 / 地面 / 平台）→ 虚拟设备。
+ *              只在未显式指定 `deviceKind` 时兜底：新增设备 / 清单导入 / 老缓存回填三处共用
+ * @param type 设备类型（自由文本）
+ * @returns 设备形态
+ */
+export const defaultDeviceKindOfType = (type: string): DeviceKind =>
+  /管廊|管线|区域|空间|罐区|围堰|池|地面|平台/.test(type)
+    ? "虚拟设备"
+    : "实体设备";
+
+/**
+ * 设备的设备形态
+ * @description 优先取显式字段；老数据缺失时按 `type` 推导（与新增 / 导入同口径）
+ * @param d 设备
+ * @returns 设备形态
+ */
+export const deviceKindOf = (d: DeviceAsset): DeviceKind =>
+  d.deviceKind || defaultDeviceKindOfType(d.type);
+
+/**
+ * 导入文本 → 设备形态
+ * @description 导入的 Excel 可能写「实体」「虚拟」等简写；识别不出时返回 undefined，
+ *              由调用方回落到按 `type` 推导，避免把非法值写进数据
+ * @param raw 原始文本
+ * @returns 设备形态；无法识别时返回 undefined
+ */
+export const parseDeviceKind = (raw: string): DeviceKind | undefined => {
+  const v = (raw || "").trim();
+  if (/虚拟/.test(v)) return "虚拟设备";
+  if (/实体/.test(v)) return "实体设备";
+  return undefined;
+};
+
+/**
  * 采集方式 → 默认单位
  * @description 检测项表单选采集方式时自动匹配单位，避免"数值类漏填单位"：
  *              红外→℃、气体→%LEL 是采集方式自带的量纲；可见光 / 声音本身无量纲
@@ -293,6 +330,26 @@ export function areaNameOf(s: State, d: DeviceAsset): string {
   if (d.locationDesc.startsWith("一期罐区")) return "一期罐区";
   if (d.locationDesc.startsWith("装置区")) return "装置区";
   return "未分区";
+}
+
+/**
+ * 属地单位：按安装位置落到属地管理责任单位
+ * @description 告警 KPI 的「属地」维度口径：罐区归储运部，装置区按 A / B 段分属装置一部 / 二部；
+ *              设备台账（`DeviceMaster` / `Admin`）里显式维护的值优先
+ * @param d 设备主数据
+ * @returns 属地单位名称；识别不出时为空串（统计时归入「未指定」）
+ */
+export function territoryOfDevice(
+  d: Pick<DeviceAsset, "locationDesc" | "territory">,
+): string {
+  if (d.territory) return d.territory;
+  const at = (prefix: string, unit: string) =>
+    d.locationDesc.startsWith(prefix) ? unit : "";
+  return (
+    at("装置区 A 段", "装置一部") ||
+    at("装置区 B 段", "装置二部") ||
+    at("一期罐区", "储运部")
+  );
 }
 
 /**

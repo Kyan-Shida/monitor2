@@ -9,6 +9,7 @@ import { mapVer } from "../data/versionLabel";
 import { go } from "../data/navigation";
 import { Badge, Btn, Panel, Table, Note } from "./UI";
 import { ObjectLink } from "./Business";
+import { RoutePreview } from "./RoutePreview";
 import { stageOf, fmtTime, queueFor } from "../data/selectors";
 import { archiveIdOf } from "../data/deviceMaster";
 import type { PointActionPlan, Snapshot, Task } from "../data/types";
@@ -184,6 +185,11 @@ export function TaskDetailPanel({
             </dd>
           </dl>
         </Panel>
+        {/* 任务路线图：按任务快照的点位顺序沿父线绘制（与巡检路线预览共用同一实现） */}
+        <RoutePreview
+          map={s.maps.find((m) => m.id === t.mapId)}
+          stops={t.items}
+        />
       </div>
       {/* 派单历史：就地展示该任务的选择内容与下发情况，随任务状态改变 */}
       <Panel title="派单历史">

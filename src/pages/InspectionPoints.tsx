@@ -55,7 +55,7 @@ export function InspectionPoints({ id }: { id?: string }) {
    */
   const regions = ["全部", ...deviceTreeRegions(s)];
   const deviceNames = ["全部", ...Array.from(new Set((s.devices || []).map((d) => d.name)))];
-  /** 巡检点状态机真实取值只有两态：已启用 / 停用（待验证等属于过渡态，不在筛选维度） */
+  /** 巡检点状态只有两态：已启用 / 停用（原「待验证 / 待重新验证」过渡态已下线，不再作为筛选维度） */
   const stateNames = ["全部", "已启用", "停用"];
   /**
    * 筛选值兜底：筛选态存在 sessionStorage（`view:ip.*`），可能残留已不存在的选项

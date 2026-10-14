@@ -7,7 +7,6 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard,
   Workflow,
-  FileCheck,
   MapPinned,
   BarChart3,
   Settings,
@@ -52,6 +51,7 @@ import {
   CalendarDays,
   Users,
   Route,
+  Send,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -70,10 +70,12 @@ import { useStore } from "./data/store";
 import { canSee, roleOf, roles } from "./data/roles";
 import { Maps } from "./pages/Maps";
 import { MapDetail } from "./pages/MapDetail";
+import { MapCalibrate } from "./pages/MapCalibrate";
 import { SpaceManage } from "./pages/SpaceManage";
 import { BusinessTargets } from "./pages/BusinessTargets";
 import { InspectionPoints } from "./pages/InspectionPoints";
 import { PointEdit } from "./pages/PointEdit";
+import { InspectItemEdit } from "./pages/InspectItemEdit";
 import { PointOnsite } from "./pages/PointOnsite";
 import { Annotation } from "./pages/Annotation";
 import { Planning } from "./pages/Planning";
@@ -82,12 +84,16 @@ import { DispatchDesk } from "./pages/DispatchDesk";
 import { Scheduling } from "./pages/Scheduling";
 import { Execution, ExecutionMonitor } from "./pages/Execution";
 import { Results, Alarms } from "./pages/Results";
+import { AlarmClasses } from "./pages/AlarmClasses";
+import { AlarmSettings } from "./pages/AlarmSettings";
+import { AlarmPush } from "./pages/AlarmPush";
 import { Operations } from "./pages/Operations";
 import { Supporting } from "./pages/Supporting";
 import { Btn, Modal, Note } from "./components/UI";
 import { FeedbackReview } from "./components/FeedbackReview";
 import { PageTabs } from "./components/PageTabs";
 import { AlarmCenter } from "./components/AlarmCenter";
+import { NotificationCenter } from "./components/NotificationCenter";
 import { ObjectDetails } from "./pages/ObjectDetails";
 import { DeviceArchive } from "./pages/DeviceArchive";
 import { DeviceMaster } from "./pages/DeviceMaster";
@@ -95,7 +101,7 @@ import { Admin } from "./pages/Admin";
 import { AlgoTemplates } from "./pages/AlgoTemplates";
 import { AlarmTemplates } from "./pages/AlarmTemplates";
 import { Requirements } from "./pages/Requirements";
-import { RobotPayloads } from "./pages/RobotPayloads";
+import { RobotAbilities } from "./pages/RobotAbilities";
 import { RobotNew } from "./pages/RobotNew";
 import { MonitorCockpit } from "./pages/MonitorCockpit";
 import { DispatchCockpit } from "./pages/DispatchCockpit";
@@ -108,7 +114,7 @@ const icons = [
   LayoutDashboard,
   Workflow,
   Split,
-  FileCheck,
+  BellRing,
   MapPinned,
   SlidersHorizontal,
   Bot,
@@ -128,6 +134,9 @@ const pageIcons: Record<string, LucideIcon> = {
   results: FileSearch,
   archive: Archive,
   alarms: BellRing,
+  "alarm-classes": Layers,
+  "alarm-settings": SlidersHorizontal,
+  "alarm-push": Send,
   metrics: LineChart,
   report: FileText,
   robots: Bot,
@@ -168,7 +177,7 @@ const pageIcons: Record<string, LucideIcon> = {
  */
 const keywordPages: Record<string, string[]> = {
   异常: ["alarms"],
-  告警: ["alarms"],
+  告警: ["alarms", "alarm-classes", "alarm-settings", "alarm-push"],
   失败: ["alarms", "execution"],
   离线: ["robots"],
   低电量: ["robots"],
@@ -257,8 +266,8 @@ export default function App() {
   const backName = backTarget
     ? routeMeta.find((x) => x.id === backTarget)?.name || backTarget
     : "";
-  // 驾驶舱大屏：独立窗口形态，不套用后台外壳（侧边栏 / 顶栏 / 中心 Tab）
-  if (["bigscreen","overview","screen"].includes(page)) return <CockpitScreen key={page} initial={page === "screen" ? "screen" : "overview"} />;
+  // 大屏：独立窗口形态，不套用后台外壳（侧边栏 / 顶栏 / 中心 Tab）
+  if (["bigscreen","overview","screen","video"].includes(page)) return <CockpitScreen key={page} initial={page === "screen" ? "screen" : page === "video" ? "video" : "overview"} />;
   /** 权限守卫：页面不在当前角色可见范围时不渲染内容 */
   const allowed = canSee(role, meta.id, meta.group);
   let body;
@@ -281,13 +290,19 @@ export default function App() {
     body = <Operations page={page} id={id} tab={tab} />;
   // 巡检目标台账：仪表 + 巡检要求 + 算法 + 阈值 + 判断标准（巡检项从这里选"检什么、怎么判"）
   else if (page === "points") body = <BusinessTargets />;
-  // 空间 / 区域（非装置）类目标：复用目标台账页，预置为空间与区域视图
+  // 空间 / 区域（非装置）类目标：复用目标台账页，预置为「虚拟设备」筛选视图
   else if (page === "points-space") body = <BusinessTargets tab="space" />;
+  // 巡检目标台账 › 添加 / 编辑（内置页）：台账设置弹窗装不下，改为整页
+  else if (page === "business-target-edit")
+    body = <BusinessTargets mode="edit" id={id} key={id || "new"} />;
   // 巡检点管理：已配置巡检点列表 +「添加巡检点」；id 传入时按该地图预筛
   else if (page === "annotation") body = <InspectionPoints id={id} />;
   // 添加 / 编辑巡检点（内置页）：名称 + 地图 + 标定点 + 多个巡检项
   else if (page === "point-edit")
     body = <PointEdit id={id === "new" ? undefined : id} />;
+  // 添加 / 编辑巡检项（内置页）：从「添加 / 编辑巡检点」页的巡检项列表进入（原弹窗改为整页）
+  else if (page === "inspect-item-edit")
+    body = <InspectItemEdit id={id} key={id || "new"} />;
   // 现场采集（跑图）新增巡检点（内置页）：巡检点新增的唯一入口；id 可带机器人（深链）
   else if (page === "point-onsite") body = <PointOnsite id={id} />;
   // 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证
@@ -295,6 +310,8 @@ export default function App() {
   else if (page === "maps") body = <Maps id={id} tab={tab} />;
   // 地图详情内置页：列表「详情」进入，内部抽屉（地图下发）
   else if (page === "map-detail") body = <MapDetail id={id} tab={tab} />;
+  // 地图标定工作台（内置页）：像素地图打点、连线成路网（地图卡片「编辑」进入）
+  else if (page === "map-calibrate") body = <MapCalibrate id={id} key={id} />;
   // 空间管理（资源与地图 › 空间）：全局坐标系配准、全局↔局部换算、地图拓扑与版本校验
   else if (page === "space") body = <SpaceManage />;
   // 设备主数据（阶段③）：清单导入 / 启停 / 是否巡检的后台，沿用 equipment 路由
@@ -309,8 +326,8 @@ export default function App() {
   else if (page === "alarm-templates") body = <AlarmTemplates />;
   // 后台管理：巡检要求管理（平台「看什么、怎么判」标准表达的唯一维护入口，供目标台账引用）
   else if (page === "requirements") body = <Requirements />;
-  // 后台管理：机器人上装能力（上装 → 采集方式 → 原子动作 的上游主数据）
-  else if (page === "payloads") body = <RobotPayloads />;
+  // 后台管理：机器人能力（两级清单：能力类型 → 能力参数；巡检项能力项的候选来源）
+  else if (page === "payloads") body = <RobotAbilities />;
   // 新增机器人（内置表单页）：编码 / 机型 / 能力 / 约束，提交即接入台账
   else if (page === "robot-new") body = <RobotNew />;
   else if (
@@ -334,6 +351,12 @@ export default function App() {
     body = <Results page={page} id={id} />;
   else if (["alarms", "alarm", "alarm-detail"].includes(page))
     body = <Alarms page={page} id={id} />;
+  // 告警管理 › 告警类别：告警分类主数据（分类名称 / 告警大类 / 是否启用）
+  else if (page === "alarm-classes") body = <AlarmClasses />;
+  // 告警管理 › 告警设置：一个台账一个告警设置（可含多个告警项），与巡检目标台账同一份数据
+  else if (page === "alarm-settings") body = <AlarmSettings />;
+  // 告警管理 › 推送设置：推送人员名单 + 区域 / 属地 / 设备绑定范围
+  else if (page === "alarm-push") body = <AlarmPush />;
   else if (page === "replay") body = <ObjectDetails page="replay" id={id} />;
   else body = <Supporting page={page} />;
   /** 搜索关键词命中的业务页面 */
@@ -385,7 +408,7 @@ export default function App() {
             }
             // 搜索过滤
             const flatPages = bySub.get("__flat__") || [];
-            // 不做字典排序：保持 navigation.ts 中的业务声明顺序（标准与模板 → 任务与计划 → 调度 → 执行）
+            // 不做字典排序：保持 navigation.ts 中的业务声明顺序（标准与路线 → 任务与计划 → 调度 → 执行）
             const subGroups = [...bySub.entries()].filter(
               ([k]) => k !== "__flat__",
             );
@@ -608,8 +631,10 @@ export default function App() {
             <button title="重置演示" onClick={() => R(true)}>
               <RotateCcw size={17} />
             </button>
-            {/* 告警入口：原消息铃铛位置，点击打开告警弹窗（可拖动悬浮、可最小化） */}
+            {/* 告警入口：点击打开告警弹窗 */}
             <AlarmCenter />
+            {/* 通知中心：系统消息 / 任务通知 / 审批提醒 合并下拉 */}
+            <NotificationCenter />
             {/* 用户下拉菜单：头像 + 姓名角色，点击展开角色切换与退出登录（原型阶段代替真实登录） */}
             <div className="user-menu-wrap" ref={userRef}>
               <button

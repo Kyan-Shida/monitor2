@@ -54,8 +54,11 @@ test("覆盖率按设备清单口径：清单要求但未落位的检测目标�
     .flatMap((d) => d.items.filter((it) => it.inspect));
   assert.equal(listed.length, 12);
   assert.equal(metricValue(s, "coverage"), 91.7);
-  // 厂区筛选后分母与分子同范围（设备清单也按厂区裁剪）
-  assert.equal(metricValue(scopedState(s, "一期罐区"), "coverage"), 91.7);
+  // 厂区筛选后分母与分子同范围（设备清单也按厂区裁剪）：
+  // 装置区两台管廊设备（2 个气体目标）不计入一期罐区 → 一期罐区 10 个目标中 9 个已落位
+  assert.equal(metricValue(scopedState(s, "一期罐区"), "coverage"), 90);
+  // 装置区视角：2 个目标都已落位（P007 / P010 挂在装置区地图 MAP-B01 上）
+  assert.equal(metricValue(scopedState(s, "装置区"), "coverage"), 100);
   // 把清单里"尚未落位且不打算巡检"的目标关闭 → 它退出分母，覆盖率回到 100%
   s = run(s, {
     type: "SET_INSPECT_FLAG",

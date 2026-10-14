@@ -274,7 +274,7 @@ export function Supporting({ page }: { page: string }) {
               <input value={bid} onChange={(e) => B(e.target.value)} />
             </Field>
             <Note>
-              相同来源和业务编号返回同一任务，不重复生成。目标引用默认巡检模板。
+              相同来源和业务编号返回同一任务，不重复生成。目标引用默认巡检路线。
             </Note>
             <Btn
               primary

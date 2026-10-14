@@ -36,7 +36,12 @@ export interface Point {
   unit: string;
   kind: string;
   requirement: string;
-  state: "待标注" | "待验证" | "已启用" | "待重新验证" | "停用";
+  /**
+   * 巡检点状态：只有两态 —— 已启用（验证通过、可下发）/ 停用（未启用或验证未通过）
+   * @description 原「待标注 / 待验证 / 待重新验证」属过渡态，已收敛：保存 / 标注 / 验证失败 /
+   *              变更确认一律落「停用」，人工「启用」或自主验证通过后转「已启用」
+   */
+  state: "已启用" | "停用";
   /** 地图内相对坐标（百分比，仅用于底图展示投影，非权威定位） */
   x: number;
   y: number;
@@ -83,6 +88,12 @@ export interface Candidate {
   world?: { x: number; y: number; z: number };
   state: "待确认" | "已确认" | "已剔除";
   pointId?: string;
+  /** 点类型（标定工作台：停靠点 / 充电点 / 待机点 / 观察点） */
+  pointType?: string;
+  /** 楼层设置（标定工作台） */
+  floor?: number;
+  /** 楼层连接点（标定工作台） */
+  floorLink?: number;
   /** 标定点来源（地图导入 / 平台新增） */
   source?: MapPointSource;
   /** 地图自带的外部定位ID（source = 地图导入 时随文件带入） */
@@ -146,6 +157,97 @@ export interface MapAsset {
   image?: string;
   /** 最近更新时间（建图 / 修订 / 定版 / 下发定版等变更时刷新，用于列表「更新时间」列） */
   updatedAt?: string;
+  /** 路网（标定工作台：人工在像素地图上打点、连线形成的路线） */
+  roadnet?: Roadnet;
+}
+
+/**
+ * 路网线（标定工作台「元素浏览 › 线 / 弧」）
+ * @description 把已打的点连成路线：直线取 2 点，弧取 ≥ 3 点按序连线
+ */
+export interface RoadnetPath {
+  id: string;
+  name: string;
+  kind: "直线" | "弧";
+  /** 依次经过的点 id（首尾即「起点 ID / 终点 ID」） */
+  pointIds: string[];
+  /** 高级参数（速度 / 避障 / 道路等，在标定工作台可改） */
+  props?: RoadnetPathProps;
+}
+
+/** 路网线的高级参数（缺省值见 `DEFAULT_PATH_PROPS`，与参考设计一致） */
+export interface RoadnetPathProps {
+  /** 障碍物检测 */
+  avoidObstacle: boolean;
+  /** 楼层设置 */
+  floor: number;
+  /** 最大角速度 */
+  maxAngularSpeed: number;
+  /** 最小角速度 */
+  minAngularSpeed: number;
+  /** 最大前进速度 */
+  maxForwardSpeed: number;
+  /** 最小前进速度 */
+  minForwardSpeed: number;
+  /** 最大后退速度 */
+  maxBackwardSpeed: number;
+  /** 最小后退速度 */
+  minBackwardSpeed: number;
+  /** 避障模式：停障 / 绕障 */
+  avoidMode: string;
+  /** 宽窄道设置：宽道 / 窄道 */
+  widthMode: string;
+  /** 道路选择：正常路面 / 坡道 */
+  roadType: string;
+  /** 起点到终点：前进 / 后退 */
+  forwardDir: string;
+  /** 终点到起点：前进 / 后退 */
+  backwardDir: string;
+}
+
+/** 线 / 弧高级参数缺省值 */
+export const DEFAULT_PATH_PROPS: RoadnetPathProps = {
+  avoidObstacle: true,
+  floor: 0,
+  maxAngularSpeed: 0.6,
+  minAngularSpeed: 0,
+  maxForwardSpeed: 0.6,
+  minForwardSpeed: 0.1,
+  maxBackwardSpeed: 0.3,
+  minBackwardSpeed: 0.1,
+  avoidMode: "停障",
+  widthMode: "宽道",
+  roadType: "正常路面",
+  forwardDir: "前进",
+  backwardDir: "前进",
+};
+
+/**
+ * 地图路网：线 / 弧
+ * @description 标定工作台的「点」= 该图的**定位点**（`mapCalibrations.targets`，与现场采集同源），
+ *              故路网只存线 / 弧；线的两端用定位点 id 引用，保证"地图上的点"全平台只有一份
+ */
+export interface Roadnet {
+  paths: RoadnetPath[];
+}
+
+/**
+ * 地图数据包（机器人扫描回传的原始产物，**还不是地图**）
+ * @description 「新增地图」由在线机器人扫描并回传数据包；数据包在地图列表中以卡片展示，
+ *              经「编辑」（命名 / 定区域）后才落为正式地图（`MapAsset`）
+ */
+export interface MapPacket {
+  id: string;
+  /** 数据包名称（未编辑前为占位名，如 `地图信息-01-R01`） */
+  name: string;
+  /** 采集机器人 */
+  robotId: string;
+  /** 接收完成时间 */
+  at: string;
+  /** 点云预览（缺省用示例底图） */
+  image?: string;
+  /** 来源说明 */
+  source: string;
 }
 
 /* ── 以下为「地图 → 巡检任务」链路改造新增类型（阶段①~⑧） ───────────── */
@@ -171,6 +273,12 @@ export interface InspectSpec {
   targetId: string;
   /** 机器操作内容：原子动作集合 */
   actions: AtomicAction[];
+  /**
+   * 能力项清单（机器操作内容的来源）：每项 = 一个能力参数 + 其特有配置
+   * @description `actions` 由能力推导（见 `atomicActionOfAbility`），仍作为任务指令集与
+   *              参数编排（`actionConfigs`）的键。
+   */
+  abilities?: InspectAbility[];
   /** 机器操作参数：云台 / 观察方向 / 补光 / 升降 / 停留 / 避障 / 预置位（共享默认视角） */
   pose: PointActionPlan;
   /**
@@ -209,6 +317,11 @@ export interface AtomicActionConfig {
   viewDir?: string;
   /** 云台预置位 */
   preset?: string;
+  /**
+   * 移动后坐标（控制机器人移动后记录的平台坐标，米）
+   * @description 巡检项保存时一并落库：机器人先走到 / 挪到这个位置，再做云台与镜头动作
+   */
+  at?: { x: number; y: number; z: number };
   /**
    * 镜头对焦距离（PT-03：常用上装参数提升为结构化字段，避免 key 名各写各的）。
    * @description 口径：以下上装参数均为**粗参考**，机器人到场后由本体本地算法微调对准。
@@ -283,6 +396,119 @@ export interface RobotPayload {
   state: "启用" | "停用";
 }
 
+/**
+ * 机器人能力（后台管理 › 机器人能力）：**两级清单** —— 能力类型 → 能力参数
+ * @description 巡检项的「能力项」从能力参数里选（见 `InspectAbility`）：
+ *              一条能力 = 一个能力参数 + 该参数特有的配置项（见 `abilityFields`）；
+ *              能力参数 → 原子动作的换算见 `atomicActionOfAbility`（任务指令集据此生成）。
+ */
+export interface RobotAbilityParam {
+  id: string;
+  /** 能力参数名（如 红外识别 / 高清识别 / 声纹采集） */
+  name: string;
+  /** 适用机型（留空 = 不限） */
+  models?: DeviceType[];
+  /** 启停（缺省 = 启用）：停用后不再作为巡检项能力项的可选项 */
+  state?: "启用" | "停用";
+}
+export interface RobotAbilityKind {
+  id: string;
+  /** 能力类型（父级，如 表计识别能力 / 充电房能力） */
+  name: string;
+  /** 该类型下的能力参数（子级） */
+  params: RobotAbilityParam[];
+}
+
+/** 能力项的附加配置项形态：开关 / 数字（带查询与设置）/ 只挂一个动作按钮 */
+export type AbilityFieldControl = "switch" | "number" | "action";
+/** 能力项的一个附加配置项（不同能力要配的东西不一样） */
+export interface AbilityField {
+  key: string;
+  label: string;
+  control: AbilityFieldControl;
+  unit?: string;
+  /** `control = action` 时的按钮文案（原型里点一下即记录） */
+  action?: string;
+}
+
+/**
+ * 能力参数 → 附加配置项
+ * @description 例：红外识别配「拍照纠正 / 云台复位 / 红外补偿距离 / 红外识别区域」；
+ *              可见光实况识别配「云台复位 / 持续时长」。未列出的能力没有额外配置项。
+ */
+export const abilityFields: Record<string, AbilityField[]> = {
+  红外识别: [
+    { key: "photoCorrect", label: "拍照纠正", control: "switch" },
+    { key: "ptzReset", label: "云台复位", control: "switch" },
+    { key: "irOffsetCm", label: "红外补偿距离", control: "number", unit: "cm" },
+    {
+      key: "region",
+      label: "红外识别区域",
+      control: "action",
+      action: "红外识别区域",
+    },
+  ],
+  可见光实况识别: [
+    { key: "ptzReset", label: "云台复位", control: "switch" },
+    { key: "durationSec", label: "持续时长", control: "number", unit: "s" },
+  ],
+  高清识别: [
+    { key: "photoCorrect", label: "拍照纠正", control: "switch" },
+    { key: "ptzReset", label: "云台复位", control: "switch" },
+  ],
+  "视频片段识别(4s)": [
+    { key: "ptzReset", label: "云台复位", control: "switch" },
+    { key: "durationSec", label: "持续时长", control: "number", unit: "s" },
+  ],
+  声纹采集: [
+    { key: "ptzReset", label: "云台复位", control: "switch" },
+    { key: "durationSec", label: "采集时长", control: "number", unit: "s" },
+  ],
+  局部放电检测: [
+    { key: "ptzReset", label: "云台复位", control: "switch" },
+    { key: "sensitivity", label: "灵敏度", control: "number", unit: "%" },
+  ],
+  声学成像泄漏检测: [
+    { key: "ptzReset", label: "云台复位", control: "switch" },
+    { key: "gain", label: "增益", control: "number" },
+  ],
+  甲烷遥测: [
+    { key: "ptzReset", label: "云台复位", control: "switch" },
+    { key: "distanceM", label: "遥测距离", control: "number", unit: "m" },
+  ],
+};
+
+/**
+ * 能力参数 → 原子动作
+ * @description 巡检项的动作集合由所选能力推导（任务类型 / 指令集据此生成）；
+ *              没有对应动作的能力（如「充电桩上电」）只记录配置，不产生采集动作。
+ */
+export const atomicActionOfAbility: Record<string, AtomicAction> = {
+  红外识别: "采集红外热像",
+  高清识别: "拍照",
+  可见光实况识别: "拍照",
+  "视频片段识别(4s)": "录像片段",
+  "视频片段识别(15s)": "录像片段",
+  "视频片段识别(30s)": "录像片段",
+  声纹采集: "录制声音",
+  局部放电检测: "录制声音",
+  声学成像泄漏检测: "采集气体",
+  甲烷遥测: "采集气体",
+};
+
+/**
+ * 巡检项的一项能力（机器操作内容的来源）
+ * @description 能力参数取自「后台管理 › 机器人能力」；`fields` 存该能力特有的配置值
+ *              （键见 `abilityFields[param]`）。
+ */
+export interface InspectAbility {
+  id: string;
+  /** 能力参数名 */
+  param: string;
+  /** 该能力特有的配置值 */
+  fields: Record<string, number | boolean | string>;
+}
+
 /** 算法部署位置：云端（平台算力）/ 本体（机器人本体算力） */
 export const algoDeploys = ["云端", "本体"] as const;
 export type AlgoDeploy = (typeof algoDeploys)[number];
@@ -317,6 +543,30 @@ export interface AlgoConfig {
   state: "启用" | "停用";
 }
 
+/**
+ * 算法数据库（平台侧）
+ * @description 「后台管理 › 算法」**不手写算法**：厂区只从这份平台库里**勾选启用**，
+ *              启用结果写进 `State.algoConfigs`（列表展示的就是厂区已勾选的那批）。
+ *              库条目由平台侧同步维护，页面只读。
+ */
+export const ALGO_LIBRARY: AlgoConfig[] = [
+  { id: "ALG-01", name: "表计读数识别 v1.2", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-01-27 22:42:05", state: "启用" },
+  { id: "ALG-02", name: "红外热像温升分析 v1.3", deploy: "本体", adapt: ["红外测温"], updatedAt: "2026-01-22 09:15:31", state: "启用" },
+  { id: "ALG-03", name: "红外热像区域测温", deploy: "本体", adapt: ["红外测温"], updatedAt: "2026-01-18 14:03:12", state: "启用" },
+  { id: "ALG-04", name: "气体浓度判读 v1.1", deploy: "云端", adapt: ["气体检测"], updatedAt: "2026-01-15 10:21:48", state: "启用" },
+  { id: "ALG-05", name: "阀位 / 开关状态判别 v1.4", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-01-12 16:58:20", state: "启用" },
+  { id: "ALG-06", name: "液滴 / 油渍分割 v2", deploy: "云端", adapt: ["缺陷识别"], updatedAt: "2026-01-09 11:07:33", state: "启用" },
+  { id: "ALG-07", name: "外观缺陷检测 v1.0", deploy: "云端", adapt: ["缺陷识别"], updatedAt: "2026-01-06 08:44:02", state: "启用" },
+  { id: "ALG-08", name: "设备异响识别 v0.9", deploy: "本体", adapt: ["声纹识别"], updatedAt: "2025-12-28 19:12:57", state: "启用" },
+  { id: "ALG-09", name: "多模态融合识别", deploy: "云端", adapt: [], updatedAt: "2025-12-25 13:30:11", state: "启用" },
+  { id: "ALG-10", name: "局部放电识别 v1.0", deploy: "本体", adapt: ["声纹识别"], updatedAt: "2026-02-02 09:12:40", state: "启用" },
+  { id: "ALG-11", name: "液位读数识别 v1.2", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-02-01 15:36:22", state: "启用" },
+  { id: "ALG-12", name: "渗漏 / 跑冒滴漏识别 v1.1", deploy: "本体", adapt: ["缺陷识别"], updatedAt: "2026-01-30 10:05:18", state: "启用" },
+  { id: "ALG-13", name: "红外温差趋势分析 v1.1", deploy: "云端", adapt: ["红外测温"], updatedAt: "2026-01-29 17:41:09", state: "启用" },
+  { id: "ALG-14", name: "人员聚集识别 v1.0", deploy: "本体", adapt: ["行为识别"], updatedAt: "2026-01-26 08:22:45", state: "启用" },
+  { id: "ALG-15", name: "甲烷遥测反演 v0.8", deploy: "云端", adapt: ["气体检测"], updatedAt: "2026-01-24 20:14:03", state: "启用" },
+];
+
 /** 点位级机器人动作编排（阶段⑥：解决"到得了之后怎么看"） */
 export interface PointActionPlan {
   ptz: PTZ;
@@ -332,6 +582,8 @@ export interface PointActionPlan {
   viewDir?: string;
   /** 云台预置位 */
   preset?: string;
+  /** 移动后坐标（控制机器人移动后记录的平台坐标，米）：巡检项保存时一并落库 */
+  at?: { x: number; y: number; z: number };
   /**
    * 逐项取景覆盖：一个停靠位有多个朝向差异大的目标时，按检测项覆盖主视角。
    * @description 缺省共用主视角（大多数情况一次停靠即可拍全）
@@ -421,7 +673,7 @@ export interface InspectItem {
    * 检测项分类
    * @description 仪表＝有形表计（可读数 / 有量纲，如出口压力表）；区域＝空间范围（罐壁 / 管廊 / 地面）。
    *              与巡检目标台账的 `targetKind` 同口径：检测项增删改后同步到台账，
-   *              供「巡检目标台账」按装置 / 空间与区域归类。缺省按「仪表」处理。
+   *              供「巡检目标台账」按设备形态（实体设备 / 虚拟设备）归类。缺省按「仪表」处理。
    */
   targetKind?: "仪表" | "区域";
   /** 采集方式 */
@@ -444,6 +696,20 @@ export interface Area {
   id: string;
   name: string;
 }
+
+/**
+ * 属地单位（设备主数据的「属地」口径）
+ * @description 属地主数据的**初始值**：运行时以 `State.territories` 为准，
+ *              可在「后台管理 › 工厂基础数据 › 属地配置」增删改；
+ *              设备台账下拉、告警 KPI 属地维度、告警推送范围都取同一份口径
+ */
+export const TERRITORY_UNITS = [
+  "储运部",
+  "装置一部",
+  "装置二部",
+  "安全环保部",
+] as const;
+export type TerritoryUnit = (typeof TERRITORY_UNITS)[number];
 
 /**
  * 仪表：实际被巡检的资产对象
@@ -532,10 +798,81 @@ export const ALARM_LEVEL_DESC: Record<AlarmLevel, string> = {
   三级: "提示：识别异常 / 轻微超限，记录并纳入观察",
 };
 /**
- * 告警设置（**整个平台唯一的告警配置入口**，挂在巡检目标台账上）
- * @description 巡检点 / 点位不提供告警配置：巡检点的判定直接复用所绑业务目标的
+ * 告警大类（告警管理 › 告警类别）
+ * @description 业务预警 = 设备 / 环境类判定异常；机器人预警 = 机器人本体事件。
+ *              与告警事件的分类（业务 / 机器人）同源，见 ALARM_MAIN_OF_CATEGORY
+ */
+export const ALARM_CLASS_MAINS = ["业务预警", "机器人预警"] as const;
+export type AlarmClassMain = (typeof ALARM_CLASS_MAINS)[number];
+/** 告警事件分类 → 告警大类：告警记录筛选与告警类别共用同一套口径 */
+export const ALARM_MAIN_OF_CATEGORY: Record<string, AlarmClassMain> = {
+  业务: "业务预警",
+  机器人: "机器人预警",
+};
+/**
+ * 告警类别（告警管理 › 告警类别）
+ * @description 平台维护「告警分类名称 + 告警大类 + 是否启用」的主数据：
+ *              启用的分类是「告警设置 › 告警类型」下拉与「告警记录 › 分类筛选」的数据源
+ */
+export interface AlarmClass {
+  id: string;
+  /** 分类名称（业务预警：环境安全 / 生产运行 / 人员与作业；机器人预警：下装 / 上装） */
+  name: string;
+  /** 告警大类：业务预警 / 机器人预警 */
+  main: AlarmClassMain;
+  /** 是否启用：停用后不再出现在告警设置的可选类型里 */
+  enabled: boolean;
+  updatedAt?: string;
+}
+/**
+ * 告警项的「告警分类」（只属于告警项自身的两档枚举，与「告警类别」的大类无关）
+ * @description 普通预警 = 数值 / 状态类判定（仪表读数、阀位等）；
+ *              环境预警 = 环境识别类判定（气体、红外、声纹、AI 行为）
+ */
+export const ALARM_ITEM_KINDS = ["普通预警", "环境预警"] as const;
+export type AlarmItemKind = (typeof ALARM_ITEM_KINDS)[number];
+
+/**
+ * 告警项（告警管理 › 告警设置 › 告警配置项）
+ * @description 字段与巡检目标台账「3、告警规则」一致：一个告警设置可挂多条告警项，
+ *              第一条与台账的判定口径（judge / min / max / expected）同源，双向同步
+ */
+export interface AlarmItem {
+  id: string;
+  /** 告警分类：普通预警 / 环境预警（按目标类型自动带出，可改） */
+  category: AlarmItemKind;
+  /** 环境识别分类：环境 / 区域类目标的识别细分（如 气体浓度 / 红外测温 / 声纹）；仪表类为空 */
+  envKind?: string;
+  /** 告警等级：一级 / 二级 / 三级 */
+  level: AlarmLevel;
+  /** 判断类型：数值范围 / 期望状态 */
+  judge: JudgeType;
+  /** 判断值：期望状态类使用（如 开启） */
+  value?: string;
+  /** 起始值：数值范围类的下限（含） */
+  from?: number;
+  /** 结束值：数值范围类的上限（含） */
+  to?: number;
+  unit?: string;
+  /** 异常名称：触发后写入告警事件的异常名 */
+  abnormalName: string;
+  /** 声光报警持续时长（秒），0 = 不启动 */
+  alarmSeconds: number;
+  /**
+   * 引用的告警模板（后台管理 › 告警模板管理）
+   * @description 选中即带出判断类型 / 阈值 / 单位 / 等级 / 声光报警（一处维护、多点引用），
+   *              留空 = 手填内容字段；第一条（主告警项）的模板同步为台账 `BusinessAlarm.templateId`，
+   *              因此台账的「告警规则来源」由主项决定，不再单独维护
+   */
+  templateId?: string;
+}
+/**
+ * 告警设置（挂在巡检目标台账上，一个台账一条）
+ * @description 维护入口有两个且是**同一份数据**：巡检目标台账「3、告警规则」与
+ *              「告警管理 › 告警设置」，改任一处另一处同步生效。
+ *              巡检点 / 点位不提供告警配置：巡检点的判定直接复用所绑业务目标的
  *              阈值（`judge/min/max/expected`）与这里的设置（等级 / 通知 / 引用模板）。
- *              **平台没有「告警开关」**：判定异常即告警；要停止判定只能关台账的「是否巡检」
+ *              `enabled` 是平台唯一的「告警开关」：停用后该台账只记录结果、不做判定
  */
 export interface BusinessAlarm {
   /**
@@ -551,7 +888,7 @@ export interface BusinessAlarm {
   /** 通知对象（岗位 / 角色），随告警记录一并带出 */
   notify?: string[];
   /**
-   * 关联的告警模板（后台管理 › 告警模板管理，source = 模板 时生效）
+   * 关联的告警模板（告警管理 › 告警模板管理，source = 模板 时生效）
    * @description 选中后本目标的触发条件 / 触发逻辑 / 等级 / 声光报警 / 处置流程都按该模板走
    *              （一处维护、多点引用）；留空 = 按检测类型自动套用后台管理的启用模板
    */
@@ -564,6 +901,24 @@ export interface BusinessAlarm {
   alarmSeconds?: number;
   /** 手动来源：处置流程步骤（受理后按此逐条复检） */
   flow?: string[];
+  /**
+   * ↓ 以下为「告警管理 › 告警设置」字段：与巡检目标台账共用同一个 alarm 对象（单数据源 = 天然同步）
+   */
+  /**
+   * @deprecated 告警名称已废弃：名称统一由台账名称派生（见 alarmSettings.targetNameOf），
+   *  老缓存里的残留值会在告警设置补齐时被清除
+   */
+  name?: string;
+  /** 告警类型（告警设置）：引用「告警类别」中启用的分类名称 */
+  category?: string;
+  /**
+   * 告警开关（告警设置）：决定该台账的告警规则是否启用
+   * @description 缺省 = 启用（兼容老数据）；停用后该台账只记录结果、不做异常判定，
+   *              与台账的「是否巡检」是两个独立开关（后者控制是否进入任务）
+   */
+  enabled?: boolean;
+  /** 告警项：一个台账只有一个告警设置，但可以有多个告警项（第一条与台账判定口径同源） */
+  items?: AlarmItem[];
 }
 
 /**
@@ -573,6 +928,12 @@ export interface BusinessAlarm {
  */
 export interface BusinessTarget {
   id: string;
+  /**
+   * 台账名称（可选）：留空时按现有规则派生（仪表名 → 锚点 → 业务目标），
+   * 用于区分同一台仪表下的多条台账（如「V001 出口压力表 · 读数」「V001 出口压力表 · 阀位」）。
+   * 列表展示、告警名称与异常名称的默认值都由这里派生，见 alarmSettings.targetNameOf
+   */
+  name?: string;
   /**
    * 目标类型（TGT-01）：仪表类挂设备台账；环境 / 区域类**不强制关联设备**（如罐区气体、区域声纹、AI 不安全行为）。
    */
@@ -600,7 +961,7 @@ export interface BusinessTarget {
   expected?: string;
   /** 判断标准补充说明（如"以罐体上半部最高温为准"） */
   criteria?: string;
-  /** 告警设置（平台唯一入口；巡检点不可配置告警） */
+  /** 告警设置（入口：台账「告警规则」/「告警管理 › 告警设置」，同一份数据；巡检点不可配置告警） */
   alarm?: BusinessAlarm;
   needPhoto: boolean;
   needVideo: boolean;
@@ -612,14 +973,32 @@ export interface BusinessTarget {
   createdAt?: string;
 }
 
+/** 设备形态：实体设备（有形装置，如储罐 / 泵 / 分析仪）/ 虚拟设备（区域 / 空间类目标载体，如管廊 / 罐区） */
+export const deviceKinds = ["实体设备", "虚拟设备"] as const;
+export type DeviceKind = (typeof deviceKinds)[number];
+
 /** 设备主数据（阶段③：Excel/CSV/API 导入 → 直接生效） */
 export interface DeviceAsset {
   /** 设备唯一编码（业务身份的唯一依据） */
   id: string;
   name: string;
+  /** 设备类型（自由文本，如 储罐 / 管廊 / 分析仪） */
   type: string;
+  /**
+   * 设备形态（实体设备 / 虚拟设备）
+   * @description 与 `type` 并列的第二维度：`type` 说"是什么装置"，本字段说"有没有实体形态"。
+   *              缺省由 `type` 推导（见 deviceMaster.defaultDeviceKindOfType），
+   *              新增设备 / 清单导入 / 老缓存回填三处共用同一口径。
+   */
+  deviceKind?: DeviceKind;
   regionCode: string;
   locationDesc: string;
+  /**
+   * 属地单位（属地管理责任单位，如 储运部 / 装置一部）
+   * @description 告警 KPI 的「属地」维度口径：设备台账（资源与地图 › 设备台账）维护，
+   *              告警按设备归属统计；未指定时统计为「未指定」
+   */
+  territory?: string;
   coord?: string;
   coordSys?: string;
   height?: number;
@@ -652,7 +1031,11 @@ export interface LogicalPoint {
   locateOrigin?: CandidateOrigin;
 }
 
-/** 巡检路线（阶段⑦） */
+/**
+ * 巡检路线（阶段⑦，地图侧视图）
+ * @description 「路线管理」目录已下线，巡检路线统一由 `Template` 维护（带 `mapId` 父线与有序 `points`）；
+ *              本类型保留给地图空间预览（MapSpatialPreview / MapCanvas）绘制路线图层
+ */
 export interface Route {
   id: string;
   name: string;
@@ -855,14 +1238,31 @@ export interface Task {
 export interface Template {
   id: string;
   name: string;
+  /** 巡检点 id 序列：**顺序即机器狗的执行顺序**（子线按此顺序跑） */
   points: string[];
+  /**
+   * 父线地图 id（路线基线）
+   * @description 一条路线（子线）只允许落在同一张地图（父线）上：机器狗按区域调度，
+   *              任务自身也要求 `mapId` 唯一。后期支持跨图时扩展为 `mapIds: string[]`
+   */
+  mapId?: string;
   end: string;
-  /** 模板状态：启用后计划方可引用；停用仅存档不参与生成 */
+  /** 路线状态：启用后计划方可引用；停用仅存档不参与生成 */
   state: "启用" | "停用";
   version: number;
 }
+/** 计划执行方式：周期任务（按「每天 / 每周 / 每班」循环）/ 定时任务（指定日期时刻执行一次） */
+export const planKinds = ["周期任务", "定时任务"] as const;
+export type PlanKind = (typeof planKinds)[number];
+
 export interface Plan {
   robotId?: string;
+  /**
+   * 执行方式
+   * @description 与 `cycle` 并列的第二维度：`cycle` 说"多久一次"，本字段说"是否重复"。
+   *              缺省按「周期任务」处理（老数据无该字段），统一口径见 planSchedule.planKindOf
+   */
+  kind?: PlanKind;
   generationError?: string;
   /** 巡检路线（阶段⑦） */
   routeId?: string;
@@ -943,6 +1343,11 @@ export interface Alarm {
   id: string;
   /** 告警分类：业务场景 / 机器人本体异常（新增维度，与级别正交） */
   category: AlarmCategory;
+  /**
+   * 告警类别（分类名称）：业务告警由所属台账的告警设置派生（单一数据源，不在此重复填写）；
+   * 机器人本体告警没有业务台账，无法派生，故在此显式指定（下装 / 上装）
+   */
+  alarmClass?: string;
   /** 业务告警关联的原始结果（机器人本体异常通常无业务结果，故可选） */
   resultId?: string;
   /** 关联任务（机器人本体异常可能无关联任务，故可选） */
@@ -969,6 +1374,36 @@ export interface Alarm {
   /** 处置机制摘要（按级别自动推导，可覆盖） */
   handle?: string;
   time: string;
+}
+/**
+ * 告警推送人员（告警管理 › 告警推送）
+ * @description 告警产生后按等级推送给对应人员：等级留空 = 接收全部等级；
+ *              推送通道按登录名定位账号，短信按手机号下发
+ */
+export interface AlarmPushStaff {
+  id: string;
+  name: string;
+  phone: string;
+  /** 用户登录名（推送通道按登录名定位账号） */
+  login: string;
+  /** 所属部门 / 属地单位 */
+  dept: string;
+  /** 接收的告警等级：可多选，空数组 = 全部等级 */
+  levels: AlarmLevel[];
+  /**
+   * 绑定范围 · 区域：可多选，空数组 = 不限区域。
+   * 与属地 / 设备三个维度同时成立（各维度内多选取并集），见 alarmPush.pushStaffOfAlarm
+   */
+  areas?: string[];
+  /** 绑定范围 · 属地单位：可多选，空数组 = 不限属地 */
+  territories?: string[];
+  /** 绑定范围 · 设备：可多选，空数组 = 不限设备 */
+  devices?: string[];
+  /** 是否发送短信 */
+  sms: boolean;
+  /** 最后更新人（原型阶段取当前角色的人员姓名） */
+  updatedBy?: string;
+  updatedAt?: string;
 }
 export interface Sync {
   id: string;
@@ -1029,17 +1464,26 @@ export interface State {
   systemRules?: import("./alarmRules").SystemRules;
   alarmRules?: import("./alarmRules").AlarmRule[];
   /**
-   * 告警模板（后台管理 › 告警模板管理）
+   * 告警模板（告警管理 › 告警模板管理）
    * @description 名称 + 触发条件 + 触发逻辑 + 声光报警 + 默认等级 + 处理流程；
    *              原「告警规则库」已并入本集合（规则库的级别 / 类型 / 阈值 / 触发条件都是模板已有字段）
    */
   alarmTemplates?: import("./alarmTemplates").AlarmTemplate[];
+  /**
+   * 告警类别（告警管理 › 告警类别）：分类名称 + 告警大类 + 是否启用
+   * @description 启用的分类是「告警设置 › 告警类型」与「告警记录 › 分类筛选」的数据源
+   */
+  alarmClasses?: AlarmClass[];
+  /** 告警推送人员（告警管理 › 告警推送）：按等级推送给对应人员的名单 */
+  alarmPushStaff?: AlarmPushStaff[];
   fieldDevices?: Record<string, import("./fieldControl").FieldState>;
   /**
    * 数据模型版本：1→2 接管/反馈/现场/资产集合；2→3 模板 state；5→6「地图→任务」链路集合；
-   * 6→7 告警处理口径（validity「有效 / 无效」→ handledAt / handleResult / falsePositive）
+   * 6→7 告警处理口径（validity「有效 / 无效」→ handledAt / handleResult / falsePositive）；
+   * 7→8 告警类别集合 + 台账告警设置（告警名称 / 类型 / 开关 / 多条告警项）；
+   * 8→9 告警推送人员名单；9→10 告警项的「告警分类」改为两档枚举（普通预警 / 环境预警）
    */
-  schema: 7;
+  schema: 10;
   maps: MapAsset[];
   points: Point[];
   robots: Robot[];
@@ -1068,6 +1512,11 @@ export interface State {
   devices?: DeviceAsset[];
   /** 区域（工厂树第一层：区域 → 设备 → 仪表） */
   areas?: Area[];
+  /**
+   * 属地单位（设备「属地」字段的候选口径）
+   * @description 后台管理 › 工厂基础数据 › 属地配置 维护；告警 KPI 属地维度与告警推送范围同源
+   */
+  territories?: string[];
   /** 仪表（被巡检的资产对象，挂设备下） */
   instruments?: Instrument[];
   /** 巡检要求（模板库） */
@@ -1076,6 +1525,8 @@ export interface State {
   businessTargets?: BusinessTarget[];
   /** 机器人上装能力主数据（后台管理 › 机器人上装能力） */
   robotPayloads?: RobotPayload[];
+  /** 机器人能力主数据（后台管理 › 机器人能力）：两级 —— 能力类型 → 能力参数 */
+  robotAbilities?: RobotAbilityKind[];
   /** 算法（AI 能力）清单（后台管理 › 算法模板管理） */
   algoConfigs?: AlgoConfig[];
   /** 逻辑巡检点（阶段④） */
@@ -1084,6 +1535,8 @@ export interface State {
   routes?: Route[];
   /** 跨图切换点（空间管理 › 地图拓扑）：每张碎片地图之间的切换位置 */
   mapSwitchPoints?: MapSwitchPoint[];
+  /** 地图数据包（机器人扫描回传，尚未成为地图） */
+  mapPackets?: MapPacket[];
   /** 现场踩点记录（阶段①） */
   siteSurveys?: SiteSurvey[];
   /** 轨迹采样点（阶段①） */

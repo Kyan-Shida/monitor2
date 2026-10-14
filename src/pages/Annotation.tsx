@@ -18,7 +18,8 @@ import {
   deviceOf,
   defaultInspectItemName,
 } from "../data/deviceMaster";
-import type { Point, State } from "../data/types";
+import { deviceKinds } from "../data/types";
+import type { DeviceKind, Point, State } from "../data/types";
 
 /**
  * 由已有点位还原"一次停靠看什么"
@@ -54,6 +55,8 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
     id: "",
     name: "",
     type: "储罐",
+    /** 设备形态：现场补录默认实体设备 */
+    deviceKind: "实体设备" as DeviceKind,
     locationDesc: "",
     target: "",
     unit: "",
@@ -495,7 +498,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
             p.name,
             `${p.device} / ${p.item}`,
             <Badge>{p.state}</Badge>,
-            p.validated || "待验证",
+            p.validated || "未验证",
           ])}
         />
       </Modal>}
@@ -520,6 +523,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
                         id: code,
                         name: nd.name.trim(),
                         type: nd.type,
+                        deviceKind: nd.deviceKind,
                         regionCode: "R-A03",
                         locationDesc: nd.locationDesc,
                         items: [
@@ -568,6 +572,18 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
               value={nd.type}
               onChange={(e) => ND({ ...nd, type: e.target.value })}
             />
+          </Field>
+          <Field label="设备形态">
+            <select
+              value={nd.deviceKind}
+              onChange={(e) =>
+                ND({ ...nd, deviceKind: e.target.value as DeviceKind })
+              }
+            >
+              {deviceKinds.map((k) => (
+                <option key={k}>{k}</option>
+              ))}
+            </select>
           </Field>
           <Field label="安装位置">
             <input

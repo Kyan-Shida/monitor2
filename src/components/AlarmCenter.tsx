@@ -36,6 +36,11 @@ export function AlarmCenter() {
     .sort((a, b) => rank(a.level) - rank(b.level));
   const urgentList = list.filter((a) => a.level === "一级");
   const urgent = urgentList.length;
+  const lv2Count = list.filter((a) => a.level === "二级").length;
+  const lv3Count = list.filter((a) => a.level === "三级").length;
+  /** 头部主色调：最高告警等级决定（urgent 红 > lv2 琥珀 > 仅三级 蓝灰） */
+  const headTone: "urgent" | "lv2" | "lv3" | "none" =
+    urgent > 0 ? "urgent" : lv2Count > 0 ? "lv2" : list.length > 0 ? "lv3" : "none";
 
   /**
    * 一级告警全局拦截：
@@ -104,7 +109,7 @@ export function AlarmCenter() {
 
   return (
     <>
-      {/* 顶栏入口：原消息铃铛位置，替换为告警入口 */}
+      {/* 顶栏入口：Bell 图标 + 文字「告警」，未处置数作 badge；有一级告警时 bell 上多一个红点脉动提示 */}
       <button
         className={
           "alarm-entry" +
@@ -112,7 +117,7 @@ export function AlarmCenter() {
         }
         title={
           list.length
-            ? `有 ${list.length} 条未处理告警（一级 ${urgent}），点击查看`
+            ? `未处置 ${list.length} · 一级 ${urgent} · 二级 ${lv2Count} · 三级 ${lv3Count}`
             : "暂无告警"
         }
         onClick={() => {
@@ -120,12 +125,13 @@ export function AlarmCenter() {
           SETMIN(false);
         }}
       >
-        <Bell size={18} />
+        <Bell size={17} />
+        <span className="entry-label">告警</span>
         {list.length > 0 && (
-          <i className="bell-badge alarm">
-            {list.length > 99 ? "99+" : list.length}
-          </i>
-        )}
+            <i className="bell-badge alarm">
+              {list.length > 99 ? "99+" : list.length}
+            </i>
+          )}
       </button>
 
       {/* 一级告警全局提醒条：置顶、任何界面可见；知晓 / 去处理后收起 */}
@@ -169,10 +175,21 @@ export function AlarmCenter() {
           className={"alarm-panel" + (interceptAlarm ? " urgent" : "")}
           style={pos ? { left: pos.x, top: pos.y, right: "auto" } : undefined}
         >
-          <div className="alarm-panel-head" onPointerDown={startDrag}>
+          <div className={"alarm-panel-head tone-" + headTone} onPointerDown={startDrag}>
             <Bell size={15} />
-            <b>告警 {list.length} 条</b>
-            {urgent > 0 && <em className="alarm-urgent">一级 {urgent}</em>}
+            <b>告警 <em className="alarm-total">{list.length}</em> 条</b>
+            {/* 分级摘要 chips：一级红 / 二级琥珀 / 三级蓝灰，数量为 0 时半透明 */}
+            <div className="alarm-head-lv">
+              <span className="alarm-lv-chip lv1" style={{ opacity: urgent ? 1 : 0.35 }}>
+                <i />一级 {urgent}
+              </span>
+              <span className="alarm-lv-chip lv2" style={{ opacity: lv2Count ? 1 : 0.35 }}>
+                <i />二级 {lv2Count}
+              </span>
+              <span className="alarm-lv-chip lv3" style={{ opacity: lv3Count ? 1 : 0.35 }}>
+                <i />三级 {lv3Count}
+              </span>
+            </div>
             <span className="alarm-head-spacer" />
             {/* 一级告警拦截期间：不给「最小化 / 关闭」，必须先知晓 / 去处理 */}
             {interceptAlarm ? (

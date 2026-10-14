@@ -12,20 +12,31 @@ import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Field, Note, Modal } from "../components/UI";
-import { areaNameOf, areaOptions } from "../data/deviceMaster";
-import { captureKinds } from "../data/types";
-import type { CaptureKind } from "../data/types";
+import {
+  areaNameOf,
+  areaOptions,
+  deviceKindOf,
+  territoryOfDevice,
+} from "../data/deviceMaster";
+import { captureKinds, deviceKinds } from "../data/types";
+import type { CaptureKind, DeviceKind } from "../data/types";
 
 /** 区域表单：id 存在 = 编辑，否则新增 */
 type AreaForm = { id?: string; name: string };
+/** 属地表单：from 存在 = 编辑，否则新增（属地无独立 ID，按名称定位） */
+type TerrForm = { from?: string; name: string };
 /** 设备表单：编码在编辑态不可改（是业务唯一身份） */
 type DevForm = {
   mode: "add" | "edit";
   id: string;
   name: string;
   type: string;
+  /** 设备形态（实体设备 / 虚拟设备） */
+  deviceKind: DeviceKind;
   region: string;
   locationDesc: string;
+  /** 属地单位（告警 KPI 的「属地」维度口径） */
+  territory: string;
 };
 /** 仪表表单 */
 type InsForm = {
@@ -46,13 +57,19 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
   const areas = s.areas || [];
   const devices = s.devices || [];
   const instruments = s.instruments || [];
+  /** 属地单位主数据（设备「属地」下拉、告警 KPI 属地维度、告警推送范围的候选口径） */
+  const territories = s.territories || [];
   /** 区域选项：区域主数据 ∪ 设备实际归属（与设备树、地图下拉同源） */
   const regionOpts = areaOptions(s);
   /** 设备在某区域下的台数 */
   const countOf = (name: string) =>
     devices.filter((d) => areaNameOf(s, d) === name).length;
+  /** 设备在某属地下的台数 */
+  const devCountOf = (name: string) =>
+    devices.filter((d) => territoryOfDevice(d) === name).length;
 
   const [areaForm, setAreaForm] = useState<AreaForm | null>(null);
+  const [terrForm, setTerrForm] = useState<TerrForm | null>(null);
   const [devForm, setDevForm] = useState<DevForm | null>(null);
   const [insForm, setInsForm] = useState<InsForm | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
@@ -63,6 +80,7 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
         <div className="segmented">
           {[
             ["area", "区域配置"],
+            ["territory", "属地配置"],
             ["device", "设备配置"],
             ["instrument", "仪表配置"],
           ].map(([id, label]) => (
@@ -123,6 +141,43 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
         </Panel>
       )}
 
+      {tab === "territory" && (
+        <Panel
+          title="属地配置"
+          extra={
+            <Btn primary onClick={() => setTerrForm({ name: "" })}>
+              ＋ 新增属地
+            </Btn>
+          }
+        >
+          <Note>
+            属地是设备的归属单位，也是告警 KPI「属地」维度与告警推送范围的候选口径；
+            设备台账的「属地单位」下拉取自这里，保证全平台同一份口径。
+          </Note>
+          <Table
+            heads={["属地名称", "设备数", "操作"]}
+            rows={territories.map((name) => [
+              <b>{name}</b>,
+              devCountOf(name),
+              <div className="actions">
+                <Btn onClick={() => setTerrForm({ from: name, name })}>编辑</Btn>
+                <Btn
+                  onClick={() =>
+                    setConfirm({
+                      title: "删除属地",
+                      text: `确认删除属地「${name}」？`,
+                      run: () => act({ type: "DELETE_TERRITORY", name }),
+                    })
+                  }
+                >
+                  删除
+                </Btn>
+              </div>,
+            ])}
+          />
+        </Panel>
+      )}
+
       {tab === "device" && (
         <Panel
           title="设备配置"
@@ -135,8 +190,10 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
                   id: "",
                   name: "",
                   type: "",
+                  deviceKind: "实体设备",
                   region: regionOpts[0] || "",
                   locationDesc: "",
+                  territory: "",
                 })
               }
             >
@@ -145,11 +202,19 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
           }
         >
           <Note>
-            这里维护设备主数据的基本身份（编码 / 名称 / 类型 / 区域 / 安装位置）；
+            这里维护设备主数据的基本身份（编码 / 名称 / 类型 / 设备形态 / 区域 / 安装位置 / 属地单位）；
             巡检项配置与清单导入仍在「资源与地图 › 设备台账」。
           </Note>
           <Table
-            heads={["编码", "设备名称", "类型 / 位置", "所属区域", "操作"]}
+            heads={[
+              "编码",
+              "设备名称",
+              "类型 / 位置",
+              "设备形态",
+              "所属区域",
+              "属地单位",
+              "操作",
+            ]}
             rows={devices.map((d) => {
               const rg = areaNameOf(s, d);
               return [
@@ -159,7 +224,9 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
                   {d.type}
                   <small>{d.locationDesc || "—"}</small>
                 </>,
+                deviceKindOf(d),
                 <Badge>{rg}</Badge>,
+                territoryOfDevice(d) || "未指定",
                 <div className="actions">
                   <Btn
                     onClick={() =>
@@ -168,8 +235,10 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
                         id: d.id,
                         name: d.name,
                         type: d.type,
+                        deviceKind: deviceKindOf(d),
                         region: rg === "未分区" ? "" : rg,
                         locationDesc: d.locationDesc,
+                        territory: territoryOfDevice(d),
                       })
                     }
                   >
@@ -294,6 +363,40 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
         </Modal>
       )}
 
+      {terrForm && (
+        <Modal
+          title={terrForm.from ? "编辑属地" : "新增属地"}
+          onClose={() => setTerrForm(null)}
+        >
+          <Field label="属地名称">
+            <input
+              value={terrForm.name}
+              placeholder="例如 运维中心"
+              onChange={(e) => setTerrForm({ ...terrForm, name: e.target.value })}
+            />
+          </Field>
+          <Note>改名后，设备台账与告警推送范围里的旧属地会同步更新。</Note>
+          <div className="modal-actions">
+            <Btn onClick={() => setTerrForm(null)}>取消</Btn>
+            <Btn
+              primary
+              disabled={!terrForm.name.trim()}
+              onClick={() => {
+                const name = terrForm.name.trim();
+                const ok = act(
+                  terrForm.from
+                    ? { type: "RENAME_TERRITORY", from: terrForm.from, to: name }
+                    : { type: "ADD_TERRITORY", name },
+                );
+                if (ok) setTerrForm(null);
+              }}
+            >
+              保存
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
       {/* 设备：新增 / 编辑 */}
       {devForm && (
         <Modal
@@ -322,6 +425,21 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
               onChange={(e) => setDevForm({ ...devForm, type: e.target.value })}
             />
           </Field>
+          <Field label="设备形态">
+            <select
+              value={devForm.deviceKind}
+              onChange={(e) =>
+                setDevForm({
+                  ...devForm,
+                  deviceKind: e.target.value as DeviceKind,
+                })
+              }
+            >
+              {deviceKinds.map((k) => (
+                <option key={k}>{k}</option>
+              ))}
+            </select>
+          </Field>
           <Field label="所属区域">
             <select
               value={devForm.region}
@@ -344,6 +462,19 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
               }
             />
           </Field>
+          <Field label="属地单位">
+            <select
+              value={devForm.territory}
+              onChange={(e) =>
+                setDevForm({ ...devForm, territory: e.target.value })
+              }
+            >
+              <option value="">（未指定）</option>
+              {territories.map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
+          </Field>
           <div className="modal-actions">
             <Btn onClick={() => setDevForm(null)}>取消</Btn>
             <Btn
@@ -356,8 +487,10 @@ export function Admin({ tab: initTab = "area" }: { tab?: string }) {
                   name: devForm.name.trim(),
                   // 设备类型用独立字段，避免与动作名 Action.type 冲突
                   deviceType: devForm.type.trim(),
+                  deviceKind: devForm.deviceKind,
                   region: devForm.region,
                   locationDesc: devForm.locationDesc.trim(),
+                  territory: devForm.territory,
                 });
                 if (ok) setDevForm(null);
               }}

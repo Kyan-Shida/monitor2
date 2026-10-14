@@ -34,9 +34,11 @@ function dispatch(s: State, id: string) {
 // 2026-10-09：从「工厂基础数据」拆出「后台管理 › 算法模板管理」页（AI 能力清单）→ 39 → 40
 // 2026-10-10：新增「后台管理 › 巡检要求管理」页（看什么、怎么判 的标准表达，台账按目标类型与采集方式匹配引用）→ 40 → 41
 // 2026-10-10：新增「资源与地图 › 空间 › 空间管理」页（全局坐标系配准 / 跨图拓扑）→ 41 → 42
-test("42 unique phase-one pages", () => {
-  assert.equal(pages.length, 42);
-  assert.equal(new Set(pages.map((p) => p.id)).size, 42);
+// 2026-10-14：空间管理菜单收起（页面与路由保留，`#/resources/space` 可直达）→ 42 → 41
+// 2026-10-14：「告警管理」升为一级目录，新增「告警类别」「告警设置」「告警推送」三页 → 41 → 44
+test("44 unique phase-one pages", () => {
+  assert.equal(pages.length, 44);
+  assert.equal(new Set(pages.map((p) => p.id)).size, 44);
 });
 
 test("巡检要求管理：管理员可维护，需填齐判定口径", () => {

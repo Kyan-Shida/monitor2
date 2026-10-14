@@ -7,7 +7,8 @@ import { useState } from "react";
 /**
  * 菜单结构：一级业务中心 → 页面
  * 每项格式「页面ID:名称:优先级:二级分组」，优先级与二级分组可省略
- * 一级中心按业主业务场景归并为 6 个（工作台 / 巡检执行 / 结果与异常 / 资源与地图 / 分析与报表 / 系统设置）
+ * 一级中心按业主业务场景归并为 9 个（工作台 / 巡检执行 / 调度中心 / 告警管理 / 资源与地图 /
+ * 后台管理 / 机器人管理 / 分析与报表 / 系统设置）
  * P1 页面为未实现占位，保留路由不删，但默认从菜单隐藏（见 hiddenIds）
  */
 export const groups = [
@@ -21,8 +22,8 @@ export const groups = [
   ],
   [
     "调度中心",
-    "templates:巡检模板::标准与模板",
-    "plans:计划列表::任务与计划",
+    "templates:巡检路线::标准与路线",
+    "plans:巡检计划::任务与计划",
     "plan-edit:计划编辑::任务与计划",
     "tasks:任务列表::任务与计划",
     "quick:目标与要求::任务与计划",
@@ -32,12 +33,17 @@ export const groups = [
     "dispatch-log:调度记录::调度",
   ],
   [
-    "结果与异常",
-    "results:巡检结果::结果",
-    // EQ-01：设备巡检档案已移入「资源与地图 › 设备主数据」（结果与异常侧只保留按任务的结果查询）
-    "alarms:告警管理::告警与处理",
-    "alarm:告警详情 / 处理::告警与处理",
-
+    "告警管理",
+    // 原「结果与异常 › 告警管理」升为一级目录：告警记录（事件） / 告警类别（分类主数据） / 告警设置（台账告警规则）
+    "alarms:告警记录",
+    "alarm-classes:告警分类",
+    "alarm-settings:告警设置",
+    // 告警模板管理：告警触发逻辑（模板 = 触发条件 + 处理流程）的唯一维护入口；
+    // 原属「后台管理」，按产品要求移到告警管理目录下（与告警设置同域：都是告警判定口径）
+    "alarm-templates:告警模板",
+    // 告警推送：预留子目录，先做「推送人员名单」维护
+    "alarm-push:推送设置",
+    "alarm:告警详情 / 处理",
   ],
   [
     "资源与地图",
@@ -47,30 +53,27 @@ export const groups = [
     "points:巡检目标台账::点位与对象",
     // TGT-01：空间 / 区域（非装置）类目标**不单独占菜单项**（2026-10-10 按产品要求删除）：
     // 路由 `#/resources/points-space` 与台账页 tab="space" 视图保留，入口收口到
-    // 「巡检目标台账」的「空间与区域」筛选 + 新增抽屉第一步的「区域（环境）」页签
+    // 「巡检目标台账」筛选面板的「设备形态 › 虚拟设备」+ 新增抽屉第一步的「虚拟设备」页签
     // "points-space:空间与区域目标::点位与对象",
     "rules:采集结果与告警规则::点位与对象",
     // 巡检点管理（原「点位标注与验证工作台」）：巡检点 = 名称 + 地图 + 标定点 + 多个巡检项
     "annotation:巡检点管理::点位与对象",
     // 原「路线与轨道 → 路线管理」已下线：路线随地图带入，不再作为独立目录
     "maps:地图管理::地图",
-    // 空间管理（「空间」目录）：厂区全局坐标系、碎片地图配准、巡检点全局坐标、
+    // 空间管理（「空间」目录）：厂区全局坐标系、碎片地图配准、
     // 全局↔局部坐标转换、地图拓扑与跨图切换点、版本绑定与校验
-    "space:空间管理::空间",
+    // "space:空间管理::空间",
   ],
   [
     "后台管理",
     "admin:工厂基础数据",
     // 算法模板管理：平台 AI 能力（算法）清单的唯一维护入口；被目标台账 / 巡检要求按名称引用
     "algo-templates:算法模板管理",
-    // 告警模板管理：告警触发逻辑（模板 = 触发条件 + 处理流程；规则库 = 名称/级别/类型/阈值/触发条件）
-    // 的唯一维护入口，供点位判定规则、告警处置页等其他页面引用
-    "alarm-templates:告警模板管理",
     // 巡检要求管理：平台「看什么、怎么判」的标准表达（模板库）的唯一维护入口，
     // 巡检目标台账 = 仪表 / 区域 + 一条巡检要求 + 算法 + 阈值 + 判定；被台账按目标类型与采集方式匹配引用
     "requirements:巡检要求管理",
-    // 机器人上装能力：机器人能力 / 任务指令集 / 派单校验的上游主数据
-    "payloads:机器人上装能力",
+    // 机器人能力（两级：能力类型 → 能力参数）：巡检项能力项的候选来源
+    "payloads:机器人能力",
   ],
   [
     "机器人管理",
@@ -83,7 +86,14 @@ export const groups = [
     // 原「能力与健康 / 地图与版本 / 机型专项」三页合并为一个「机器人能力」页（页内 Tab 切换）
     "health:机器人能力",
   ],
-  ["分析与报表", "metrics:分析报表", "analytics:基础分析", "report:巡检结果报表::巡检报表"],
+  [
+    "分析与报表",
+    "metrics:分析报表",
+    "analytics:基础分析",
+    // 巡检结果（按任务 / 巡检点查询）与巡检结果报表同属「巡检报表」目录
+    "results:巡检结果::巡检报表",
+    "report:巡检结果报表::巡检报表",
+  ],
   [
     "系统设置",
     "services:能力 / 服务管理::配置中心",
@@ -129,7 +139,7 @@ const roots = [
   "workbench",
   "execution",
   "dispatch",
-  "result",
+  "alarm",
   "resource",
   "admin",
   "robot",
@@ -157,14 +167,12 @@ const paths: Record<string, string> = {
   admin: "admin",
   /** 后台管理：算法模板管理（AI 能力清单；target 台账按名称引用） */
   "algo-templates": "admin/algo-templates",
-  /** 后台管理：告警模板管理（触发条件 + 处理流程 / 平台标准规则库） */
-  "alarm-templates": "admin/alarm-templates",
   /** 后台管理：巡检要求管理（平台「看什么、怎么判」的标准表达，台账按目标类型与采集方式匹配引用） */
   requirements: "admin/requirements",
-  /** 后台管理：机器人上装能力（上装主数据） */
+  /** 后台管理：机器人能力（两级清单：能力类型 → 能力参数） */
   payloads: "admin/payloads",
   points: "resources/points",
-  /** 空间 / 区域（非装置）类目标：复用巡检目标台账页，预置为空间与区域视图 */
+  /** 空间 / 区域（非装置）类目标：复用巡检目标台账页，预置为「虚拟设备」筛选视图 */
   "points-space": "resources/points-space",
   /** 添加 / 编辑巡检点（内置页）：名称 + 地图 + 标定点 + 多个巡检项 */
   "point-edit": "resources/points/edit",
@@ -172,6 +180,10 @@ const paths: Record<string, string> = {
   "point-onsite": "resources/points/onsite",
   /** 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证 */
   "point-annotate": "resources/points/annotate",
+  /** 巡检目标台账 › 添加 / 编辑（内置页）：台账设置弹窗装不下，改为独立页面 */
+  "business-target-edit": "resources/points/target-edit",
+  /** 巡检项编辑（内置页）：由「添加 / 编辑巡检点」页进入 */
+  "inspect-item-edit": "resources/points/item-edit",
   /** 巡检点管理（菜单页）：已配置巡检点列表 + 添加巡检点 */
   annotation: "resources/annotation",
   templates: "resources/templates",
@@ -199,7 +211,16 @@ const paths: Record<string, string> = {
   "result-view": "results/task-result",
   services: "ai/services",
   rules: "alarms/rules",
+  /** 告警记录（原「告警管理」事件列表）：一级目录「告警管理」下的第一个页面 */
   alarms: "alarms/events",
+  /** 告警类别：分类名称 + 告警大类 + 是否启用，是告警记录筛选与告警设置「告警类型」的数据源 */
+  "alarm-classes": "alarms/classes",
+  /** 告警设置：一个台账一个告警设置（可含多个告警项），与巡检目标台账同一份数据 */
+  "alarm-settings": "alarms/settings",
+  /** 告警模板管理：触发条件 + 处理流程（原属「后台管理」，移到告警管理目录下） */
+  "alarm-templates": "alarms/templates",
+  /** 告警推送：告警按等级 + 区域 / 属地 / 设备范围推送给对应人员的名单 */
+  "alarm-push": "alarms/push",
   alarm: "alarms/detail",
   metrics: "analytics/metrics",
   analytics: "analytics/overview",
@@ -214,8 +235,12 @@ const paths: Record<string, string> = {
   "task-detail": "planning/tasks/detail",
   /** 地图详情内置页：挂在「地图管理」下（列表 → 详情 → 两个抽屉） */
   "map-detail": "robots/maps/detail",
+  /** 地图标定工作台（内置页）：像素地图打点、连线成路网 */
+  "map-calibrate": "robots/maps/calibrate",
   /** 独立大屏窗口：由顶栏「驾驶舱大屏」以新标签页打开，不进入侧边栏与中心 Tab */
   bigscreen: "screen/bigscreen",
+  /** 视频监控流大屏：与数据大屏 / 机器人监控并列的第三个大屏 Tab */
+  video: "screen/video",
 };
 const parents: Record<string, string> = {
   /** ROB-03：运行监测 / 新增机器人 / 机器人能力 都是「机器台账」的内置页 */
@@ -223,6 +248,7 @@ const parents: Record<string, string> = {
   "robot-new": "robots",
   health: "robots",
   "map-detail": "maps",
+  "map-calibrate": "maps",
   /** 单任务现场态势（内置页）：归属「实时执行监控」 */
   "execution-monitor": "execution",
   /** EXE-03：「人工操作与遥控」降为执行监控的内置页（菜单隐藏，仅保留行内入口） */
@@ -239,6 +265,9 @@ const parents: Record<string, string> = {
   "point-edit": "annotation",
   "point-onsite": "annotation",
   "point-annotate": "annotation",
+  /** 台账编辑内置页归属「巡检目标台账」；巡检项编辑内置页从巡检点编辑页进入 */
+  "business-target-edit": "points",
+  "inspect-item-edit": "point-edit",
   "plan-edit": "plans",
   review: "results",
   "result-detail": "archive",
@@ -306,6 +335,22 @@ export const routeMeta = [
     name: "添加 / 编辑巡检点",
     path: paths["point-edit"],
     parent: "annotation",
+  },
+  {
+    // 巡检目标台账编辑（内置页）：列表「编辑 / ＋添加」进入（原弹窗装不下，改为整页）
+    ...pages.find((x) => x.id === "points")!,
+    id: "business-target-edit",
+    name: "编辑巡检目标台账",
+    path: paths["business-target-edit"],
+    parent: "points",
+  },
+  {
+    // 巡检项编辑（内置页）：从「添加 / 编辑巡检点」页的巡检项列表进入（原弹窗改为整页）
+    ...pages.find((x) => x.id === "annotation")!,
+    id: "inspect-item-edit",
+    name: "添加 / 编辑巡检项",
+    path: paths["inspect-item-edit"],
+    parent: "point-edit",
   },
   {
     // 现场采集（跑图）新增巡检点（内置页）：巡检点新增的唯一入口，从「巡检点管理」工具条进入
@@ -386,11 +431,29 @@ export const routeMeta = [
     parent: "maps",
   },
   {
+    // 地图标定工作台（内置页）：无侧边栏入口，由地图卡片「编辑」进入
+    ...pages.find((x) => x.id === "maps")!,
+    id: "map-calibrate",
+    name: "地图标定工作台",
+    path: paths["map-calibrate"],
+    parent: "maps",
+  },
+  {
     // 驾驶舱大屏：仅由顶栏入口以新标签页打开，故不写入 groups（不出现在侧边栏与中心 Tab）
     ...pages.find((x) => x.id === "workbench")!,
     id: "bigscreen",
     name: "驾驶舱大屏",
     path: paths.bigscreen,
+    parent: undefined,
+    sub: "",
+    hidden: true,
+  },
+  {
+    // 视频监控流大屏：与数据大屏 / 机器人监控并列的第三个 Tab
+    ...pages.find((x) => x.id === "workbench")!,
+    id: "video",
+    name: "视频监控流",
+    path: paths.video,
     parent: undefined,
     sub: "",
     hidden: true,
@@ -410,7 +473,7 @@ export function activeMenuId(page: string, from?: { page: string }): string {
 /**
  * 侧边栏当前应高亮的一级中心分组：以高亮叶子（activeMenuId）所属分组为准，
  * 而非当前详情页自身的静态归属 —— 否则「执行回溯」等挂在设备档案（资源与地图）下的
- * 详情页从「结果与异常」进入时，一级中心会错高亮到「资源与地图」
+ * 详情页从「分析与报表」进入时，一级中心会错高亮到「资源与地图」
  * @param page 当前页面 ID
  * @param from 显式来源页（入口链接带回）
  * @returns 应高亮的一级中心分组名；无法判定时返回 undefined

@@ -59,18 +59,23 @@
 
 > 说明：原独立页「远程操控台」(`control`) 已合并进「人工操作与遥控」(`manual`)，其路由与页面已删除；各处「接管 / 遥控台」入口统一跳 `manual`。
 
-### 📊 结果与异常（一级中心）
+### 🔔 告警管理（一级中心）
+
+> 2026-10-14：原「结果与异常」一级中心拆解 —— 「巡检结果」进入「分析与报表 › 巡检报表」，
+> 「告警管理」升为一级中心（原二级分组「结果 / 告警与处理」取消）。`review`（已下线）/
+> `archive`（归「资源与地图 › 设备台账」，仅隐藏菜单）/ `rules`（落到巡检点列表）保留原路由。
 
 | 页面 ID | 路由 URL | 组件文件 | 备注 |
 |---------|---------|---------|------|
-| `results` | `#/results/query` | `src/pages/Results.tsx`（`page="results"`） | 巡检结果（按任务分组可折叠 / 任务·机器·时间筛选） |
-| `review` | `#/results/review/:id` | `src/pages/Results.tsx`（`page="review"`） | 结果详情 / 复核（含人工复核表单），父页面 `results` |
-| `archive` | `#/results/equipment` | `src/pages/DeviceArchive.tsx` | 设备巡检档案，内部 5 个 tab |
-| `alarms` | `#/alarms/events` | `src/pages/Results.tsx`（`Alarms` 导出，`page="alarms"`） | 告警管理（列表 + 处理 + 复检闭环） |
+| `alarms` | `#/alarms/events` | `src/pages/Results.tsx`（`Alarms` 导出，`page="alarms"`） | 告警记录（原「告警管理」内容：分级筛选 + 处理 + 复检闭环）；「分类」筛选按**告警类别**（`alarmSettings.alarmClassOfAlarm`，选项 = 启用分类 + 命中条数）；顶部 KPI 支持**区域 / 属地 / 设备**三维度切换（`data/alarmKpi.ts`） |
+| `alarm-classes` | `#/alarms/classes` | `src/pages/AlarmClasses.tsx` | 告警类别：分类名称 / 告警大类（业务预警·机器人预警）/ 是否启用；启用的分类是「告警设置 › 告警类型」与告警记录分类筛选的数据源 |
+| `alarm-settings` | `#/alarms/settings` | `src/pages/AlarmSettings.tsx` | 告警设置：一个台账一个设置（可含多条告警项），与巡检目标台账**同一份数据**（`BusinessTarget.alarm`）；状态开关决定该台账告警规则是否启用 |
+| `alarm-push` | `#/alarms/push` | `src/pages/AlarmPush.tsx` | 告警推送（预留子目录，先把名单做出来）：推送人员（姓名 / 手机号 / 登录名 / 部门 / 接收等级 / 是否短信）；数据集合 `State.alarmPushStaff` |
 | `alarm` | `#/alarms/detail/:id` | `src/pages/Results.tsx`（`Alarms` 导出，`page="alarm"`） | 告警详情 / 复查（含处置工作台），父页面 `alarms` |
 | `rules` | `#/alarms/rules` | `src/pages/AlarmConfiguration.tsx` | 巡检点列表行内规则抽屉；旧 rules 路由兼容进入点位列表 |
 
 > 三个只读**内置页**见下文「隐藏的详情/下钻页」：`result-detail` / `alarm-detail` / `replay-detail`。
+> 告警模板管理（`alarm-templates`）保留在「后台管理」，不在本目录下（2026-10-14 决定暂留、不删）。
 
 ### 🗺️ 资源与地图（一级中心）
 
@@ -118,6 +123,8 @@
 |---------|---------|---------|------|
 | `metrics` | `#/analytics/metrics` | `src/pages/Metrics.tsx` | 指标中心（口径唯一来源） |
 | `analytics` | `#/analytics/overview` | `src/pages/Supporting.tsx` 兜底，侧边栏已隐藏 | 基础分析（占位） |
+| `results` | `#/results/query` | `src/pages/Results.tsx`（`page="results"`） | 巡检结果（二级分组「巡检报表」；按任务 / 巡检点查询，自「告警管理」迁入） |
+| `report` | `#/analytics/report` | `src/pages/InspectionReport.tsx` | 巡检结果报表（二级分组「巡检报表」） |
 
 ### ⚙️ 系统设置（一级中心）
 
@@ -592,3 +599,78 @@
 | **缓存迁移改为按 id 合并** | `store.tsx` 的 `needReqMaster` 由「整表用 seed 覆盖」改为「仅补 seed 里缺失的新增项（如 REQ-GAS-AREA）」；`requirements` 合并逻辑与算法 / 告警模板一致，**保留用户在后台新建 / 修改的条目**，避免误删 |
 | **入口与路由** | 侧边栏「后台管理 › 巡检要求管理」（`navigation.ts` 菜单 + `paths` + `App.tsx` 路由）；「工厂基础数据」(`Admin.tsx`) 工具栏新增「巡检要求管理 →」快捷入口；页面数 40 → **41**（`engine.test.ts` 断言同步） |
 | **测试** | 全绿（**78 项**）：新增 `SAVE_REQUIREMENT` 用例（角色校验 / 判定口径校验 / 保存生成 REQ- id 且版本自增） |
+
+## 2026-10-14 导航重构：告警管理升为一级中心 + 巡检结果进分析与报表
+
+| 变更 | 说明 |
+|---|---|
+| **「告警管理」升为一级中心** | `navigation.ts` 的 `groups`：原一级「结果与异常」换成「告警管理」，「结果 / 告警与处理」两个二级分组取消，下辖 4 个平铺叶子：`alarms`（告警记录）/ `alarm-classes`（告警类别）/ `alarm-settings`（告警设置）/ `alarm`（告警详情·内置页）。一级中心数不变（9 个），`App.tsx` 的 `icons[3]` 由 `FileCheck` 改为 `BellRing` |
+| **「巡检结果」进分析与报表** | `results` 菜单项迁到「分析与报表 › 巡检报表」二级分组（与「巡检结果报表 `report`」并列）；页面 ID / 路由 `#/results/query` 不变，旧深链照旧可用 |
+| **权限与文案同步** | `roles.ts` 两个角色的 `centers` 白名单 `结果与异常` → `告警管理`（漏改会导致整个一级中心不可见）；`Workbench.tsx` 工作台卡片与快捷入口的 `group` 标签、`DispatchCockpit.tsx` 的「告警管理 ›」按钮 →「告警记录 ›」、`regressions.test.ts` 的高亮断言同步 |
+| **新增页面 `alarm-classes`** | `pages/AlarmClasses.tsx`：列表（分类名称 / 告警大类 / 是否启用 / 更新时间）+ 关键词·大类·状态筛选 + 勾选删除 +「+ 添加分类」弹窗。数据集合 `State.alarmClasses`，动作 `SAVE_ALARM_CLASS` / `REMOVE_ALARM_CLASS`（仅管理员；同名报错；被台账引用的分类不可删） |
+| **新增页面 `alarm-settings`** | `pages/AlarmSettings.tsx`：列表（告警名称 / 告警类型 / 关联台账 / 告警项 / 状态 / 配置）+「+ 添加告警配置」弹窗（告警名称 / 告警类型 / 关联台账 / 状态 + 告警配置项表格 +「+ 告警等级配置」）。动作 `SAVE_ALARM_SETTING` |
+| **一个台账一个告警设置 · 多条告警项** | `BusinessAlarm` 增 `name` / `category` / `enabled` / `items: AlarmItem[]`；`AlarmItem` = 告警分类 · 环境识别分类 · 告警等级 · 判断类型 · 判断值 · 起始值 · 结束值 · 异常名称 · 声光报警（秒）。**第一条（主告警项）与台账判定口径同源**：告警设置保存时同步 `judge / min / max / expected / level / alarmSeconds`，台账页「3、告警规则」保存时反向同步主项（`alarmSettings.applyAlarmSetting` / `withMainAlarmItem`），两个入口读写同一个 `BusinessTarget.alarm` |
+| **告警开关恢复** | `BusinessAlarm.enabled` 接入 `alarmRules.rulesOf`：`enabled = inspect !== false && alarm.enabled !== false`，停用后该台账只记录结果、不做异常判定（与「是否巡检」是两个独立开关） |
+| **台账侧字段对齐** | `BusinessTargets.tsx` 的「3、告警规则」新增 告警名称 / 告警类型（启用类别下拉）/ 状态 三项与右栏回显；保存时保留原告警项列表，只替换第一条 |
+| **告警记录页** | 页内标题「告警管理」→「告警记录」；「分类」筛选改为按**告警大类**（业务预警 / 机器人预警），选项取自告警类别中启用分类的大类 |
+| **数据迁移** | schema 7 → **8**：老缓存由 `store.withSeedDefaults` 回填 `alarmClasses` 与台账告警设置（`withAlarmSetting` 幂等补齐，不改已有判定口径） |
+| **保留不删** | 「后台管理 › 告警模板管理」（`alarm-templates`）保留，去留待定 |
+| **测试** | 全绿（**100 项**）：新增 `alarm-settings.test.ts`（告警设置默认齐备 / 保存后与台账口径同步并进入点位规则 / 告警开关 / 校验与权限 / 类别同名与引用约束 / 幂等补齐）；`engine.test.ts` 页数断言 41 → **43**，`regressions.test.ts`、`customer-revision.test.ts` 的 schema 与分组断言同步 |
+
+## 2026-10-14（第二轮）告警推送 / 告警记录分类与 KPI / 台账告警状态
+
+| 变更 | 说明 |
+|---|---|
+| **告警推送（预留子目录）** | 新增 `alarm-push`（`#/alarms/push`，`pages/AlarmPush.tsx`）：工具栏 `+ 添加推送人员` / `删除`（勾选批量），列 `姓名 · 手机号 · 用户登录名 · 所属部门 · 告警等级 · 是否发送短信 · 最后更新人 · 更新时间`；弹窗内等级多选（留空 = 全部等级）。数据集合 `State.alarmPushStaff`，动作 `SAVE_ALARM_PUSH` / `REMOVE_ALARM_PUSH`（仅管理员、登录名唯一、`updatedBy` 取当前角色人员） |
+| **告警记录按告警类别分类** | 「分类」筛选由告警大类改为**告警类别（分类名称）**：口径函数 `alarmSettings.alarmClassOfAlarm`（告警 → 点位 → 台账 → `BusinessTarget.alarm.category`，台账缺失按大类兜底）；选项 = 启用分类 + 命中条数（与「等级」筛选项同风格），筛选值失效自动回退「全部」；列表新增「告警类别」列 |
+| **告警记录 KPI 维度划分** | 新增 `data/alarmKpi.ts`：`区域 / 属地 / 设备` 三维度分段切换 + 明细表（`告警总数 · 未处理 · 报警准确率 · 告警处理率`），百分比口径与指标中心一致；维度值：区域走 `areaNameOf`、属地走设备主数据 `territory`、设备走巡检点设备名（机器人本体告警归「机器人本体」）。明细行合计 = 顶部总览卡「告警总数」 |
+| **设备主数据新增「属地单位」** | `DeviceAsset.territory` + 下拉主数据 `TERRITORY_UNITS`（储运部 / 装置一部 / 装置二部 / 安全环保部）；维护入口：设备台账（`DeviceMaster`：新增设备弹窗 + 列表列）与「后台管理 › 工厂基础数据 › 设备配置」（`Admin`：新增 / 编辑）；种子与老缓存由 `deviceMaster.territoryOfDevice` 按安装位置回填（罐区 → 储运部，装置区 A / B 段 → 装置一部 / 二部） |
+| **台账不再展示告警状态** | 台账「3、告警规则」的「状态」开关与右栏回显去掉；数据侧仍**创建即开启**（`enabled` 缺省 true），停用只在「告警管理 › 告警设置」操作 |
+| **数据迁移** | schema 8 → **9**：新增 `alarmPushStaff` 集合（老缓存从 seed 回填）；设备 `territory` 按安装位置补齐 |
+| **测试** | 全绿（**107 项**）：新增 `alarm-kpi.test.ts`（属地口径 / 三维度可切分且合计一致 / 准确率与处理率公式 / 告警类别单一数据源 / 推送名单约束 / `UPDATE_DEVICE` 写回属地）；`engine.test.ts` 页数断言 43 → **44**；`customer-revision.test.ts`、`regressions.test.ts` 的 schema 断言 8 → 9 |
+
+## 2026-10-14（第三轮）告警项的「告警分类」改为两档枚举
+
+| 变更 | 说明 |
+|---|---|
+| **口径变更** | `AlarmItem.category` 由「告警类别名称」改为**告警项自己的两档枚举** `普通预警 / 环境预警`（与「告警类别」的告警大类、台账的「告警类型」互不干扰）。默认值按目标类型带出：仪表类 = 普通预警，环境 / 区域类 = 环境预警 |
+| **落点** | `types.ALARM_ITEM_KINDS`；`alarmSettings.itemKindOfTarget` / `itemKindOfItem`（老口径归一化）；`AlarmSettings.tsx` 告警项第一列下拉改为两档枚举、新增行按台账类型带默认；`BusinessTargets.tsx` 主告警项按目标类型带默认（已配置的沿用）；`engine.REMOVE_ALARM_CLASS` 的引用检查只看台账的「告警类型」 |
+| **数据迁移** | schema 9 → **10**：`withAlarmSetting` 检测到告警项分类不是两档枚举时重写该字段（不动判定口径与其它设置） |
+| **测试** | 全绿（**108 项**）：新增「告警分类随目标类型 / 老口径归一化 / 非法分类被拦截」用例；schema 断言 9 → 10 |
+
+## 2026-10-14（第四轮）告警项逐条可选模板 + 台账派生名预填兜底
+
+| 变更 | 说明 |
+|---|---|
+| **告警项逐条可选模板** | 台账「3、告警规则」由「来源二选一 + 单条触发条件 / 等级 / 声光报警」改为**多告警项表格**（与「告警管理 › 告警设置」同一张表）：一行一条，每行可选**告警模板**（一键带出判断类型 / 阈值 / 单位 / 等级 / 声光报警）或直接**手填**；选「手填」只清模板引用，已带出字段保留可改 |
+| **数据口径** | `AlarmItem.templateId` 新增（该条引用的模板）；台账「告警规则来源」不再单独维护——`applyAlarmSetting` 由**主项（第一条）是否引用模板**派生 `BusinessAlarm.source / templateId`，与引擎 `rulesOf` 判定一致；老缓存主项缺引用时按台账关联模板回落（`settingOf`） |
+| **共用组件** | 新增 `components/AlarmItemTable.tsx`：两个入口共用同一张表（含模板列），避免两处写法漂移 |
+| **台账级配置保留** | 触发逻辑（单次 / 连续确认）与处置流程仍在台账侧（主项引用模板时由模板下发），表格化不丢能力 |
+| **预填不再留空** | ① 台账名称：打开即预填派生值（仪表名 / 锚点 / **巡检要求名** + 算法），可直接改或清空；② 新增告警项的异常名称按台账名预填；③ 主项缺单位 / 异常名称时按台账补齐；去掉「留空…回显」占位文案 |
+| **测试** | 全绿（**116 项**）：新增「告警项引用模板 → 台账来源与点位判定随主项 / 改回手填只清引用」「主项模板按台账关联模板回落」「区域类台账派生名用巡检要求名兜底」 |
+
+## 2026-10-14（第五轮）弹窗改内置页：目标台账设置 + 巡检项编辑
+
+| 变更 | 说明 |
+|---|---|
+| **目标台账设置 → 内置页** | 新增内置页 `business-target-edit`（`#/resources/points/target-edit/:id`）：列表的「＋ 添加巡检目标台账 / 编辑」改为跳转本页，原弹窗内容装不下（告警项表格被挤扁）的问题随之消失；顶栏承担原弹窗 title / footer（取消 / 上一步 / 下一步 / 保存） |
+| **巡检项编辑 → 内置页** | 新增内置页 `inspect-item-edit`（`#/resources/points/item-edit/:pointId`）：「添加 / 编辑巡检点」页的「＋ 添加巡检项」与行内「编辑」改为跳转本页，复用 `InspectItemDrawer` 的 **inline** 形态（不再弹窗） |
+| **跨页会话草稿** | 新增 `data/pointEditDraft.ts`：巡检点表单（名称 / 地图 / 定位点 / 巡检项清单 / 巡检项草稿）改用 `useViewState` 会话草稿，两页共用同一组键；巡检点保存成功后清草稿，避免下次进入看到旧内容 |
+| **共用表达** | 新增 `data/businessTargetCrumb.ts`：台账归属链「区域 › 设备 › 仪表 · 巡检要求」两个页面共用一份实现 |
+| **联动** | 巡检项页「快速新建巡检目标台账」→ 跳台账内置页（带回来源），保存后原路返回巡检项页 |
+| **路由** | `navigation.ts` 注册两个内置页（paths / routeMeta / parents）：台账编辑归属「巡检目标台账」，巡检项编辑归属「添加 / 编辑巡检点」（侧边栏高亮随之上浮） |
+| **整页版式** | 列表与编辑视图**互斥**（内置页只渲染编辑表单，不再上下堆叠）；补 `.inner-page` / `.bt-edit-page` / `.field-collect-drawer` 样式：顶栏吸顶且标题带台账名、步骤①三栏给足高度；巡检项编辑补卡片外壳与**吸底动作条** |
+| **保存前预览（二次确认）** | 「配置结果」不再在页面上常驻展示：配置区改为**单栏**（`bt-config-wide`，限宽 1180px），点「保存修改 / 创建巡检目标台账」→ 弹窗摊开当前配置（巡检要求 / 算法 / 告警规则与处置流程）→ 「确认保存 / 返回修改」；`save()` 改返回布尔，保存失败保持弹窗便于对照修改 |
+| **验证** | `tsc` 0 错误 · 测试全绿（**116 项**）· `npm run build` 通过 |
+
+## 2026-10-14（第六轮）机器人能力两级清单 + 巡检项「能力项」表格
+
+| 变更 | 说明 |
+|---|---|
+| **数据** | 新增 `RobotAbilityKind` / `RobotAbilityParam`（两级：能力类型 → 能力参数）、`abilityFields`（各能力特有配置项定义）、`atomicActionOfAbility`（能力参数 → 原子动作）、`InspectAbility` 与 `InspectSpec.abilities`；`State.robotAbilities` |
+| **种子** | 能力清单 **13 类 / 30 项参数**：常用 / 机械臂 / 底盘控制 / 表计识别（视频片段识别 4s·15s·30s、红外识别、高清识别）/ 云台 / 导航 / 充电房（关开联动门、加热器、空调、充电桩上下电、开门）/ 噪音识别（声纹采集）/ 异常识别 / 充电 / 跑冒滴漏 / 环境识别（局部放电检测）/ 气体识别（声学成像泄漏检测、甲烷遥测） |
+| **后台页** | 「机器人上装能力」→「**机器人能力**」（`pages/RobotAbilities.tsx`）：两级平铺表格，支持「＋ 新增参数」「启停」「删除」；引擎动作 `ADD_ROBOT_ABILITY_PARAM` / `SET_ROBOT_ABILITY_STATE` / `DELETE_ROBOT_ABILITY_PARAM` |
+| **巡检项步骤②** | 上装多选下拉 → **能力项表格**（可「＋ 新增一行」）：能力参数（下拉）/ 能力类型（只读带出）/ 配置（按能力渲染特有控件：开关 / 数字 / 动作按钮，如红外识别的拍照纠正·云台复位·红外补偿距离·红外识别区域）/ 操作（删除）；`actions` 由所选能力推导，任务指令集与上装校验链保持 |
+| **操控台** | 上装（云台与镜头）/ 下装（机器人移动）**分块**；新增「位姿与移动后坐标」（`PointActionPlan.at` / `AtomicActionConfig.at`，移动按钮 0.5 米步进）；参数总览改为**一份清单**（含位置坐标），不再按能力分块 |
+| **交互收口** | 操控台上装 / 下装两块改**折叠**（标题即按钮，点开才展开，默认收起）；「机器人能力」页改**树形**（类型可展开 + 计数徽标 + 参数行）；巡检项能力项的「能力参数」改**两段式**（先选能力类型，再选其下参数，不再 30 项平铺） |
+| **验证** | `tsc` 无新增错误（仅外部 MonitorCockpit）· 测试全绿（**116 项**）· `vite build` 通过 |

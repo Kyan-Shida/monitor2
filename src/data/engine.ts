@@ -22,14 +22,25 @@ import type {
   AlgoDeploy,
   AlgoKind,
   RobotPayloadAbility,
+  DeviceKind,
+  PlanKind,
+  MapPacket,
+  Roadnet,
+  AlarmClass,
+  AlarmItem,
+  AlarmPushStaff,
 } from "./types";
 import {
   stages,
   atomicActionCapability,
+  ALGO_LIBRARY,
   atomicActions,
   captureKinds,
   algoDeploys,
   algoKinds,
+  deviceKinds,
+  planKinds,
+  ALARM_CLASS_MAINS,
 } from "./types";
 import {
   rulesOf,
@@ -39,6 +50,9 @@ import {
 } from "./alarmRules";
 import { alarmText } from "./alarmTemplates";
 import type { AlarmTemplate } from "./alarmTemplates";
+import { applyAlarmSetting, checkAlarmItems } from "./alarmSettings";
+import { normalizeScope, pushScopeLabel } from "./alarmPush";
+import { roleOf } from "./roles";
 import { verifyStateOf, VERIFY_DAYS } from "./selectors";
 import { fieldCommand, releaseOutputs } from "./fieldControl";
 import {
@@ -55,11 +69,13 @@ import {
   isInspected,
   defaultInspectItemName,
   defaultTargetKindOfTarget,
+  defaultDeviceKindOfType,
   actionsOfPoint,
   captureKindsOfPoint,
   robotCoversPoint,
   areaNameOf,
   areaOptions,
+  territoryOfDevice,
 } from "./deviceMaster";
 export interface Action {
   type: string;
@@ -74,7 +90,7 @@ const must = (ok: unknown, msg: string) => {
  * 触发条件校验（告警模板与平台标准规则库共用同一套口径）
  * @description 数值范围检查上下限有效性；期望状态检查是否填了状态；
  *              「连续确认」必须给到至少 2 次，否则等于单次触发，配置无意义
- * @param t 触发条件（后台管理 › 告警模板管理 提交的草稿）
+ * @param t 触发条件（告警管理 › 告警模板管理 提交的草稿）
  * @returns 合法返回 true
  */
 function triggerValid(t?: {
@@ -155,7 +171,8 @@ function logVersion(m: MapAsset, note: string) {
 function publishMap(s: State, m: MapAsset) {
   must(m.cloud && m.video, "缺少原始点云或视频，禁止发布");
   must(
-    s.points.some((p) => p.mapId === m.id && p.state !== "停用"),
+    // 判据 = 该图存在业务点位（已标注即可，不要求已启用；「停用」含未启用，不能作为排除项）
+    s.points.some((p) => p.mapId === m.id),
     "至少需要一个已标注业务点位",
   );
   m.updatedAt = new Date().toLocaleString("zh-CN");
@@ -172,7 +189,8 @@ function publishMap(s: State, m: MapAsset) {
 function ensureContentReady(s: State, m: MapAsset) {
   must(m.cloud && m.video, "缺少原始点云或视频，禁止下发");
   must(
-    s.points.some((p) => p.mapId === m.id && p.state !== "停用"),
+    // 判据 = 该图存在业务点位（已标注即可，不要求已启用；「停用」含未启用，不能作为排除项）
+    s.points.some((p) => p.mapId === m.id),
     "至少需要一个已标注业务点位",
   );
 }
@@ -302,7 +320,7 @@ export function constraints(
     ...(t.items.some(
       (p) => s.points.find((q) => q.id === p.id)?.state !== "已启用",
     )
-      ? ["点位未启用或需重新验证"]
+      ? ["点位未启用"]
       : []),
     ...(r.mapId !== t.mapId || r.mapVersion !== t.mapVersion
       ? ["地图版本待同步"]
@@ -397,7 +415,7 @@ export function transition(state: State, a: Action): State {
       .filter(Boolean) as Point[];
     must(
       items.length && items.every((p) => p.state === "已启用"),
-      "请选择已启用且自主验证通过的点位",
+      "请选择已启用的点位",
     );
     must(!items.some((p) => isDeviceStopped(s, p)), "任务包含已停用设备");
     // 「是否巡检」过滤：设备主数据里关闭的检测项不进任务指令集（阶段③ 开关的落地处）
@@ -493,7 +511,7 @@ export function transition(state: State, a: Action): State {
       break;
     }
     /**
-     * 告警模板（后台管理 › 告警模板管理）：新增 / 修改都保存为**新版本**。
+     * 告警模板（告警管理 › 告警模板管理）：新增 / 修改都保存为**新版本**。
      * @description 模板是「触发条件 + 处理流程」的唯一维护点：
      *              点位规则（无巡检目标台账时）引用启用模板的触发条件与等级；
      *              结果快照带模板 ID → 处置页按模板展示处理流程；
@@ -524,6 +542,145 @@ export function transition(state: State, a: Action): State {
       s.alarmTemplates = list.filter((x) => x.id !== next.id).concat(next);
       object = next.id;
       detail = `告警模板「${next.name}」已保存为第 ${next.version} 版`;
+      break;
+    }
+    /**
+     * 告警类别（告警管理 › 告警类别）：分类名称 + 告警大类 + 是否启用
+     * @description 启用的分类是「告警设置 › 告警类型」下拉与「告警记录 › 分类筛选」的数据源，
+     *              因此分类名在同库内唯一，避免台账指向两个同名分类
+     */
+    case "SAVE_ALARM_CLASS": {
+      must(s.roleId === "admin", "仅管理员可维护告警类别");
+      const c = a.category as AlarmClass;
+      const name = String(c?.name || "").trim();
+      must(name, "请填写分类名称");
+      must(
+        (ALARM_CLASS_MAINS as readonly string[]).includes(c?.main),
+        "请选择告警大类",
+      );
+      const list = s.alarmClasses || [];
+      must(
+        !list.some((x) => x.name === name && x.id !== c.id),
+        `已存在同名告警类别「${name}」`,
+      );
+      const next: AlarmClass = {
+        ...c,
+        id: c.id || id("AC-"),
+        name,
+        main: c.main,
+        enabled: c.enabled !== false,
+        updatedAt: new Date().toLocaleString("zh-CN"),
+      };
+      s.alarmClasses = list.filter((x) => x.id !== next.id).concat(next);
+      object = next.id;
+      detail = `告警类别「${next.name}」已保存（${next.main} · ${
+        next.enabled ? "启用" : "停用"
+      }）`;
+      break;
+    }
+    /**
+     * 告警类别删除：被台账告警设置引用的分类不允许删除，
+     * 否则台账的告警类型会指向一个不存在的分类（先改类型再删）
+     */
+    case "REMOVE_ALARM_CLASS": {
+      must(s.roleId === "admin", "仅管理员可维护告警类别");
+      const gone = (s.alarmClasses || []).find((x) => x.id === a.id);
+      must(gone, "告警类别不存在");
+      const used = (s.businessTargets || []).filter(
+        (b) => b.alarm?.category === gone!.name,
+      ).length;
+      must(
+        !used,
+        `该分类已被 ${used} 个台账的告警设置引用，请先调整这些台账的告警类型`,
+      );
+      s.alarmClasses = (s.alarmClasses || []).filter((x) => x.id !== a.id);
+      object = gone!.id;
+      detail = `告警类别「${gone!.name}」已删除`;
+      break;
+    }
+    /**
+     * 告警设置（告警管理 › 告警设置）：保存一个台账的告警设置（类型 / 开关 / 多条告警项）
+     * @description 与巡检目标台账**同一份数据**：写回 `BusinessTarget.alarm`，
+     *              并把台账的判定口径同步为第一条告警项（台账页保存走同一个函数）；
+     *              告警名称不在告警设置里维护：名称统一由台账名称派生（alarmSettings.targetNameOf）
+     */
+    case "SAVE_ALARM_SETTING": {
+      const t = s.businessTargets?.find((b) => b.id === a.targetId);
+      must(t, "巡检目标台账不存在");
+      const set = a.setting as {
+        category: string;
+        enabled: boolean;
+        items: AlarmItem[];
+      };
+      must(String(set?.category || "").trim(), "请选择告警类型");
+      const bad = checkAlarmItems(set?.items || []);
+      must(!bad, bad);
+      s.businessTargets = (s.businessTargets || []).map((b) =>
+        b.id === t!.id
+          ? applyAlarmSetting(b, {
+              category: set.category,
+              enabled: set.enabled !== false,
+              items: set.items,
+            })
+          : b,
+      );
+      object = t!.id;
+      detail = `告警设置已保存（${set.items.length} 条告警项 · ${
+        set.enabled !== false ? "启用" : "停用"
+      }）`;
+      break;
+    }
+    /**
+     * 告警推送人员（告警管理 › 告警推送）：新增 / 修改一条推送名单
+     * @description 登录名在同库内唯一（推送通道按登录名定位账号）；等级留空 = 接收全部等级
+     */
+    case "SAVE_ALARM_PUSH": {
+      must(s.roleId === "admin", "仅管理员可维护告警推送");
+      const p = a.staff as AlarmPushStaff;
+      const name = String(p?.name || "").trim();
+      const login = String(p?.login || "").trim();
+      const phone = String(p?.phone || "").trim();
+      must(name, "请填写姓名");
+      must(login, "请填写用户登录名");
+      must(phone, "请填写手机号");
+      const list = s.alarmPushStaff || [];
+      must(
+        !list.some((x) => x.login === login && x.id !== p.id),
+        `登录名「${login}」已存在`,
+      );
+      const next: AlarmPushStaff = {
+        ...p,
+        id: p.id || id("AP-"),
+        name,
+        login,
+        phone,
+        dept: String(p.dept || "").trim(),
+        levels: (p.levels || []).slice(),
+        // 绑定范围（区域 / 属地 / 设备）：去空去重后落库；留空 = 不限该维度
+        areas: normalizeScope(p.areas),
+        territories: normalizeScope(p.territories),
+        devices: normalizeScope(p.devices),
+        sms: p.sms !== false,
+        updatedBy: roleOf(s.roleId).person,
+        updatedAt: new Date().toLocaleString("zh-CN"),
+      };
+      s.alarmPushStaff = list.filter((x) => x.id !== next.id).concat(next);
+      object = next.id;
+      detail = `推送人员「${next.name}」已保存（${
+        next.levels.length ? next.levels.join(" / ") : "全部等级"
+      } · ${pushScopeLabel(next)}）`;
+      break;
+    }
+    /**
+     * 告警推送人员删除：一人一条、无引用关系，按勾选直接删
+     */
+    case "REMOVE_ALARM_PUSH": {
+      must(s.roleId === "admin", "仅管理员可维护告警推送");
+      const gone = (s.alarmPushStaff || []).find((x) => x.id === a.id);
+      must(gone, "推送人员不存在");
+      s.alarmPushStaff = (s.alarmPushStaff || []).filter((x) => x.id !== a.id);
+      object = gone!.id;
+      detail = `推送人员「${gone!.name}」已删除`;
       break;
     }
     /**
@@ -577,6 +734,139 @@ export function transition(state: State, a: Action): State {
     case "FIELD_COMMAND": {
       fieldCommand(s, robot(), a.command, a.value, a.fail);
       detail = `现场控制 ${a.command} · ${s.fieldDevices![robot().id].status}`;
+      break;
+    }
+    /**
+     * 接收地图数据包（「新增地图」：在线机器人扫描回传）
+     * @description 数据包**还不是地图**：只登记来源机器人、接收时间与点云预览，
+     *              列表以卡片展示；用户点「编辑」命名 / 定区域后才走 IMPORT 落为正式地图
+     */
+    case "ADD_MAP_PACKET": {
+      const rid = String(a.robotId || "").trim();
+      const r = s.robots.find((x) => x.id === rid);
+      must(r, "请选择采集机器人");
+      must(r!.state !== "离线", `机器人「${r!.name}」已离线，无法扫描回传`);
+      const packets = (s.mapPackets ??= []);
+      const seq = packets.length + 1;
+      const rec: MapPacket = {
+        id: id("PKT"),
+        // 未编辑前给占位名（编辑时才命名并转为地图）
+        name:
+          String(a.name || "").trim() ||
+          `地图信息-${String(seq).padStart(2, "0")}-${r!.id}`,
+        robotId: r!.id,
+        at: new Date().toLocaleString("zh-CN"),
+        image: a.image,
+        source: "机器人扫描回传",
+      };
+      packets.unshift(rec);
+      object = rec.id;
+      detail = `已接收地图数据包「${rec.name}」（来自 ${r!.name}）`;
+      break;
+    }
+    case "DELETE_MAP_PACKET": {
+      const packets = (s.mapPackets ??= []);
+      const hit = packets.find((x) => x.id === a.id);
+      must(hit, "未找到要删除的地图数据包");
+      s.mapPackets = packets.filter((x) => x.id !== hit!.id);
+      object = hit!.id;
+      detail = `已删除地图数据包「${hit!.name}」`;
+      break;
+    }
+    /** 重命名地图数据包（卡片「⋯ › 重命名」） */
+    case "RENAME_MAP_PACKET": {
+      const packets = (s.mapPackets ??= []);
+      const hit = packets.find((x) => x.id === a.id);
+      must(hit, "未找到要重命名的地图数据包");
+      const name = String(a.name || "").trim();
+      must(name, "请填写数据包名称");
+      hit!.name = name;
+      object = hit!.id;
+      detail = `数据包已重命名为「${name}」`;
+      break;
+    }
+    /**
+     * 构建地图（卡片「⋯ › 构建地图」）：把地图数据包转成**可标定的 SLAM 地图**
+     * @description 数据包只是扫描产物；构建后成为正式 `MapAsset`——可进标定工作台打点 / 连线，
+     *              并按 `frames`（分辨率 + 原点）做「像素 → 局部米 → 全局坐标」换算；
+     *              构建成功后移除该数据包
+     */
+    case "BUILD_MAP": {
+      const packets = (s.mapPackets ??= []);
+      const k = packets.find((x) => x.id === a.packetId);
+      must(k, "未找到要构建的地图数据包");
+      const name = String(a.name || "").trim() || k!.name;
+      const m: MapAsset = {
+        id: id("MAP"),
+        name,
+        region: String(a.region || "一期罐区"),
+        version: 1,
+        state: "未发布",
+        source: "机器人扫描构建",
+        batch: k!.id,
+        cloud: "scan-multimodal.pcd",
+        video: "scan-video.mp4",
+        file: `${k!.id}.map`,
+        checksum: "demo-sha256:scan",
+        image: k!.image,
+        history: [
+          {
+            version: 1,
+            note: `由数据包「${k!.name}」构建（待标定：像素 → 全局坐标换算）`,
+            at: new Date().toLocaleString("zh-CN"),
+          },
+        ],
+        updatedAt: new Date().toLocaleString("zh-CN"),
+      };
+      s.maps.push(m);
+      s.mapPackets = packets.filter((x) => x.id !== k!.id);
+      object = m.id;
+      detail = `已由数据包「${k!.name}」构建地图「${name}」`;
+      break;
+    }
+    /** 重命名地图 */
+    case "RENAME_MAP": {
+      const hit = s.maps.find((x) => x.id === a.id);
+      must(hit, "未找到要重命名的地图");
+      const name = String(a.name || "").trim();
+      must(name, "请填写地图名称");
+      hit!.name = name;
+      hit!.updatedAt = new Date().toLocaleString("zh-CN");
+      object = hit!.id;
+      detail = `地图已重命名为「${name}」`;
+      break;
+    }
+    /** 删除地图：图下仍有巡检点时拒绝，避免留下悬空引用（同步清理标定数据与下发记录） */
+    case "DELETE_MAP": {
+      const hit = s.maps.find((x) => x.id === a.id);
+      must(hit, "未找到要删除的地图");
+      must(
+        !s.points.some((p) => p.mapId === hit!.id),
+        `地图「${hit!.name}」下仍有巡检点，请先处理后再删除`,
+      );
+      s.maps = s.maps.filter((x) => x.id !== hit!.id);
+      s.mapCalibrations = (s.mapCalibrations || []).filter(
+        (c) => c.mapId !== hit!.id,
+      );
+      s.syncs = (s.syncs || []).filter((x) => x.mapId !== hit!.id);
+      object = hit!.id;
+      detail = `已删除地图「${hit!.name}」`;
+      break;
+    }
+    /**
+     * 保存路网（标定工作台）：只存线 / 弧
+     * @description 「点」是定位点，打点时即时写入标定数据（`ADD_TARGET`），与现场采集共用同一份；
+     *              这里只保存线 / 弧，两端用定位点 id 引用——保证**地图与点位一致**
+     */
+    case "SAVE_ROADNET": {
+      const hit = s.maps.find((x) => x.id === a.mapId);
+      must(hit, "未找到地图");
+      const paths = (a.paths || []) as Roadnet["paths"];
+      must(paths.length, "请先连线（直线 / 曲线）再保存路网");
+      hit!.roadnet = { paths };
+      hit!.updatedAt = new Date().toLocaleString("zh-CN");
+      object = hit!.id;
+      detail = `路网已保存：${paths.length} 条线`;
       break;
     }
     case "IMPORT": {
@@ -739,6 +1029,12 @@ export function transition(state: State, a: Action): State {
           id: code,
           name: String(r.name),
           type: r.type || "未分类",
+          // 设备形态：导入列优先（非法值不落库），缺省按设备类型推导
+          deviceKind: (
+            deviceKinds.includes(r.deviceKind as DeviceKind)
+              ? r.deviceKind
+              : defaultDeviceKindOfType(String(r.type || ""))
+          ) as DeviceKind,
           regionCode: r.regionCode || "",
           locationDesc: r.locationDesc || "",
           coord: r.coord,
@@ -837,7 +1133,7 @@ export function transition(state: State, a: Action): State {
       it!.unit = String(a.unit ?? it!.unit).trim();
       it!.cycle = String(a.cycle ?? it!.cycle).trim() || it!.cycle;
       if (a.priority) it!.priority = a.priority as InspectItem["priority"];
-      // 同口径同步：仪表（工厂树）与巡检目标台账（分类影响台账的装置 / 空间与区域归类）
+      // 同口径同步：仪表（工厂树）与巡检目标台账（分类影响台账的设备形态归类）
       const ins = s.instruments?.find((x) => x.id === it!.id);
       if (ins) {
         ins.name = it!.target;
@@ -935,6 +1231,8 @@ export function transition(state: State, a: Action): State {
         must((a.alarm?.consecutive || 0) >= 2, "「连续确认」至少要填 2 次");
       const rec: BusinessTarget = {
         id: id("BT"),
+        // 台账名称：留空时按仪表名 / 锚点派生（列表与告警名称都取这里）
+        name: String(a.name || "").trim() || undefined,
         targetKind,
         instrumentId: ins?.id,
         anchor: String(a.anchor || "").trim() || undefined,
@@ -978,6 +1276,8 @@ export function transition(state: State, a: Action): State {
     case "UPDATE_BUSINESS_TARGET": {
       const b = s.businessTargets?.find((x) => x.id === a.id);
       must(b, "巡检目标台账不存在");
+      // 台账名称：留空 = 回到派生口径（清空自定义名）
+      if (a.name !== undefined) b!.name = String(a.name).trim() || undefined;
       if (a.algorithm !== undefined) {
         must(String(a.algorithm).trim(), "算法不能为空");
         b!.algorithm = String(a.algorithm).trim();
@@ -1017,6 +1317,41 @@ export function transition(state: State, a: Action): State {
       detail = `巡检目标台账已更新（是否巡检：${b!.inspect ? "开" : "关"}）`;
       break;
     }
+    /**
+     * 批量删除巡检目标台账（列表多选删除）
+     * @description 仍被巡检点巡检项引用的台账不允许删除：
+     *              删了会让巡检项的「检什么、怎么判」悬空（巡检点保存时也会校验引用存在）
+     */
+    case "DELETE_BUSINESS_TARGETS": {
+      const ids: string[] = Array.isArray(a.ids) ? a.ids.map(String) : [];
+      must(ids.length, "请先选择要删除的巡检目标台账");
+      const list = s.businessTargets ?? [];
+      const nameOf = (bid: string) => {
+        const b = list.find((x) => x.id === bid);
+        return b?.name || b?.goal || bid;
+      };
+      const blocked = ids
+        .map((bid) => ({
+          bid,
+          points: (s.points || []).filter((p) =>
+            (p.inspectItems || []).some((it) => it.targetId === bid),
+          ),
+        }))
+        .filter((x) => x.points.length);
+      must(
+        !blocked.length,
+        `以下台账已被巡检点引用，需先解绑：${blocked
+          .map(
+            (x) => `${nameOf(x.bid)}（${x.points.map((p) => p.name).join(" / ")}）`,
+          )
+          .join("；")}`,
+      );
+      s.businessTargets = list.filter((b) => !ids.includes(b.id));
+      object = ids.join(",");
+      detail = `已删除 ${ids.length} 个巡检目标台账：${ids.map(nameOf).join("、")}`;
+      break;
+    }
+    // ── 巡检点管理：巡检点 = 名称 + 地图 + 标定点 + 多个巡检项 ──
     // ── 巡检点管理：巡检点 = 名称 + 地图 + 标定点 + 多个巡检项 ──
     case "SAVE_POINT": {
       const m = map();
@@ -1104,7 +1439,8 @@ export function transition(state: State, a: Action): State {
         kind: firstIns.capture,
         requirement:
           btOf(normalized[0].targetId)?.criteria || normalized[0].name,
-        state: old ? "待重新验证" : "待验证",
+        // 状态只有两态：保存即打回「停用」，待人工启用或自主验证通过后转「已启用」
+        state: "停用",
         x: target!.x,
         y: target!.y,
         // DATA-01：统一坐标系权威定位（保留原值，首次创建时按地图相对坐标初始化，后续由标定更新）
@@ -1293,7 +1629,8 @@ export function transition(state: State, a: Action): State {
         targetId: target!.id,
         x: target!.x,
         y: target!.y,
-        state: old ? "待重新验证" : "待验证",
+        // 状态只有两态：标注即打回「停用」，待人工启用或自主验证通过后转「已启用」
+        state: "停用",
         // 「怎么看」与标注同一入口保存（不再另开"动作编排"页面）
         actionPlan: a.actionPlan || old?.actionPlan,
         pose: a.pose || old?.pose || { x: target!.x, y: target!.y, yaw: 0 },
@@ -1321,10 +1658,29 @@ export function transition(state: State, a: Action): State {
         x: a.x || 50,
         y: a.y || 48,
         state: "待确认",
+        // 标定工作台的点参数（点类型 / 楼层 / 楼层连接点）
+        pointType: a.pointType || "停靠点",
+        floor: Number(a.floor ?? 0),
+        floorLink: Number(a.floorLink ?? 0),
       });
       cal.updatedAt = new Date().toLocaleString("zh-CN");
       object = cal.id;
       detail = `已新增巡检点`;
+      break;
+    }
+    /**
+     * 修改定位点的标定参数（标定工作台侧边参数面板）
+     * @description 只动点类型 / 楼层 / 楼层连接点，不改坐标与业务绑定
+     */
+    case "UPDATE_TARGET": {
+      const m = map();
+      const t = targetsOf(s, m.id).find((x) => x.id === a.targetId);
+      must(t, "定位点不存在");
+      if (a.pointType !== undefined) t!.pointType = String(a.pointType);
+      if (a.floor !== undefined) t!.floor = Number(a.floor) || 0;
+      if (a.floorLink !== undefined) t!.floorLink = Number(a.floorLink) || 0;
+      object = t!.id;
+      detail = `定位点「${t!.externalId || t!.id}」参数已更新`;
       break;
     }
     case "UPLOAD_REFERENCE": {
@@ -1517,7 +1873,7 @@ export function transition(state: State, a: Action): State {
         `验证机器人不具备该点位的采集方式（需要 ${need.join(" / ")}）`,
       );
       if (a.fail) {
-        p.state = "待重新验证";
+        p.state = "停用";
         p.validated = undefined;
         p.validationFailure = `${r.id} / 地图第 ${m.version} 版：目标身份未确认（模拟失败），请修正标注后重新验证`;
         break;
@@ -1543,7 +1899,7 @@ export function transition(state: State, a: Action): State {
       must(c.state === "待确认", "仅待确认变化可受理");
       c.state = "维护中";
       const p = s.points.find((p) => p.id === c.pointId);
-      if (p) p.state = "待重新验证";
+      if (p) p.state = "停用";
       break;
     }
     case "CHANGE_REVISION": {
@@ -1580,12 +1936,23 @@ export function transition(state: State, a: Action): State {
       break;
     }
     case "SAVE_TEMPLATE": {
-      must(a.name && a.points?.length, "请输入模板名称并选择检测点位");
+      must(a.name && a.points?.length, "请输入巡检路线名称并选择巡检点");
+      // 单图约束（父线基线）：机器狗按区域调度、任务本身也要求同一张地图，
+      // 所以一条路线（子线）必须落在同一张地图（父线）上。
+      // 后期若支持跨图，把这里换成 mapIds: string[] 白名单校验即可
+      const routePoints = (a.points as string[])
+        .map((pid) => s.points.find((x) => x.id === pid))
+        .filter(Boolean) as Point[];
+      must(routePoints.length === a.points.length, "所选巡检点不存在或已删除");
+      const mapIds = [...new Set(routePoints.map((p) => p.mapId))];
+      must(mapIds.length === 1, "一条巡检路线只能属于同一张地图（父线）");
       const old = s.templates.find((t) => t.id === a.id);
       const t: Template = {
         id: old?.id || id("TMP"),
         name: a.name,
         points: a.points,
+        // 父线地图（路线基线）：后期支持跨图时扩展为 mapIds: string[]
+        mapId: mapIds[0],
         end: a.end || "返航",
         state: a.state || old?.state || "启用",
         version: (old?.version || 0) + 1,
@@ -1598,21 +1965,21 @@ export function transition(state: State, a: Action): State {
     }
     case "TOGGLE_TEMPLATE_STATE": {
       const t = s.templates.find((x) => x.id === a.id);
-      must(t, "模板不存在或已删除");
+      must(t, "巡检路线不存在或已删除");
       if (t.state === "启用") {
         const used = s.plans.filter(
           (p) => p.templateId === a.id && p.state === "启用",
         );
-        must(used.length === 0, "该模板仍有启用的计划引用，请先停用相关计划");
+        must(used.length === 0, "该巡检路线仍有启用的计划引用，请先停用相关计划");
       }
       t.state = t.state === "启用" ? "停用" : "启用";
       break;
     }
     case "DELETE_TEMPLATE": {
       const t = s.templates.find((x) => x.id === a.id);
-      must(t, "模板不存在或已删除");
+      must(t, "巡检路线不存在或已删除");
       const used = s.plans.filter((p) => p.templateId === a.id);
-      must(used.length === 0, "该模板已被巡检计划引用，请先解除引用再删除");
+      must(used.length === 0, "该巡检路线已被巡检计划引用，请先解除引用再删除");
       s.templates = s.templates.filter((x) => x.id !== a.id);
       break;
     }
@@ -1635,19 +2002,31 @@ export function transition(state: State, a: Action): State {
         ),
         "时间参数必须为非负数",
       );
+      // 执行方式：周期任务（区间内按周期循环）/ 定时任务（指定日期执行一次）
+      const kind: PlanKind = planKinds.includes(a.kind as PlanKind)
+        ? (a.kind as PlanKind)
+        : "周期任务";
       must(
-        a.name && a.templateId && a.start <= a.end,
-        "请填写计划、模板及有效日期",
+        kind !== "定时任务" || /^\d{4}-\d{2}-\d{2}$/.test(String(a.start || "")),
+        "请选择定时任务的执行日期",
+      );
+      // 定时任务的「执行日期」是唯一有效日：有效期首尾取同一天，避免"区间内只跑一次"的歧义
+      const start = String(a.start || "");
+      const end = kind === "定时任务" ? start : String(a.end || "");
+      must(
+        a.name && a.templateId && start && end && start <= end,
+        "请填写计划、巡检路线及有效日期",
       );
       const old = s.plans.find((p) => p.id === a.id);
       const p: Plan = {
         id: old?.id || id("PL"),
         name: a.name,
+        kind,
         templateId: a.templateId,
         robotId: a.robotId,
         cycle: a.cycle,
-        start: a.start,
-        end: a.end,
+        start,
+        end,
         time: a.time,
         advance: +a.advance,
         timeout: +a.timeout,
@@ -1676,7 +2055,7 @@ export function transition(state: State, a: Action): State {
         "该计划时段已生成任务，请勿重复生成",
       );
       const template = s.templates.find((t) => t.id === p.templateId)!;
-      must(template?.state === "启用", "模板已停用");
+      must(template?.state === "启用", "巡检路线已停用");
       const t = createTask(
         p.name,
         template.points,
@@ -2072,7 +2451,7 @@ export function transition(state: State, a: Action): State {
         t.done.push(p.id);
         if (abnormal || aiAbnormal) {
           /**
-           * 触发逻辑（后台管理 › 告警模板管理配置，经告警模板引用下发到这里）：
+           * 触发逻辑（告警管理 › 告警模板管理配置，经告警模板引用下发到这里）：
            * 「连续确认」= 该点位最近 N 条结果全部异常才算触发，用于抑制工况抖动造成的误报；
            * 默认单次即触发；AI 状态异常固定单次即触发（识别不出结论必须让人看到）
            */
@@ -2633,20 +3012,81 @@ export function transition(state: State, a: Action): State {
       detail = `已删除区域「${hit!.name}」`;
       break;
     }
+    // ── 属地单位（设备「属地」字段的候选口径，与区域同为可维护主数据；无独立 ID，按名称定位）──
+    case "ADD_TERRITORY": {
+      const name = String(a.name || "").trim();
+      must(name, "请填写属地名称");
+      const list = (s.territories ??= []);
+      must(!list.includes(name), `属地「${name}」已存在`);
+      list.push(name);
+      object = name;
+      detail = `已新增属地「${name}」`;
+      break;
+    }
+    case "RENAME_TERRITORY": {
+      const from = String(a.from || "").trim();
+      const to = String(a.to || "").trim();
+      must(to, "请填写属地名称");
+      const list = (s.territories ??= []);
+      must(list.includes(from), "未找到要编辑的属地");
+      must(!list.includes(to), `属地「${to}」已存在`);
+      // 设备 / 推送范围都按名称引用：改名后一并同步，避免留下悬空属地
+      (s.devices || []).forEach((d) => {
+        if (territoryOfDevice(d) === from) d.territory = to;
+      });
+      (s.alarmPushStaff || []).forEach((p) => {
+        if (p.territories?.includes(from))
+          p.territories = p.territories.map((x) => (x === from ? to : x));
+      });
+      s.territories = list.map((x) => (x === from ? to : x));
+      object = to;
+      detail = `属地「${from}」已重命名为「${to}」`;
+      break;
+    }
+    case "DELETE_TERRITORY": {
+      const name = String(a.name || "").trim();
+      const list = (s.territories ??= []);
+      must(list.includes(name), "未找到要删除的属地");
+      const byDevice = (s.devices || []).filter(
+        (d) => territoryOfDevice(d) === name,
+      ).length;
+      const byPush = (s.alarmPushStaff || []).filter((p) =>
+        p.territories?.includes(name),
+      ).length;
+      must(
+        !byDevice && !byPush,
+        `属地「${name}」仍被 ${byDevice + byPush} 处引用，请先调整设备归属 / 推送范围`,
+      );
+      s.territories = list.filter((x) => x !== name);
+      object = name;
+      detail = `已删除属地「${name}」`;
+      break;
+    }
     case "ADD_DEVICE": {
       const did = String(a.id || "").trim();
       const name = String(a.name || "").trim();
       must(did && name, "请填写设备编码与设备名称");
       const devs = (s.devices ??= []);
       must(!devs.some((d) => d.id === did), `设备编码「${did}」已存在`);
+      // 设备形态：显式值必须合法；未指定时按设备类型推导
+      const deviceKind = String(a.deviceKind || "").trim();
+      must(
+        !deviceKind || deviceKinds.includes(deviceKind as DeviceKind),
+        `设备形态「${deviceKind}」不合法（应为 ${deviceKinds.join(" / ")}）`,
+      );
+      const deviceType = String(a.deviceType || "").trim() || "未分类";
       devs.unshift({
         id: did,
         name,
         // 注意：动作名是 a.type，设备类型必须用独立字段 a.deviceType
-        type: String(a.deviceType || "").trim() || "未分类",
+        type: deviceType,
+        deviceKind:
+          (deviceKind as DeviceKind) || defaultDeviceKindOfType(deviceType),
         regionCode: String(a.regionCode || "R-A03"),
         region: String(a.region || "").trim() || undefined,
         locationDesc: String(a.locationDesc || "").trim(),
+        // 属地单位（告警 KPI 的「属地」维度口径）：设备台账里维护，可留空
+        territory: String(a.territory || "").trim() || undefined,
         items: [],
         state: "在用",
       });
@@ -2662,9 +3102,20 @@ export function transition(state: State, a: Action): State {
       must(name, "请填写设备名称");
       hit!.name = name;
       hit!.type = String(a.deviceType || "").trim() || hit!.type;
+      // 设备形态：显式值必须合法；未指定时保持原值（缺字段时按类型推导）
+      const kind = String(a.deviceKind || "").trim();
+      must(
+        !kind || deviceKinds.includes(kind as DeviceKind),
+        `设备形态「${kind}」不合法（应为 ${deviceKinds.join(" / ")}）`,
+      );
+      if (kind) hit!.deviceKind = kind as DeviceKind;
+      else hit!.deviceKind = hit!.deviceKind || defaultDeviceKindOfType(hit!.type);
       hit!.region = String(a.region || "").trim() || undefined;
       hit!.locationDesc =
         String(a.locationDesc ?? "").trim() || hit!.locationDesc;
+      // 属地单位（告警 KPI 的「属地」维度口径）：可清空（传空串即置为未指定）
+      if (a.territory !== undefined)
+        hit!.territory = String(a.territory || "").trim() || undefined;
       object = hit!.id;
       detail = `已更新设备「${name}」`;
       break;
@@ -2756,6 +3207,62 @@ export function transition(state: State, a: Action): State {
       hit!.state = a.state === "停用" ? "停用" : "启用";
       object = hit!.id;
       detail = `上装「${hit!.name}」已${hit!.state === "停用" ? "停用" : "启用"}`;
+      break;
+    }
+    // ── 算法（后台管理 › 算法）：厂区**不手写算法**，只从平台算法库勾选启用 ──
+    case "ENABLE_ALGOS": {
+      const ids: string[] = Array.isArray(a.ids) ? a.ids.map(String) : [];
+      must(ids.length, "请先勾选要启用的算法");
+      const list = (s.algoConfigs ??= []);
+      const added: string[] = [];
+      ids.forEach((aid) => {
+        const hit = ALGO_LIBRARY.find((x) => x.id === aid);
+        if (!hit || list.some((x) => x.id === aid)) return;
+        list.push({ ...hit });
+        added.push(hit.name);
+      });
+      must(added.length, "所选算法都已在厂区启用");
+      object = ids.join(",");
+      detail = `已从算法库启用 ${added.length} 个算法：${added.join("、")}`;
+      break;
+    }
+    // ── 机器人能力（后台管理 › 机器人能力）：两级 —— 能力类型 → 能力参数 ──
+    case "ADD_ROBOT_ABILITY_PARAM": {
+      const list = (s.robotAbilities ??= []);
+      const kind = list.find((k) => k.id === a.kindId);
+      must(kind, "未找到能力类型");
+      const name = String(a.name || "").trim();
+      must(name, "请填写能力参数名称");
+      must(
+        !kind!.params.some((p) => p.name === name),
+        `能力参数「${name}」已存在`,
+      );
+      const pid = "RA-" + Date.now().toString(36);
+      kind!.params.push({ id: pid, name });
+      object = pid;
+      detail = `已在「${kind!.name}」下新增能力参数：${name}`;
+      break;
+    }
+    case "DELETE_ROBOT_ABILITY_PARAM": {
+      const list = (s.robotAbilities ??= []);
+      const kind = list.find((k) => k.id === a.kindId);
+      must(kind, "未找到能力类型");
+      const hit = kind!.params.find((p) => p.id === a.paramId);
+      must(hit, "未找到要删除的能力参数");
+      kind!.params = kind!.params.filter((p) => p.id !== a.paramId);
+      object = hit!.id;
+      detail = `已删除能力参数「${hit!.name}」`;
+      break;
+    }
+    case "SET_ROBOT_ABILITY_STATE": {
+      const list = (s.robotAbilities ??= []);
+      const kind = list.find((k) => k.id === a.kindId);
+      must(kind, "未找到能力类型");
+      const hit = kind!.params.find((p) => p.id === a.paramId);
+      must(hit, "未找到该能力参数");
+      hit!.state = a.state === "停用" ? "停用" : "启用";
+      object = hit!.id;
+      detail = `能力参数「${hit!.name}」已${hit!.state === "停用" ? "停用" : "启用"}`;
       break;
     }
     case "DELETE_ROBOT_PAYLOAD": {

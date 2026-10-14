@@ -1,6 +1,6 @@
 /**
  * @file PlanRobotBinding.tsx
- * @description 计划绑定执行机器人：以模板需求为基准，卡片式对比候选机器人的检测能力与可绑定状态；
+ * @description 计划绑定执行机器人：以路线需求为基准，卡片式对比候选机器人的检测能力与可绑定状态；
  *              选中的机器人把执行前提与能力可用性内联展开在同一张卡片内，避免明细与卡片并列导致归属不清
  * @interaction Planning.tsx（新建 / 编辑计划弹窗）；能力可用性口径来自 data/robotCapabilities，绑定校验来自 data/planSchedule
  */
@@ -20,10 +20,10 @@ export function PlanRobotBinding({
 }) {
   const { s } = useStore();
   const template = s.templates.find((t) => t.id === templateId);
-  /** 模板所需检测能力：作为候选机器人的能力对照基准 */
+  /** 路线所需检测能力：作为候选机器人的能力对照基准 */
   const needKinds = requiredKinds(s, templateId);
   const points = s.points.filter((p) => template?.points.includes(p.id));
-  /** 模板点位涉及的服务区域：区域不匹配时提示具体区域 */
+  /** 路线点位涉及的服务区域：区域不匹配时提示具体区域 */
   const needRegions = [
     ...new Set(
       points
@@ -75,11 +75,11 @@ export function PlanRobotBinding({
   );
   return (
     <section className="plan-binding">
-      {/* 对照基准：先说清模板要什么，再看机器人有什么 */}
+      {/* 对照基准：先说清路线要什么，再看机器人有什么 */}
       <div className="pb-req">
         <h4>执行机器人 · 计划任务按时自动执行</h4>
         <p>
-          模板需求：{needKinds.length ? needKinds.join(" / ") : "未指定检测能力"}
+          路线需求：{needKinds.length ? needKinds.join(" / ") : "未指定检测能力"}
           <span> · 服务区域 {needRegions.join(" / ") || "未指定"}</span>
           <span> · 共 {points.length} 个巡检点</span>
         </p>
@@ -107,7 +107,7 @@ export function PlanRobotBinding({
           const blocked = reasons.length > 0;
           /** 缺失的检测能力：把「检测能力不足」展开成具体缺哪几项 */
           const missing = needKinds.filter((k) => !r.capabilities.includes(k));
-          /** 机器人具备但模板未要求的能力：作为富余能力提示 */
+          /** 机器人具备但路线未要求的能力：作为富余能力提示 */
           const extra = r.capabilities.filter((k) => !needKinds.includes(k));
           const selected = value === r.id;
           return (
@@ -157,7 +157,7 @@ export function PlanRobotBinding({
                   <p className="pb-alert" role="alert">
                     不可绑定：
                     {reasons.includes("服务区域不匹配") &&
-                      `服务区域不匹配（模板服务区域 ${needRegions.join(" / ")}）`}
+                      `服务区域不匹配（路线服务区域 ${needRegions.join(" / ")}）`}
                     {reasons.includes("服务区域不匹配") &&
                       reasons.includes("检测能力不足") &&
                       "；"}
@@ -172,7 +172,7 @@ export function PlanRobotBinding({
                   </p>
                 ) : (
                   <p className="pb-ok">
-                    可绑定：服务区域与检测能力均满足模板要求
+                    可绑定：服务区域与检测能力均满足路线要求
                   </p>
                 )}
                 {/* 选中态下就地展开明细：与卡片同属一块，避免"明细属于谁"含混 */}

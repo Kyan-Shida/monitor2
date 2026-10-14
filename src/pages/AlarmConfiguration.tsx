@@ -81,8 +81,9 @@ export function AlarmConfiguration({
       <Note>
         {readOnly ? (
           <>
-            <b>告警设置只有一处入口</b>：「巡检目标台账 › 配业务逻辑与算法 › 告警设置」
-            （告警等级 + 通知 + 关联告警模板），巡检点本身不配置告警。此处只查看该点位当前生效的判定与告警规则。
+            <b>告警设置在台账侧统一维护</b>：「巡检目标台账 › 3、告警规则」或
+            「告警管理 › 告警设置」（同一份数据），巡检点本身不配置告警。
+            此处只查看该点位当前生效的判定与告警规则。
           </>
         ) : (
           <>
@@ -153,16 +154,16 @@ export function AlarmConfiguration({
         </Field>
         {rule ? <RuleTrial key={`${rule.id}-${rule.version}-${rule.type}`} rule={rule} /> : <p className="muted">暂无可试算的规则，请先配置巡检点规则。</p>}
       </Panel>
-      {/* 引用方：告警模板统一在「后台管理 › 告警模板管理」维护，此处只读展示引用关系 */}
+      {/* 引用方：告警模板统一在「告警管理 › 告警模板管理」维护，此处只读展示引用关系 */}
       {!pointId && (
         <Panel
-          title="告警模板 · 引用自后台管理"
+          title="告警模板 · 引用自告警管理"
           extra={
             <Btn
               disabled={s.roleId !== "admin"}
               onClick={() => go("alarm-templates")}
             >
-              去后台管理维护 →
+              去告警模板维护 →
             </Btn>
           }
         >

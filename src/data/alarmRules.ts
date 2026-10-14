@@ -64,8 +64,8 @@ export const targetOfPoint = (s: State, p: Point) =>
 /**
  * 各点位的判定规则
  * @description **默认来源 = 该巡检点绑定的巡检目标台账**：判定方式 / 阈值 / 告警等级 /
- *              是否告警全部取自「巡检目标台账 › 配业务逻辑与算法」，这是平台唯一的告警配置入口
- *              （巡检点、点位都不再提供告警配置）。
+ *              是否告警全部取自「巡检目标台账 › 配业务逻辑与算法」——与「告警管理 › 告警设置」
+ *              是同一份数据（告警项第一条即台账判定口径）；巡检点、点位都不提供告警配置。
  *              已存规则（`s.alarmRules`，历史版本）优先于业务目标，保证"规则版本 + 结果快照"语义；
  *              两者都没有时按"检测项单位"生成兜底规则
  * @param s 全局状态
@@ -74,7 +74,15 @@ export const targetOfPoint = (s: State, p: Point) =>
 export function rulesOf(s: State): AlarmRule[] {
   return s.points.map((p) => {
     const stored = s.alarmRules?.find((r) => r.pointId === p.id);
-    if (stored) return stored;
+    if (stored) {
+      /**
+       * 已存规则优先，但**告警开关以台账侧为准**：「告警管理 › 告警设置」停用后，
+       * 该点位即使存过规则也不再判定（开关是平台唯一的告警总闸）
+       */
+      const bt0 = targetOfPoint(s, p);
+      const on = !bt0 || (bt0.inspect !== false && bt0.alarm?.enabled !== false);
+      return on ? stored : { ...stored, enabled: false };
+    }
     const bt = targetOfPoint(s, p);
     if (bt) {
       const range = bt.judge === "数值范围";
@@ -107,8 +115,9 @@ export function rulesOf(s: State): AlarmRule[] {
         expected: tpl ? tpl.trigger.expected || "开启" : bt.expected || "开启",
         // 等级：台账显式设置优先（关联模板时已自动带出模板默认等级），无设置才用模板默认
         level: bt.alarm?.level || tpl?.level || "二级",
-        // 平台没有「告警开关」：判定异常即告警；唯一的开关是台账的「是否巡检」
-        enabled: bt.inspect !== false,
+        // 告警开关（「告警管理 › 告警设置」的状态）：停用后该台账只记录结果、不做异常判定；
+        // 与「是否巡检」是两个独立开关（后者控制是否进入任务指令集）
+        enabled: bt.inspect !== false && bt.alarm?.enabled !== false,
         notify: bt.alarm?.notify,
         templateId: tpl?.id,
         triggerMode: tpl

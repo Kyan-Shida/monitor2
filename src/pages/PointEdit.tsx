@@ -11,10 +11,11 @@
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { go } from "../data/navigation";
+import { go, useViewState } from "../data/navigation";
 import { Badge, Btn, Empty, Field, Modal, Note, Panel, Table } from "../components/UI";
 import { MapImageCanvas, type ImageMarker } from "../components/MapImageCanvas";
-import { InspectItemDrawer } from "../components/InspectItemDrawer";
+import { businessTargetLabelOf } from "../data/businessTargetCrumb";
+import { clearPointDraft, pointDraftKey } from "../data/pointEditDraft";
 import type {
   BusinessTarget,
   InspectSpec,
@@ -27,13 +28,24 @@ import { targetsOf } from "../data/mapCalibration";
 export function PointEdit({ id, field }: { id?: string; field?: boolean }) {
   const { s, act } = useStore();
   const editing = id ? s.points.find((p) => p.id === id) : undefined;
-  const [name, NAME] = useState(editing?.name || "");
-  const [mapId, MAP] = useState(editing?.mapId || s.maps[0]?.id || "");
-  const [targetId, TGT] = useState(editing?.targetId || "");
+  /**
+   * 表单状态存会话草稿（与「添加 / 编辑巡检项」内置页共享同一组键）：
+   * 跳去内置页编辑巡检项再返回时，名称 / 地图 / 定位点 / 已保存的巡检项都不丢
+   */
+  const key = pointDraftKey(id);
+  const [name, NAME] = useViewState(`${key}.name`, editing?.name || "");
+  const [mapId, MAP] = useViewState(
+    `${key}.map`,
+    editing?.mapId || s.maps[0]?.id || "",
+  );
+  const [targetId, TGT] = useViewState(`${key}.target`, editing?.targetId || "");
   /** 已保存的巡检项（多个巡检项组成一个巡检点） */
-  const [items, ITEMS] = useState<InspectSpec[]>(editing?.inspectItems || []);
-  /** 正在编辑的巡检项草稿；null 表示不在编辑态 */
-  const [draft, DRAFT] = useState<InspectSpec | null>(null);
+  const [items, ITEMS] = useViewState<InspectSpec[]>(
+    `${key}.items`,
+    editing?.inspectItems || [],
+  );
+  /** 正在编辑的巡检项草稿：由巡检项内置页读写；null = 不在编辑态 */
+  const [draft, DRAFT] = useViewState<InspectSpec | null>(`${key}.draft`, null);
   const [err, ERR] = useState("");
   /** 「＋ 快速新建巡检目标台账」弹窗 */
   const [btOpen, BTO] = useState(false);
@@ -67,14 +79,8 @@ export function PointEdit({ id, field }: { id?: string; field?: boolean }) {
     const bid2 = btOf(bid)?.instrumentId;
     return s.instruments?.find((x) => x.id === bid2);
   };
-  /** 业务目标一句话归属：区域 › 设备 › 仪表 · 巡检要求 */
-  const labelOfBt = (bid: string) => {
-    const b = btOf(bid);
-    const ins = insOf(bid);
-    const dev = s.devices?.find((d) => d.id === ins?.deviceId);
-    const req = (s.requirements || []).find((r) => r.id === b?.requirementId);
-    return `${dev?.region || "—"} › ${dev?.name || "—"} › ${ins?.name || "—"} · ${req?.name || ""}`;
-  };
+  /** 业务目标一句话归属（与巡检项内置页共用同一表达） */
+  const labelOfBt = (bid: string) => businessTargetLabelOf(s, bid);
   /** 巡检点是否已被其它巡检点占用（一对一：一个定位ID点只绑一个巡检点） */
   const ownerOf = (tid: string) => {
     const t = mapTargets.find((x) => x.id === tid);
@@ -96,44 +102,45 @@ export function PointEdit({ id, field }: { id?: string; field?: boolean }) {
     source: t.source,
   }));
 
-  const upd = (patch: Partial<InspectSpec>) =>
-    DRAFT((d) => (d ? { ...d, ...patch } : d));
-
-  /** 新开一条巡检项草稿（默认带一个原子动作，参数取保守值） */
-  function newItem() {
+  /**
+   * 打开「添加 / 编辑巡检项」内置页
+   * @description 草稿写进会话（`${key}.draft`），内置页保存后写回 `${key}.items` 并返回本页
+   * @param sp 要编辑的巡检项；缺省 = 新开一条（默认带一个原子动作，参数取保守值）
+   */
+  function openItem(sp?: InspectSpec) {
     ERR("");
-    const first = bts[0];
-    DRAFT({
-      id: "",
-      name: "",
-      targetId: first?.id || "",
-      actions: ["拍照"],
-      pose: {
-        ptz: { pan: 0, tilt: 0, zoom: 1 },
-        light: 40,
-        dwellSec: 5,
-        viewDir: "",
-        avoidPolicy: "标准",
-      },
-    });
-  }
-  /** 「保存本项」：编辑态覆盖、新增态追加；保存后回到巡检项列表 */
-  function saveItem() {
-    if (!draft) return;
-    if (!draft.name.trim()) return ERR("请填写巡检项名称");
-    if (!draft.targetId) return ERR("请选择巡检目标台账（检什么、怎么判）");
-    if (!draft.actions.length) return ERR("请至少选择一个原子动作");
-    const rec: InspectSpec = {
-      ...draft,
-      id: draft.id || "IP-" + Date.now().toString(36),
-    };
-    ITEMS((old) =>
-      old.some((x) => x.id === rec.id)
-        ? old.map((x) => (x.id === rec.id ? rec : x))
-        : [...old, rec],
+    DRAFT(
+      sp
+        ? { ...sp }
+        : {
+            id: "",
+            name: "",
+            targetId: bts[0]?.id || "",
+            actions: ["拍照"],
+            pose: {
+              ptz: { pan: 0, tilt: 0, zoom: 1 },
+              light: 40,
+              dwellSec: 5,
+              viewDir: "",
+              avoidPolicy: "标准",
+            },
+          },
     );
-    ERR("");
-    DRAFT(null);
+    go("inspect-item-edit", id || "new");
+  }
+  /**
+   * 巡检项排序：与相邻项交换位置（列表顺序即机器人执行顺序）
+   * @param i 当前项下标
+   * @param delta -1 上移 / 1 下移
+   */
+  function moveItem(i: number, delta: number) {
+    ITEMS((old) => {
+      const j = i + delta;
+      if (j < 0 || j >= old.length) return old;
+      const next = [...old];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
   }
   /** 保存巡检点：逐项已保存的巡检项整体提交（多个巡检项组成一个巡检点） */
   function savePoint() {
@@ -153,7 +160,11 @@ export function PointEdit({ id, field }: { id?: string; field?: boolean }) {
       calibrateRobot: editing?.calibrateRobot,
       pose: editing?.pose,
     });
-    if (ok) go("annotation");
+    if (ok) {
+      // 保存成功：清掉本次会话草稿，避免下次进入看到旧内容
+      clearPointDraft(id);
+      go("annotation");
+    }
   }
   /** 打开快速新建业务目标：默认取已选巡检项的仪表 */
   function openBt() {
@@ -329,24 +340,32 @@ export function PointEdit({ id, field }: { id?: string; field?: boolean }) {
             className="point-edit-items"
             title={`巡检项（${items.length} 项）`}
             extra={
-              <Btn primary disabled={!!draft} onClick={newItem}>
+              <Btn primary onClick={() => openItem()}>
                 ＋ 添加巡检项
               </Btn>
             }
           >
             <Table
-              heads={["巡检项名称", "巡检目标台账", "原子动作", "云台 PTZ", "操作"]}
-              rows={items.map((sp) => [
+              heads={["#", "巡检项名称", "巡检目标台账", "原子动作", "云台 PTZ", "操作"]}
+              rows={items.map((sp, i) => [
+                <span className="muted">{i + 1}</span>,
                 <b>{sp.name}</b>,
                 labelOfBt(sp.targetId),
                 sp.actions.join(" / "),
                 `P${sp.pose.ptz.pan}° / T${sp.pose.ptz.tilt}° / Z${sp.pose.ptz.zoom}`,
                 <div className="actions">
-                  <Btn disabled={!!draft} onClick={() => DRAFT({ ...sp })}>
-                    编辑
+                  {/* 排序：巡检项顺序 = 机器人执行顺序，首尾禁用对应方向 */}
+                  <Btn disabled={i === 0} onClick={() => moveItem(i, -1)}>
+                    上移
                   </Btn>
                   <Btn
-                    disabled={!!draft}
+                    disabled={i === items.length - 1}
+                    onClick={() => moveItem(i, 1)}
+                  >
+                    下移
+                  </Btn>
+                  <Btn onClick={() => openItem(sp)}>编辑</Btn>
+                  <Btn
                     onClick={() => ITEMS((old) => old.filter((x) => x.id !== sp.id))}
                   >
                     删除
@@ -354,7 +373,7 @@ export function PointEdit({ id, field }: { id?: string; field?: boolean }) {
                 </div>,
               ])}
             />
-            {!items.length && !draft && (
+            {!items.length && (
               <Empty>
                 还没有巡检项。点「＋ 添加巡检项」——巡检项 = 名称 + 业务目标 + 机器操作内容。
               </Empty>
@@ -363,22 +382,7 @@ export function PointEdit({ id, field }: { id?: string; field?: boolean }) {
         </div>
       </div>
 
-      {draft && (
-        <InspectItemDrawer
-          draft={draft}
-          onChange={upd}
-          onSave={saveItem}
-          onCancel={() => {
-            DRAFT(null);
-            ERR("");
-          }}
-          businessTargets={bts}
-          labelOfBt={labelOfBt}
-          onOpenBt={openBt}
-        />
-      )}
-
-      {/* 保存 / 返回按钮与校验提示均在顶部 context-bar 一带，此处只保留弹窗 */}
+      {/* 巡检项编辑已改为内置页（inspect-item-edit）：此处只保留「快速新建台账」弹窗 */}
       {btOpen && (
         <Modal
           title="快速新建巡检目标台账"

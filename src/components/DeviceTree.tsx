@@ -53,7 +53,7 @@ export function DeviceTree({
   value,
   onChange,
   ariaLabel = "设备树",
-  rootLabel = "全部设备",
+  rootLabel = "全部区域",
   rootCount,
   countOf,
   groupCountOf,

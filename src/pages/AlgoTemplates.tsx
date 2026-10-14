@@ -10,8 +10,8 @@
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { Badge, Btn, Field, Modal, Note, Panel, Table } from "../components/UI";
-import { algoDeploys, algoKinds } from "../data/types";
+import { Badge, Btn, Empty, Field, Modal, Note, Panel, Table } from "../components/UI";
+import { ALGO_LIBRARY, algoDeploys, algoKinds } from "../data/types";
 import type { AlgoDeploy, AlgoKind } from "../data/types";
 
 /** 算法表单：编码在编辑态不可改（是平台侧唯一标识） */
@@ -30,6 +30,13 @@ export function AlgoTemplates() {
   const algos = s.algoConfigs || [];
   const [form, setForm] = useState<AlgoForm | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  /** 「从算法库启用」弹窗：厂区**不手写算法**，只勾选平台算法库里的条目 */
+  const [libOpen, setLibOpen] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  /** 算法库里尚未在厂区启用的条目 */
+  const available = ALGO_LIBRARY.filter(
+    (x) => !algos.some((a) => a.id === x.id),
+  );
   /** 算法被多少条巡检目标台账按名称引用（停用后不再作为新台账可选项） */
   const refCountOf = (name: string) =>
     (s.businessTargets || []).filter((b) => b.algorithm === name).length;
@@ -46,15 +53,11 @@ export function AlgoTemplates() {
         extra={
           <Btn
             primary
-            onClick={() =>
-              setForm({
-                mode: "add",
-                id: "",
-                name: "",
-                deploy: "云端",
-                adapt: [],
-              })
-            }
+            disabled={!available.length}
+            onClick={() => {
+              setPicked([]);
+              setLibOpen(true);
+            }}
           >
             ＋ 新增算法
           </Btn>
@@ -206,6 +209,58 @@ export function AlgoTemplates() {
       )}
 
       {/* 删除二次确认 */}
+      {/* 从平台算法库勾选启用：列表展示的就是厂区勾选后的算法清单 */}
+      {libOpen && (
+        <Modal title="从算法库启用" wide onClose={() => setLibOpen(false)}>
+          <Table
+            heads={[
+              <input
+                type="checkbox"
+                aria-label="全选可启用算法"
+                checked={picked.length > 0 && picked.length === available.length}
+                onChange={(e) =>
+                  setPicked(e.target.checked ? available.map((x) => x.id) : [])
+                }
+              />,
+              "算法名称",
+              "部署位置",
+              "检测类型",
+            ]}
+            rows={available.map((x) => [
+              <input
+                type="checkbox"
+                aria-label={`选择 ${x.name}`}
+                checked={picked.includes(x.id)}
+                onChange={(e) =>
+                  setPicked(
+                    e.target.checked
+                      ? [...picked, x.id]
+                      : picked.filter((y) => y !== x.id),
+                  )
+                }
+              />,
+              <b>{x.name}</b>,
+              <span className="muted">{x.deploy}</span>,
+              <span className="muted">{x.adapt.join(" / ") || "待配置"}</span>,
+            ])}
+          />
+          {!available.length && <Empty>算法库里的算法都已启用。</Empty>}
+          <div className="modal-actions">
+            <Btn onClick={() => setLibOpen(false)}>取消</Btn>
+            <Btn
+              primary
+              disabled={!picked.length}
+              onClick={() => {
+                const ok = act({ type: "ENABLE_ALGOS", ids: picked });
+                if (ok) setLibOpen(false);
+              }}
+            >
+              确认启用{picked.length ? `（${picked.length}）` : ""}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
       {confirm && (
         <Modal title={confirm.title} onClose={() => setConfirm(null)}>
           <p>{confirm.text}</p>

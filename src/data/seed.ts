@@ -1,6 +1,6 @@
 /**
  * @file seed.ts
- * @description 全部演示种子数据（点位/地图/机器人/模板/计划/任务/结果/告警/日志…），
+ * @description 全部演示种子数据（点位/地图/机器人/巡检路线/计划/任务/结果/告警/日志…），
  *              含「地图 → 巡检任务」链路新增集合（devices/logicalPoints/routes/siteSurveys/trackSamples/trialReceipts）
  * @interaction 由 store.tsx 注入 Context；engine/metrics/selectors 消费
  */
@@ -19,16 +19,21 @@ import type {
   RobotPayload,
   AlgoConfig,
   CaptureKind,
+  AlarmClass,
+  AlarmItem,
 } from "./types";
+import { TERRITORY_UNITS } from "./types";
 import { defaultRangeOfUnit } from "./alarmRules";
 import {
   kindOfUnit,
   type AlarmTemplate,
   type ApplyKind,
 } from "./alarmTemplates";
-import { defaultRequirementOfInstrument } from "./deviceMaster";
+import { defaultRequirementOfInstrument, territoryOfDevice } from "./deviceMaster";
 import { captureAction } from "./types";
 import { SAMPLE_MAP_IMAGE } from "./sampleMap";
+import { withAlarmSetting, type AlarmSettingHost } from "./alarmSettings";
+import type { AlarmPushStaff } from "./types";
 const points: Point[] = [
   {
     id: "P001",
@@ -145,7 +150,8 @@ const points: Point[] = [
     id: "P007",
     name: "装置区 A 段管廊气体浓度",
     targetId: "O107",
-    mapId: "MAP-A03",
+    // 装置区的点必须挂装置区地图（R03 / 装置区轨道都绑 MAP-B01），否则跨区无法生成任务
+    mapId: "MAP-B01",
     device: "装置区 A 段管廊",
     object: "可燃气体探头",
     item: "气体浓度",
@@ -193,7 +199,7 @@ const points: Point[] = [
     id: "P010",
     name: "装置区 B 段管廊气体浓度",
     targetId: "O110",
-    mapId: "MAP-A03",
+    mapId: "MAP-B01",
     device: "装置区 B 段管廊",
     object: "可燃气体探头",
     item: "气体浓度",
@@ -278,7 +284,66 @@ const task = (
   /** 演示数据统一按「相对当前时间」生成，避免多日后打开时今日 / 本月统计为空 */
   created: dueIn(-75),
 });
-// ── 告警模板与平台标准规则库（后台管理 › 告警模板管理）──────────────────
+// ── 告警模板与平台标准规则库（告警管理 › 告警模板管理）──────────────────
+/**
+ * 演示用告警类别（告警管理 › 告警类别）：二级口径 = 分类名称 + 告警大类 + 是否启用
+ * @description 启用的分类是「告警设置 › 告警类型」下拉与「告警记录 › 分类筛选」的数据源；
+ *              业务预警按**判定对象**分环境安全 / 生产运行 / 人员与作业，
+ *              机器人预警按**故障部位**分下装（底盘 / 行走 / 通信 / 电池）与上装（采集载荷 / 传感器）
+ */
+const ALARM_CLASSES: AlarmClass[] = [
+  { id: "AC-01", name: "下装", main: "机器人预警", enabled: true },
+  { id: "AC-02", name: "上装", main: "机器人预警", enabled: true },
+  { id: "AC-03", name: "环境安全", main: "业务预警", enabled: true },
+  { id: "AC-04", name: "生产运行", main: "业务预警", enabled: true },
+  { id: "AC-05", name: "人员与作业", main: "业务预警", enabled: true },
+];
+/**
+ * 演示用告警推送人员（告警管理 › 告警推送）
+ * @description 三条演示各绑定一个维度：等级留空 = 全部等级；区域 / 属地 / 设备留空 = 不限该维度，
+ *              维度之间同时成立（见 alarmPush.pushStaffOfAlarm）
+ */
+const ALARM_PUSH_STAFF: AlarmPushStaff[] = [
+  {
+    id: "AP-01",
+    name: "王海峰",
+    phone: "13800000001",
+    login: "wanghaifeng",
+    dept: "生产运行部",
+    levels: ["一级"],
+    // 按区域绑定：只要是一期罐区的告警
+    areas: ["一期罐区"],
+    sms: true,
+    updatedBy: "王姐",
+    updatedAt: "2026-10-14 09:12:30",
+  },
+  {
+    id: "AP-02",
+    name: "周敏",
+    phone: "13800000002",
+    login: "zhoumin",
+    dept: "设备管理部",
+    levels: ["一级", "二级"],
+    // 按属地绑定：装置一部 / 二部的设备告警
+    territories: ["装置一部", "装置二部"],
+    sms: true,
+    updatedBy: "王姐",
+    updatedAt: "2026-10-14 09:12:30",
+  },
+  {
+    id: "AP-03",
+    name: "李建国",
+    phone: "13800000003",
+    login: "lijianguo",
+    dept: "安全环保部",
+    levels: [],
+    // 按设备绑定：这两台罐体的全部等级告警
+    devices: ["V001 原料储罐", "V002 缓冲罐"],
+    sms: false,
+    updatedBy: "王姐",
+    updatedAt: "2026-10-14 09:12:30",
+  },
+];
 /**
  * 演示用告警模板（名称 + 触发条件 + 处理流程）
  * @description 模板按检测类型匹配（由点位单位换算，见 alarmTemplates.kindOfUnit）。
@@ -688,6 +753,122 @@ const taskLogs = (
   });
   return logs;
 };
+// ── 机器人能力（后台管理 › 机器人能力）：能力类型 → 能力参数 ──────────
+/**
+ * 机器人能力清单：**两级** —— 能力类型（父）→ 能力参数（子）。
+ * @description 巡检项的「能力项」从能力参数里选；能力参数 → 原子动作见
+ *              `atomicActionOfAbility`，能力特有配置项见 `abilityFields`。
+ */
+const robotAbilities = [
+  {
+    id: "RA-COMMON",
+    name: "常用能力",
+    params: [
+      { id: "RA-COMMON-VIS", name: "可见光实况识别" },
+      { id: "RA-COMMON-HD", name: "高清识别" },
+    ],
+  },
+  {
+    id: "RA-ARM",
+    name: "机械臂能力",
+    params: [
+      { id: "RA-ARM-PRESS", name: "按钮按压" },
+      { id: "RA-ARM-KNOB", name: "旋钮操作" },
+      { id: "RA-ARM-GRAB", name: "夹取作业" },
+    ],
+  },
+  {
+    id: "RA-CHASSIS",
+    name: "底盘控制能力",
+    params: [
+      { id: "RA-CHASSIS-MOVE", name: "底盘移动" },
+      { id: "RA-CHASSIS-DOCK", name: "定点停靠" },
+    ],
+  },
+  {
+    id: "RA-METER",
+    name: "表计识别能力",
+    params: [
+      { id: "RA-METER-V30", name: "视频片段识别(30s)" },
+      { id: "RA-METER-V4", name: "视频片段识别(4s)" },
+      { id: "RA-METER-V15", name: "视频片段识别(15s)" },
+      { id: "RA-METER-IR", name: "红外识别" },
+      { id: "RA-METER-HD", name: "高清识别" },
+    ],
+  },
+  {
+    id: "RA-GIMBAL",
+    name: "云台能力",
+    params: [
+      { id: "RA-GIMBAL-TURN", name: "云台转向" },
+      { id: "RA-GIMBAL-LIFT", name: "云台升降" },
+      { id: "RA-GIMBAL-PRESET", name: "预置位调用" },
+    ],
+  },
+  {
+    id: "RA-NAV",
+    name: "导航能力",
+    params: [
+      { id: "RA-NAV-AUTO", name: "自主导航" },
+      { id: "RA-NAV-TRACK", name: "循迹导航" },
+    ],
+  },
+  {
+    id: "RA-CHARGE-ROOM",
+    name: "充电房能力",
+    params: [
+      { id: "RA-CR-DOOR-CLOSE", name: "关闭联动门" },
+      { id: "RA-CR-DOOR-OPEN", name: "开启联动门" },
+      { id: "RA-CR-HEAT-OFF", name: "关加热器" },
+      { id: "RA-CR-HEAT-ON", name: "开加热器" },
+      { id: "RA-CR-AC-OFF", name: "关空调" },
+      { id: "RA-CR-AC-ON", name: "开空调" },
+      { id: "RA-CR-PILE-ON", name: "充电桩上电" },
+      { id: "RA-CR-PILE-OFF", name: "充电桩断电" },
+      { id: "RA-CR-DOOR", name: "开门" },
+    ],
+  },
+  {
+    id: "RA-NOISE",
+    name: "噪音识别能力",
+    params: [{ id: "RA-NOISE-VOICE", name: "声纹采集" }],
+  },
+  {
+    id: "RA-ANOMALY",
+    name: "异常识别能力",
+    params: [
+      { id: "RA-ANOMALY-SOUND", name: "异常声音识别" },
+      { id: "RA-ANOMALY-VIB", name: "异常振动识别" },
+    ],
+  },
+  {
+    id: "RA-CHARGE",
+    name: "充电能力",
+    params: [
+      { id: "RA-CHARGE-AUTO", name: "自动充电" },
+      { id: "RA-CHARGE-MANUAL", name: "手动充电" },
+    ],
+  },
+  {
+    id: "RA-LEAK",
+    name: "跑冒滴漏识别能力",
+    params: [{ id: "RA-LEAK-DETECT", name: "跑冒滴漏识别" }],
+  },
+  {
+    id: "RA-ENV",
+    name: "环境识别能力",
+    params: [{ id: "RA-ENV-PD", name: "局部放电检测" }],
+  },
+  {
+    id: "RA-GAS",
+    name: "气体识别能力",
+    params: [
+      { id: "RA-GAS-ACOUSTIC", name: "声学成像泄漏检测" },
+      { id: "RA-GAS-CH4", name: "甲烷遥测" },
+    ],
+  },
+];
+
 // ── 机器人上装能力（后台管理 › 机器人上装能力）────────────────
 /**
  * 上装能力主数据：与上装分组常量同源（4 类采集方式），改为后台可维护的清单。
@@ -844,6 +1025,7 @@ const devices: DeviceAsset[] = [
     id: "DEV-V001",
     name: "V001 原料储罐",
     type: "储罐",
+    deviceKind: "实体设备",
     regionCode: "R-A03",
     locationDesc: "一期罐区北侧",
     coord: "120.3, 45.6",
@@ -885,6 +1067,7 @@ const devices: DeviceAsset[] = [
     id: "DEV-V002",
     name: "V002 缓冲罐",
     type: "储罐",
+    deviceKind: "实体设备",
     regionCode: "R-A03",
     locationDesc: "一期罐区南侧",
     height: 1.4,
@@ -906,6 +1089,7 @@ const devices: DeviceAsset[] = [
     id: "DEV-V003",
     name: "V003 原料储罐",
     type: "储罐",
+    deviceKind: "实体设备",
     regionCode: "R-A03",
     locationDesc: "一期罐区西侧",
     coord: "84.1, 96.2",
@@ -947,6 +1131,7 @@ const devices: DeviceAsset[] = [
     id: "DEV-V004",
     name: "V004 缓冲罐",
     type: "储罐",
+    deviceKind: "实体设备",
     regionCode: "R-A03",
     locationDesc: "一期罐区东侧",
     height: 1.4,
@@ -986,6 +1171,7 @@ const devices: DeviceAsset[] = [
     id: "DEV-PLA",
     name: "装置区 A 段管廊",
     type: "管廊",
+    deviceKind: "虚拟设备",
     regionCode: "R-A03",
     locationDesc: "装置区 A 段",
     items: [
@@ -1005,6 +1191,7 @@ const devices: DeviceAsset[] = [
     id: "DEV-PLB",
     name: "装置区 B 段管廊",
     type: "管廊",
+    deviceKind: "虚拟设备",
     regionCode: "R-A03",
     locationDesc: "装置区 B 段",
     items: [
@@ -1025,6 +1212,7 @@ const devices: DeviceAsset[] = [
     id: "DEV-V009",
     name: "V009 备用储罐",
     type: "储罐",
+    deviceKind: "实体设备",
     regionCode: "R-A03",
     locationDesc: "一期罐区闲置区",
     height: 1.2,
@@ -1064,6 +1252,17 @@ const idleMapPoints: { id: string; x: number; y: number; kind: CaptureKind }[] =
   { id: "O211", x: 78, y: 72, kind: "气体" },
   { id: "O212", x: 88, y: 64, kind: "可见光" },
 ];
+/**
+ * 装置区地图（MAP-B01）上的空闲定位ID点
+ * @description 与 `idleMapPoints` 同口径，但归属装置区地图；示例底图右侧的管廊一带
+ */
+const idleMapPointsB: { id: string; x: number; y: number; kind: CaptureKind }[] =
+  [
+    { id: "O301", x: 92, y: 22, kind: "可见光" },
+    { id: "O302", x: 78, y: 12, kind: "气体" },
+    { id: "O303", x: 94, y: 50, kind: "可见光" },
+    { id: "O304", x: 74, y: 50, kind: "红外" },
+  ];
 
 /**
  * 由「设备主数据 + 物理点位」派生逻辑点（阶段④）
@@ -1318,7 +1517,7 @@ const deriveBusinessTargets = (
         trigger: "单次异常即告警",
         notify: ["设备岗"],
         /**
-         * 关联的告警模板（后台管理 › 告警模板管理）：
+         * 关联的告警模板（告警管理 › 告警模板管理）：
          * 演示数据按**巡检要求的检测类型 + 单位**带出默认关联，可在台账里改成别的模板；
          * 规则判定 / 处置流程 / 声光报警都按关联模板走（一处维护、多点引用）
          */
@@ -1345,10 +1544,18 @@ export function seed(): State {
     const p = pts.find((x) => x.id === lp.physicalPointId);
     if (p) p.logicalIds = [...new Set([...(p.logicalIds || []), lp.id])];
   });
-  /** 设备清单（演示数据同属「一期罐区」，此处统一补厂区列，供指标按厂区裁剪） */
+  /**
+   * 设备清单
+   * @description 补厂区列供指标按厂区裁剪（scopedState）。多数设备属「一期罐区」，
+   *              管廊类（装置区 A / B 段）属「装置区」——口径与 `areaNameOf`
+   *              （优先 region，其次按安装位置前缀归属）保持一致，
+   *              否则装置区设备的检测目标会被算进罐区的覆盖率分母
+   */
   const devs = structuredClone(devices).map((d) => ({
-    region: "一期罐区",
+    region: d.locationDesc.startsWith("装置区") ? "装置区" : "一期罐区",
     ...d,
+    // 属地单位：告警 KPI 的「属地」维度口径（罐区归储运部、装置区按 A / B 段分属一 / 二部）
+    territory: territoryOfDevice(d),
   }));
   /**
    * 工厂树与巡检目标台账：仪表 ← 设备清单的检测目标；业务目标 ← 仪表 + 巡检要求。
@@ -1418,6 +1625,36 @@ export function seed(): State {
     },
   );
   /**
+   * 告警设置补齐：一个台账只有一个告警设置（就是台账的 `alarm`，与「告警管理 › 告警设置」
+   * 同一份数据），至少一条告警项 = 台账的判定口径；两条区域类示例台账再挂一条三级预警项，
+   * 演示「一个台账 · 多个告警项」
+   */
+  const alarmHost: AlarmSettingHost = {
+    alarmClasses: ALARM_CLASSES,
+    instruments: ins,
+    requirements,
+  };
+  const bizFinal = biz.map((t) => {
+    const ready = withAlarmSetting(alarmHost, t);
+    if (t.id !== "BT-ENV-GAS" && t.id !== "BT-ENV-IR") return ready;
+    const alarm = ready.alarm!;
+    const main = alarm.items![0];
+    const warn: AlarmItem = {
+      id: `AI-${t.id}-2`,
+      category: main.category,
+      envKind: main.envKind,
+      level: "三级",
+      judge: main.judge,
+      from: main.from,
+      // 预警项先于主告警项触发（阈值的 80%），用于演示同一台账的多等级告警项
+      to: Math.round((main.to ?? 0) * 0.8 * 100) / 100,
+      unit: main.unit,
+      abnormalName: `${main.abnormalName} 预警`,
+      alarmSeconds: 0,
+    };
+    return { ...ready, alarm: { ...alarm, items: [...alarm.items!, warn] } };
+  });
+  /**
    * 巡检项：为已有点位派生「巡检项名称 + 业务目标 + 机器操作内容」，
    * 使「巡检点管理」一打开就有已配置的巡检点可维护（真实项目里由用户逐项添加）
    */
@@ -1443,7 +1680,7 @@ export function seed(): State {
     ];
   });
   return {
-    schema: 7,
+    schema: 10,
     points: pts,
     maps: [
       {
@@ -1484,6 +1721,109 @@ export function seed(): State {
           路线层: true,
         },
         deviceListVersion: 1,
+        /**
+         * 父线：该区域地图上的完整路网（标定工作台画出的线 / 弧）
+         * @description 巡检路线（子线）从父线的定位点上挑点组成，机器狗沿父线行驶、按子线顺序作业
+         */
+        roadnet: {
+          paths: [
+            {
+              id: "RL-01",
+              name: "A_1",
+              kind: "弧" as const,
+              // 西侧主线：沿储罐区外圈绕行，串联 V001 / V003 / V002 等点位所在的定位点
+              pointIds: [
+                "O105",
+                "O201",
+                "O202",
+                "O101",
+                "O104",
+                "O204",
+                "O205",
+                "O103",
+                "O106",
+              ],
+            },
+            {
+              id: "RL-02",
+              name: "A_2",
+              kind: "弧" as const,
+              // 南侧支线：从罐区南缘绕到东侧，与主线在 O106 汇合（形成分叉）
+              pointIds: ["O207", "O208", "O209", "O210", "O102", "O106"],
+            },
+            {
+              id: "RL-03",
+              name: "L_1",
+              kind: "直线" as const,
+              // 北向支线：**自主线东端 O106 接出**，避免出现孤立块（孤立块会让子线只能直连）
+              pointIds: ["O206", "O106"],
+            },
+            {
+              id: "RA-01",
+              name: "A_3",
+              kind: "弧" as const,
+              // 东南支线：同样接到 O106（管廊一带）
+              pointIds: ["O212", "O211", "O106"],
+            },
+          ],
+        },
+      },
+      {
+        id: "MAP-B01",
+        name: "装置区巡检地图",
+        region: "装置区",
+        version: 1,
+        state: "已发布",
+        source: "机器人首次走行",
+        batch: "B002",
+        cloud: "B002-multimodal.pcd",
+        video: "B002-raw-video.mp4",
+        file: "MAP-B01-m1.map",
+        checksum: "sha256:4b71de09…",
+        image: SAMPLE_MAP_IMAGE,
+        history: [
+          {
+            version: 1,
+            note: "机器人首次走行建图（纯点云底图）· 定版发布",
+            at: "2026-09-05 11:20",
+          },
+        ],
+        updatedAt: "2026-09-05 11:20",
+        frames: {
+          resolution: 0.05,
+          origin: { x: 0, y: 0, yaw: 0 },
+          rotateDeg: 0,
+          calibState: "已标定",
+        },
+        layers: {
+          底图: true,
+          障碍物层: true,
+          点云层: true,
+          业务区域层: true,
+          巡检点层: true,
+          路线层: true,
+        },
+        deviceListVersion: 1,
+        /**
+         * 父线：装置区管廊沿线的路网
+         * @description A 段 / B 段管廊串成一条基线（A_1），B 段探头另接一条支线（A_2）
+         */
+        roadnet: {
+          paths: [
+            {
+              id: "RL-B1",
+              name: "A_1",
+              kind: "弧" as const,
+              pointIds: ["O302", "O107", "O301", "O303", "O110"],
+            },
+            {
+              id: "RL-B2",
+              name: "A_2",
+              kind: "弧" as const,
+              pointIds: ["O304", "O110"],
+            },
+          ],
+        },
       },
     ],
     /**
@@ -1497,20 +1837,54 @@ export function seed(): State {
         mapId: "MAP-A03",
         updatedAt: "2026-09-20 10:30",
         targets: [
-          // 已被现有巡检点绑定（一对一占用）
-          ...points.map((p) => ({
-            id: p.targetId,
-            externalId: p.targetId,
-            source: "地图导入" as const,
-            kind: p.kind as CaptureKind,
-            x: p.x,
-            y: p.y,
-            world: { x: p.x, y: p.y, z: 0 },
-            state: "已确认" as const,
-            pointId: p.id,
-          })),
+          // 已被现有巡检点绑定（一对一占用）：只收本图（一期罐区）的点位，装置区的点见 CAL-MAP-B01
+          ...points
+            .filter((p) => p.mapId === "MAP-A03")
+            .map((p) => ({
+              id: p.targetId,
+              externalId: p.targetId,
+              source: "地图导入" as const,
+              kind: p.kind as CaptureKind,
+              x: p.x,
+              y: p.y,
+              world: { x: p.x, y: p.y, z: 0 },
+              state: "已确认" as const,
+              pointId: p.id,
+            })),
           // 空闲定位ID点：还没有巡检点绑定，可在「添加巡检点」里直接选
           ...idleMapPoints.map((t) => ({
+            id: t.id,
+            externalId: t.id,
+            source: "地图导入" as const,
+            kind: t.kind,
+            x: t.x,
+            y: t.y,
+            world: { x: t.x, y: t.y, z: 0 },
+            state: "待确认" as const,
+          })),
+        ],
+      },
+      {
+        id: "CAL-MAP-B01",
+        mapId: "MAP-B01",
+        updatedAt: "2026-09-05 11:25",
+        targets: [
+          // 装置区的巡检点（装置区 A / B 段管廊气体浓度）
+          ...points
+            .filter((p) => p.mapId === "MAP-B01")
+            .map((p) => ({
+              id: p.targetId,
+              externalId: p.targetId,
+              source: "地图导入" as const,
+              kind: p.kind as CaptureKind,
+              x: p.x,
+              y: p.y,
+              world: { x: p.x, y: p.y, z: 0 },
+              state: "已确认" as const,
+              pointId: p.id,
+            })),
+          // 装置区的空闲定位ID点：可继续在「添加巡检点」里绑定
+          ...idleMapPointsB.map((t) => ({
             id: t.id,
             externalId: t.id,
             source: "地图导入" as const,
@@ -1583,8 +1957,19 @@ export function seed(): State {
     templates: [
       {
         id: "TMP01",
-        name: "V001 每班综合巡检",
+        name: "一期罐区常规巡检路线",
         points: ["P001", "P002", "P003"],
+        /** 父线地图：子线（本路线）只能落在同一张地图上（机器狗按区域调度） */
+        mapId: "MAP-A03",
+        end: "返航",
+        state: "启用",
+        version: 1,
+      },
+      {
+        id: "TMP02",
+        name: "罐体温度专项路线",
+        points: ["P004", "P006"],
+        mapId: "MAP-A03",
         end: "返航",
         state: "启用",
         version: 1,
@@ -1595,11 +1980,28 @@ export function seed(): State {
         id: "PL01",
         robotId: "R01",
         name: "罐区每日巡检",
+        kind: "周期任务",
         templateId: "TMP01",
         cycle: "每天",
         start: "2026-09-22",
         end: "2026-12-31",
         time: "10:00",
+        advance: 15,
+        timeout: 60,
+        wait: 30,
+        state: "启用",
+        version: 1,
+      },
+      {
+        id: "PL02",
+        robotId: "R01",
+        name: "罐区专项巡检（定时一次）",
+        kind: "定时任务",
+        templateId: "TMP01",
+        cycle: "每天",
+        start: "2026-10-16",
+        end: "2026-10-16",
+        time: "09:30",
         advance: 15,
         timeout: 60,
         wait: 30,
@@ -1787,6 +2189,9 @@ export function seed(): State {
         created: dueIn(-60),
         startedAt: dueIn(-45),
         finishedAt: dueIn(-24),
+        // 装置区的任务挂装置区地图（与 R03 的 mapVersion 1 对齐，否则"同一张地图"校验不通过）
+        mapId: "MAP-B01",
+        mapVersion: 1,
         items: [
           { ...points[6], mapVersion: 1 },
           { ...points[9], mapVersion: 1 },
@@ -2153,6 +2558,9 @@ export function seed(): State {
       {
         id: "AL018",
         category: "机器人",
+        // 机器人本体告警没有业务台账，告警类别在此显式指定
+        // （下装 = 底盘 / 行走 / 定位 / 通信 / 电池；上装 = 采集载荷 / 传感器）
+        alarmClass: "下装",
         robotId: "R02",
         name: "装置巡检二号通信离线",
         level: "一级",
@@ -2164,6 +2572,7 @@ export function seed(): State {
       {
         id: "AL019",
         category: "机器人",
+        alarmClass: "下装",
         robotId: "R01",
         name: "罐区巡检一号急停触发",
         level: "一级",
@@ -2175,6 +2584,7 @@ export function seed(): State {
       {
         id: "AL020",
         category: "机器人",
+        alarmClass: "上装",
         robotId: "R03",
         name: "装置巡检三号红外传感器异常",
         level: "二级",
@@ -2186,6 +2596,7 @@ export function seed(): State {
       {
         id: "AL021",
         category: "机器人",
+        alarmClass: "下装",
         robotId: "R03",
         name: "装置巡检三号定位丢失",
         level: "二级",
@@ -2197,6 +2608,7 @@ export function seed(): State {
       {
         id: "AL022",
         category: "机器人",
+        alarmClass: "下装",
         robotId: "R03",
         name: "装置巡检三号电量低于返航阈值",
         level: "三级",
@@ -2208,6 +2620,7 @@ export function seed(): State {
       {
         id: "AL023",
         category: "机器人",
+        alarmClass: "下装",
         robotId: "R02",
         name: "罐区巡检二号里程达保养阈值",
         level: "三级",
@@ -2219,6 +2632,7 @@ export function seed(): State {
       {
         id: "AL024",
         category: "机器人",
+        alarmClass: "下装",
         robotId: "R03",
         name: "装置巡检三号固件校验异常",
         level: "三级",
@@ -2228,7 +2642,7 @@ export function seed(): State {
         time: dueIn(-300),
       },
     ],
-    /** 告警模板（后台管理 › 告警模板管理）：名称 + 触发条件 + 处理流程 */
+    /** 告警模板（告警管理 › 告警模板管理）：名称 + 触发条件 + 处理流程 */
     alarmTemplates: ALARM_TEMPLATES,
     /**
      * 地图下发记录（**最新在前**）：每个「空间版本 V{n}」下发给哪台机器、结果如何。
@@ -2270,6 +2684,14 @@ export function seed(): State {
         mapVersion: 2,
         state: "已同步",
         at: "2026-09-22 09:58",
+      },
+      {
+        id: "SYNC-B01-01",
+        mapId: "MAP-B01",
+        robotId: "R03",
+        mapVersion: 1,
+        state: "已同步",
+        at: "2026-09-05 11:40",
       },
       {
         id: "SYNC-A03-01",
@@ -2786,6 +3208,8 @@ export function seed(): State {
     devices: devs,
     /** 机器人上装能力（后台可维护；机器人能力 / 任务指令集的上游口径） */
     robotPayloads,
+    /** 机器人能力（两级：能力类型 → 能力参数）：巡检项「能力项」的候选来源 */
+    robotAbilities,
     /** 算法（AI 能力）清单：目标台账按名称引用，列表显示「关联台账」条数 */
     algoConfigs,
     /**
@@ -2797,12 +3221,22 @@ export function seed(): State {
       { id: "AREA-01", name: "一期罐区" },
       { id: "AREA-02", name: "装置区" },
     ],
+    /**
+     * 属地单位（设备「属地」字段的候选口径）。
+     * 与区域一样是**可维护的主数据**（后台管理 › 工厂基础数据 › 属地配置），
+     * 设备台账下拉、告警 KPI 属地维度、告警推送范围都取这一份。
+     */
+    territories: [...TERRITORY_UNITS],
     /** 仪表：设备清单里的检测目标，只是资产、**不能直接巡检** */
     instruments: ins,
     /** 巡检要求模板库（看滴漏 / 看高温 / 看仪表读数 / 看外观破损 / 看气体浓度 / 看阀位 / 听异响） */
     requirements: structuredClone(requirements),
-    /** 巡检目标台账 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准（巡检项从这里选） */
-    businessTargets: biz,
+    /** 巡检目标台账 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 + 告警设置（巡检项从这里选） */
+    businessTargets: bizFinal,
+    /** 告警类别（告警管理 › 告警类别）：告警设置可选「告警类型」与告警记录分类筛选的数据源 */
+    alarmClasses: ALARM_CLASSES,
+    /** 告警推送人员（告警管理 › 告警推送） */
+    alarmPushStaff: ALARM_PUSH_STAFF,
     /** 逻辑巡检点：**不暴露给用户**，由「设备主数据 + 点位」派生（见 deriveLogicalPoints） */
     logicalPoints: lps,
     /** 巡检路线 */

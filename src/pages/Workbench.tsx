@@ -6,15 +6,17 @@
  * @interaction 由 src/App.tsx 在 page === "workbench" 时渲染；
  *              KPI 数字取自指标中心（与驾驶舱 / 报表同口径），页面只读消费 data/store 的状态
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   AlarmClock,
   BellRing,
   Bot,
+  Battery,
   Eye,
   FilePlus2,
   ListChecks,
+  MapPin,
   Split,
   type LucideIcon,
 } from "lucide-react";
@@ -22,7 +24,7 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Badge, Modal, Note } from "../components/UI";
 import { ObjectLink, Kpis } from "../components/Business";
-import { pointOf, stageOf, terminal } from "../data/selectors";
+import { stageOf, terminal } from "../data/selectors";
 import { DUE_SOON_MS, metricValue } from "../data/metrics";
 import { canSee, roleOf } from "../data/roles";
 import { ALARM_LEVELS } from "../data/types";
@@ -152,6 +154,65 @@ export function Workbench() {
       !terminal.includes(t.state),
   );
 
+  // ── 仪表盘扩展区块：机器人状态 / 今日巡检 / 最近告警 ──
+
+  /** 机器人按 state 聚合（只列「有意义」的状态，零值自动省略） */
+  const robotStateCount = useMemo(() => {
+    const m: Record<string, number> = {};
+    s.robots.forEach((r) => (m[r.state] = (m[r.state] || 0) + 1));
+    return m;
+  }, [s.robots]);
+
+  /** 机器人状态 → 色调（语义映射） */
+  const robotStateTone: Record<string, string> = {
+    执行中: "green",
+    空闲: "blue",
+    充电: "orange",
+    离线: "red",
+    故障: "red",
+    维护: "gray",
+    暂停: "orange",
+    返航中: "orange",
+    人工接管: "purple",
+  };
+
+  /** 今日任务：当日创建或当日有动作的 + 所有执行中（简化口径，避免过度计算） */
+  const todayTasks = useMemo(() => {
+    const today = new Date();
+    const key = `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
+    return s.tasks.filter((t) => {
+      if (running.some((r) => r.id === t.id)) return true;
+      const created = t.created ? new Date(t.created) : null;
+      if (created) {
+        const ck = `${created.getFullYear()}-${created.getMonth() + 1}-${created.getDate()}`;
+        if (ck === key) return true;
+      }
+      return false;
+    });
+  }, [s.tasks, running]);
+
+  /** 今日任务按状态聚合 */
+  const todayDone = todayTasks.filter((t) => terminal.includes(t.state)).length;
+  const todayRunning = running.filter((t) => todayTasks.some((x) => x.id === t.id)).length;
+  const todayPending = todayTasks.filter(
+    (t) => !terminal.includes(t.state) && !running.some((r) => r.id === t.id),
+  ).length;
+  const todayProgress = todayTasks.length
+    ? Math.round((todayDone / todayTasks.length) * 100)
+    : 0;
+
+  /** 最近告警：按时间倒序，取前 6 条 */
+  const recentAlarms = useMemo(
+    () => [...s.alarms].sort((a, b) => Date.parse(b.time) - Date.parse(a.time)).slice(0, 6),
+    [s.alarms],
+  );
+  /** 告警按级别聚合（用于小徽标） */
+  const alarmByLevel = useMemo(() => {
+    const m: Record<string, number> = {};
+    s.alarms.forEach((a) => (m[a.level] = (m[a.level] || 0) + 1));
+    return m;
+  }, [s.alarms]);
+
   const allClear =
     !openAlarms.length &&
     !pendingTasks.length &&
@@ -179,7 +240,7 @@ export function Workbench() {
       metric: "unconfirmedAlarms",
       title: "未处理告警",
       empty: "没有未处理告警",
-      group: "结果与异常",
+      group: "告警管理",
       count: openAlarms.length,
       items: (
         <ul className="todo-list">
@@ -355,8 +416,8 @@ export function Workbench() {
     // 新建任务：直达「临时巡检任务」创建抽屉（quick 路由渲染 QuickTaskDrawer，关闭后回任务列表）
     { label: "新建任务", icon: FilePlus2, page: "quick", group: "调度中心" },
     { label: "任务调度", icon: Split, page: "dispatch", group: "调度中心" },
-    { label: "结果查询", icon: Eye, page: "results", group: "结果与异常" },
-    { label: "告警记录", icon: BellRing, page: "alarms", group: "结果与异常" },
+    { label: "结果查询", icon: Eye, page: "results", group: "分析与报表" },
+    { label: "告警记录", icon: BellRing, page: "alarms", group: "告警管理" },
   ].filter((x) => canSee(role, x.page, x.group));
 
   return (
@@ -401,6 +462,199 @@ export function Workbench() {
           action: () => OPEN(c.key),
         }))}
       />
+
+      {/* 仪表盘主区：三栏布局填充页面空白 —— 机器人状态 / 今日巡检 / 最近告警 */}
+      <section className="wb-dashboard">
+        {/* 左：机器人状态总览 */}
+        <div className="wb-dash-col wb-robots">
+          <div className="wb-dash-head">
+            <div className="wb-dash-head-title">
+              <Bot size={15} />
+              机器人状态总览
+            </div>
+            <button className="wb-dash-more" onClick={() => go("robots")}>
+              查看全部
+            </button>
+          </div>
+          {/* 状态分布：一行 badge 展示有值状态 */}
+          <div className="wb-robot-summary">
+            {Object.entries(robotStateCount).map(([st, n]) => (
+              <span
+                key={st}
+                className={`wb-robot-state tone-${robotStateTone[st] || "gray"}`}
+              >
+                <em>{n}</em>
+                <small>{st}</small>
+              </span>
+            ))}
+          </div>
+          {/* 机器人列表：每台一行，点击进详情 */}
+          <ul className="wb-robot-list">
+            {s.robots.map((r) => {
+              const map = s.maps.find((m) => m.id === r.mapId);
+              const currentTask = r.current
+                ? s.tasks.find((t) => t.id === r.current)
+                : null;
+              const lowBat = r.battery < r.constraints.minBattery;
+              return (
+                <li
+                  key={r.id}
+                  className="wb-robot-row"
+                  onClick={() => go("robot", r.id)}
+                  title="点击进入机器人详情"
+                >
+                  <div className="wb-robot-main">
+                    <b>
+                      {r.name}
+                      <Badge tone={robotStateTone[r.state] as any}>{r.state}</Badge>
+                    </b>
+                    <small>
+                      {r.id} · {r.deviceType} · {map?.name || r.mapId}
+                    </small>
+                    {currentTask && (
+                      <small className="wb-robot-task">
+                        当前：{currentTask.name}
+                      </small>
+                    )}
+                  </div>
+                  <div className="wb-robot-battery">
+                    <Battery size={12} />
+                    <span
+                      className={lowBat ? "wb-battery low" : "wb-battery"}
+                      style={{ width: `${r.battery}%` }}
+                    />
+                    <em>{r.battery}%</em>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        {/* 中：今日巡检概览 */}
+        <div className="wb-dash-col wb-today">
+          <div className="wb-dash-head">
+            <div className="wb-dash-head-title">
+              <ListChecks size={15} />
+              今日巡检概览
+            </div>
+            <button className="wb-dash-more" onClick={() => go("dispatch")}>
+              进入调度
+            </button>
+          </div>
+          <div className="wb-today-progress">
+            <div className="wb-today-progress-label">
+              完成进度
+              <b>{todayProgress}%</b>
+            </div>
+            <div className="wb-today-progress-bar">
+              <span style={{ width: `${todayProgress}%` }} />
+            </div>
+            <div className="wb-today-progress-sub">
+              共 <b>{todayTasks.length}</b> 项，已完成 <b>{todayDone}</b>
+            </div>
+          </div>
+          <div className="wb-today-stats">
+            <div
+              className="wb-today-stat tone-green"
+              onClick={() => todayRunning && go("execution-monitor")}
+            >
+              <Activity size={14} />
+              <div>
+                <b>{todayRunning}</b>
+                <small>执行中</small>
+              </div>
+            </div>
+            <div
+              className="wb-today-stat tone-orange"
+              onClick={() => todayPending && go("dispatch")}
+            >
+              <AlarmClock size={14} />
+              <div>
+                <b>{todayPending}</b>
+                <small>待调度</small>
+              </div>
+            </div>
+            <div className="wb-today-stat tone-blue">
+              <MapPin size={14} />
+              <div>
+                <b>{todayDone}</b>
+                <small>已完成</small>
+              </div>
+            </div>
+          </div>
+          {/* 今日执行中任务小列表 */}
+          {todayRunning > 0 && (
+            <ul className="wb-today-list">
+              {todayTasks
+                .filter((t) => running.some((r) => r.id === t.id))
+                .map((t) => (
+                  <li
+                    key={t.id}
+                    onClick={() => go("execution-monitor", t.id)}
+                    title="点击进入现场监控"
+                  >
+                    <small>{t.id}</small>
+                    <b>{t.name}</b>
+                    <small>
+                      {stageOf(t)} · 进度 {t.done.length}/{t.items.length}
+                    </small>
+                  </li>
+                ))}
+            </ul>
+          )}
+          {!todayTasks.length && (
+            <Note>今日尚无巡检任务，可从调度台新建。</Note>
+          )}
+        </div>
+
+        {/* 右：最近告警 */}
+        <div className="wb-dash-col wb-alarms">
+          <div className="wb-dash-head">
+            <div className="wb-dash-head-title">
+              <BellRing size={15} />
+              最近告警
+            </div>
+            <button className="wb-dash-more" onClick={() => go("alarms")}>
+              查看全部
+            </button>
+          </div>
+          {/* 级别聚合徽标：一级高亮红 */}
+          <div className="wb-alarm-badges">
+            {ALARM_LEVELS.map((lv) => (
+              <span
+                key={lv}
+                className={`wb-alarm-badge lv-${lv}`}
+                onClick={() => go("alarms")}
+              >
+                <b>{alarmByLevel[lv] || 0}</b>
+                <small>{lv}</small>
+              </span>
+            ))}
+          </div>
+          {/* 时间轴式列表 */}
+          <ul className="wb-alarm-list">
+            {!recentAlarms.length && <Note>当前无告警记录。</Note>}
+            {recentAlarms.map((a) => (
+              <li
+                key={a.id}
+                className={`wb-alarm-item lv-${a.level}`}
+                onClick={() => go("alarm", a.id)}
+                title="点击进入告警详情"
+              >
+                <span className="wb-alarm-dot" />
+                <div>
+                  <b>{a.name}</b>
+                  <small>
+                    {shortTime(a.time)} · <Badge>{a.level}</Badge>
+                    {a.handledAt ? "已处理" : "未处理"}
+                  </small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
 
       {allClear && <Note>当前没有待处理事项，巡检业务已全部闭环。</Note>}
 

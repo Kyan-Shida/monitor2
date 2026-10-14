@@ -1,5 +1,11 @@
-import type { ReactNode, ButtonHTMLAttributes } from "react";
-import { X, ChevronRight } from "lucide-react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type ButtonHTMLAttributes,
+} from "react";
+import { X, ChevronRight, ChevronDown } from "lucide-react";
 export const Btn = ({
   children,
   primary = false,
@@ -71,6 +77,83 @@ export const Field = ({
     {children}
   </label>
 );
+/**
+ * 多选下拉：收起时显示已选摘要，展开后在候选里勾选（可多选）
+ * @description 值用字符串数组维护，空数组 = 不限；候选由调用方从后台主数据实时取
+ * @param options 候选值
+ * @param value 已选值
+ * @param onChange 选中集合变化
+ * @param placeholder 空值时的占位文案
+ */
+export function MultiSelect({
+  options,
+  value,
+  onChange,
+  placeholder = "不限",
+  searchable,
+}: {
+  options: string[];
+  value: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+  /** 候选多时给个搜索框（按关键词过滤候选，仍可多选） */
+  searchable?: boolean;
+}) {
+  const [open, OPEN] = useState(false);
+  /** 搜索关键词：收起时清空，避免下次展开还残留上次的过滤条件 */
+  const [kw, KW] = useState("");
+  const box = useRef<HTMLDivElement>(null);
+  /** 点面板外部收起，避免下拉浮层残留 */
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (!box.current?.contains(e.target as Node)) OPEN(false);
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [open]);
+  useEffect(() => {
+    if (!open) KW("");
+  }, [open]);
+  const toggle = (x: string) =>
+    onChange(value.includes(x) ? value.filter((v) => v !== x) : [...value, x]);
+  const k = kw.trim();
+  const shown = k ? options.filter((x) => x.includes(k)) : options;
+  return (
+    <div className="msel" ref={box}>
+      <button type="button" className="msel-box" onClick={() => OPEN(!open)}>
+        <span className={value.length ? "" : "muted"}>
+          {value.length ? value.join(" / ") : placeholder}
+        </span>
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <div className="msel-pop">
+          {searchable && (
+            <input
+              className="msel-search"
+              aria-label="搜索候选"
+              placeholder="搜索"
+              value={kw}
+              onChange={(e) => KW(e.target.value)}
+            />
+          )}
+          {shown.map((x) => (
+            <label key={x} className="msel-item">
+              <input
+                type="checkbox"
+                checked={value.includes(x)}
+                onChange={() => toggle(x)}
+              />
+              {x}
+            </label>
+          ))}
+          {!shown.length && <p className="msel-empty">无匹配项</p>}
+        </div>
+      )}
+    </div>
+  );
+}
 export const Note = ({ children }: { children: ReactNode }) => (
   <div className="note">{children}</div>
 );
@@ -88,14 +171,27 @@ export function Table<T extends ReactNode[]>({
   heads,
   rows,
   rowClass,
+  minWidth,
+  className,
 }: {
   heads: ReactNode[];
   rows: T[];
   rowClass?: (row: T, i: number) => string;
+  /** 附加到 <table> 的类名（供页面做列宽 / 控件宽度的针对性调整） */
+  className?: string;
+  /**
+   * 表格最小宽度（px）
+   * @description 列多且单元格里是输入框时给足宽度：容器装不下就横向滑动，
+   *              而不是把「0.2」压成「(」这种只剩一个字符的输入框
+   */
+  minWidth?: number;
 }) {
   return (
     <div className="table-scroll">
-      <table>
+      <table
+        className={className}
+        style={minWidth ? { minWidth } : undefined}
+      >
         <thead>
           <tr>
             {heads.map((h, i) => (

@@ -1,10 +1,10 @@
 /**
  * @file AlarmTemplates.tsx
- * @description 后台管理 › 告警模板管理：平台维护「告警触发逻辑」的唯一入口
+ * @description 告警管理 › 告警模板管理：平台维护「告警触发逻辑」的唯一入口
  *              · 告警模板：把常用告警规则存为模板（名称、触发条件、处理流程）；
  *              · 告警规则库：新增 / 修改告警规则（名称、级别、类型、阈值、触发条件）；
  *              · 引用位置：模板与规则被哪些页面引用，改了会影响哪里。
- * @interaction 路由 `alarm-templates`（后台管理）；引擎动作 SAVE_ALARM_TEMPLATE / SAVE_ALARM_RULE_LIB；
+ * @interaction 路由 `alarm-templates`（告警管理）；引擎动作 SAVE_ALARM_TEMPLATE / SAVE_ALARM_RULE_LIB；
  *              数据 data/alarmTemplates.ts；引用方「采集结果与告警规则」「巡检目标台账」「告警处置」
  */
 import { useState } from "react";

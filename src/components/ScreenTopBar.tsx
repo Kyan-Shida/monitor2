@@ -8,17 +8,18 @@
  *              在后台外壳下缺省按路由跳转
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { LayoutDashboard, Radio } from "lucide-react";
+import { LayoutDashboard, Radio, Video } from "lucide-react";
 import { go } from "../data/navigation";
 
-/** 驾驶舱页面标识 */
-export type CockpitId = "overview" | "screen";
+/** 大屏页面标识 */
+export type CockpitId = "overview" | "screen" | "video";
 /** 星期中文（导航栏时间显示用） */
 const WEEK_CN = ["日", "一", "二", "三", "四", "五", "六"];
 /** 导航 Tab 配置：顺序即展示顺序，图标与文案一一对应 */
 const TABS: { id: CockpitId; label: string; Icon: typeof LayoutDashboard }[] = [
-  { id: "overview", label: "管理驾驶舱", Icon: LayoutDashboard },
-  { id: "screen", label: "调度指挥驾驶舱", Icon: Radio },
+  { id: "overview", label: "数据大屏", Icon: LayoutDashboard },
+  { id: "screen", label: "机器人监控", Icon: Radio },
+  { id: "video", label: "视频监控流", Icon: Video },
 ];
 /** 导航栏大标题与英文副标题：两个驾驶舱统一使用同一套文案 */
 const TITLE = "XXX智能机器巡检数据驾驶舱";

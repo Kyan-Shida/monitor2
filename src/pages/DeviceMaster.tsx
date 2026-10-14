@@ -14,38 +14,51 @@ import { Btn, Badge, Panel, Table, Field, Note, Modal } from "../components/UI";
 import { DeviceTree } from "../components/DeviceTree";
 import {
   deviceStats,
+  deviceKindOf,
   archiveIdOf,
   areaNameOf,
   areaOptions,
   defaultTargetKindOfTarget,
+  defaultDeviceKindOfType,
   defaultUnitOfCapture,
+  parseDeviceKind,
+  territoryOfDevice,
 } from "../data/deviceMaster";
 import { readSheetRows, downloadXlsx } from "../data/excel";
-import { captureKinds } from "../data/types";
-import type { CaptureKind, DeviceAsset, InspectItem } from "../data/types";
+import { captureKinds, deviceKinds } from "../data/types";
+import type {
+  CaptureKind,
+  DeviceAsset,
+  DeviceKind,
+  InspectItem,
+} from "../data/types";
 
 /**
  * 导入模板表头与示例：**设备字段 + 检测项字段**
- * 前 3 列是设备身份，后 3 列是检测项；同一设备编码可占多行，每行一个检测项。
+ * 前 4 列是设备身份与形态（设备形态可留空，按设备类型自动判定），后 3 列是检测项；
+ * 同一设备编码可占多行，每行一个检测项。
  * 与 IMPORT_DEVICES 口径一致：数值类检测目标必须带单位。
  */
 const CSV_HEADS = [
   "设备编码",
   "设备名称",
   "设备类型",
+  "设备形态",
   "检测目标",
   "采集方式",
   "单位",
 ];
-const CSV_SAMPLE = `设备编码,设备名称,设备类型,检测目标,采集方式,单位
-V010,V010 新增储罐,储罐,液位计,可见光,m
-V010,V010 新增储罐,储罐,罐壁温度,红外,℃
-V011,V011 在线分析仪,分析仪,出口压力表,可见光,MPa`;
+const CSV_SAMPLE = `设备编码,设备名称,设备类型,设备形态,检测目标,采集方式,单位
+V010,V010 新增储罐,储罐,实体设备,液位计,可见光,m
+V010,V010 新增储罐,储罐,实体设备,罐壁温度,红外,℃
+V011,V011 在线分析仪,分析仪,实体设备,出口压力表,可见光,MPa`;
 /** 导入行：Excel 解析共用的字段口径（一行 = 一台设备的一个检测项） */
 type ImportRow = {
   id: string;
   name: string;
   type: string;
+  /** 设备形态（可留空 → 按设备类型自动判定） */
+  deviceKind: string;
   target: string;
   kind: string;
   unit: string;
@@ -55,6 +68,11 @@ export function DeviceMaster() {
   const { s, act } = useStore();
   const [q, Q] = useViewState("device-master.q", "");
   const [stateF, STF] = useViewState("device-master.state", "全部");
+  /** 设备形态筛选：全部 / 实体设备 / 虚拟设备 */
+  const [kindF, KF] = useViewState("device-master.kind", "全部");
+  /** 筛选面板展开态 + 草稿条件（点「查询」才写回生效值） */
+  const [filterOpen, SETFILTEROPEN] = useState(false);
+  const [draft, DRAFT] = useState({ state: stateF, kind: kindF });
   /** 待二次确认的停用设备 */
   const [stopping, STOPSET] = useState<DeviceAsset | null>(null);
   /** 左侧设备树选中：""=全部，"r:区域"=区域，"d:设备ID"=单台 */
@@ -84,8 +102,12 @@ export function DeviceMaster() {
     id: string;
     name: string;
     type: string;
+    /** 设备形态（实体设备 / 虚拟设备） */
+    deviceKind: DeviceKind;
     region: string;
     locationDesc: string;
+    /** 属地单位（告警 KPI 的「属地」维度口径） */
+    territory: string;
   } | null>(null);
   /** 待删除的设备（二次确认） */
   const [delDev, DELDEV] = useState<DeviceAsset | null>(null);
@@ -106,6 +128,25 @@ export function DeviceMaster() {
   /** 分页 */
   const [page, PAGE] = useState(1);
   const [pageSize, PAGE_SIZE] = useState(5);
+  /** 已生效的筛选条件数（用于「筛选」按钮上的计数） */
+  const filterCount = (stateF !== "全部" ? 1 : 0) + (kindF !== "全部" ? 1 : 0);
+  /** 展开筛选面板：用当前生效值填充草稿 */
+  function toggleFilter() {
+    if (!filterOpen) DRAFT({ state: stateF, kind: kindF });
+    SETFILTEROPEN(!filterOpen);
+  }
+  /** 查询：草稿写回生效值并收起面板 */
+  function applyFilter() {
+    STF(draft.state);
+    KF(draft.kind);
+    SETFILTEROPEN(false);
+  }
+  /** 重置：清空草稿并立即生效 */
+  function resetFilter() {
+    DRAFT({ state: "全部", kind: "全部" });
+    STF("全部");
+    KF("全部");
+  }
   const listed = useMemo(() => {
     return all.filter((d) => {
       if (treeSel.startsWith("d:")) return d.id === treeSel.slice(2);
@@ -113,11 +154,12 @@ export function DeviceMaster() {
         if (regionOf(d) !== treeSel.slice(2)) return false;
       }
       if (kw && !(d.name + d.id + d.type).includes(kw)) return false;
+      if (kindF !== "全部" && deviceKindOf(d) !== kindF) return false;
       if (stateF === "全部") return true;
       return d.state === stateF;
     });
-  }, [all, treeSel, stateF, kw]);
-  useEffect(() => PAGE(1), [treeSel, stateF, kw]);
+  }, [all, treeSel, stateF, kindF, kw]);
+  useEffect(() => PAGE(1), [treeSel, stateF, kindF, kw]);
   const total = listed.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   useEffect(() => {
@@ -138,10 +180,14 @@ export function DeviceMaster() {
       const code = r.id.trim();
       if (!code) return;
       if (!map.has(code)) {
+        const type = r.type.trim() || "未分类";
         map.set(code, {
           id: code,
           name: r.name.trim(),
-          type: r.type.trim() || "未分类",
+          type,
+          // 设备形态：导入列优先（简写也认），识别不出按设备类型推导
+          deviceKind:
+            parseDeviceKind(r.deviceKind) || defaultDeviceKindOfType(type),
           regionCode: "R-A03",
           locationDesc: "",
           items: [],
@@ -180,10 +226,11 @@ export function DeviceMaster() {
       const parsed = rows
         .filter((r) => r.some((c) => c))
         .filter((r) => !CSV_HEADS.some((h) => (r[0] || "").startsWith(h)))
-        .map(([id, name, type, target, kind, unit]) => ({
+        .map(([id, name, type, dkind, target, kind, unit]) => ({
           id: id || "",
           name: name || "",
           type: type || "",
+          deviceKind: dkind || "",
           target: target || "",
           kind: kind || "",
           unit: unit || "",
@@ -245,28 +292,28 @@ export function DeviceMaster() {
 
         <div className="device-main">
           <Panel
+            className="panel-filters-wrap"
             title="设备台账"
             extra={
               <div className="actions">
-                <label className="inline-filter">
-                  <span>状态：</span>
-                  <select value={stateF} onChange={(e) => STF(e.target.value)}>
-                    {["全部", "在用", "停用"].map((x) => (
-                      <option key={x}>{x}</option>
-                    ))}
-                  </select>
-                </label>
                 <input
                   placeholder="搜索编码 / 名称 / 类型"
                   value={q}
                   onChange={(e) => Q(e.target.value)}
                 />
+                <Btn onClick={toggleFilter}>
+                  {filterOpen ? "收起筛选" : "筛选"}
+                  {filterCount ? `（${filterCount}）` : ""}
+                </Btn>
                 <Btn
                   onClick={() =>
                     DEVFORM({
                       id: "",
                       name: "",
                       type: "",
+                      // 缺省实体设备（大多数装置有形；区域 / 空间类目标由用户改选虚拟设备）
+                      deviceKind: "实体设备",
+                      territory: "",
                       // 已按区域筛选时预填该区域，减少一次重复选择
                       region: treeSel.startsWith("r:") ? treeSel.slice(2) : "",
                       locationDesc: "",
@@ -289,13 +336,56 @@ export function DeviceMaster() {
               </div>
             }
           >
+            {filterOpen && (
+              <div className="filter-grid">
+                <label className="inline-filter">
+                  <span>状态：</span>
+                  <select
+                    value={draft.state}
+                    onChange={(e) => DRAFT({ ...draft, state: e.target.value })}
+                  >
+                    {["全部", "在用", "停用"].map((x) => (
+                      <option key={x}>{x}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inline-filter">
+                  <span>设备形态：</span>
+                  <select
+                    value={draft.kind}
+                    onChange={(e) => DRAFT({ ...draft, kind: e.target.value })}
+                  >
+                    {["全部", ...deviceKinds].map((x) => (
+                      <option key={x}>{x}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="filter-actions">
+                  <Btn onClick={resetFilter}>重置</Btn>
+                  <Btn primary onClick={applyFilter}>
+                    查询
+                  </Btn>
+                </div>
+              </div>
+            )}
             <Table
-              heads={["编码", "设备名称", "类型", "检测目标", "状态", "操作"]}
+              heads={[
+                "编码",
+                "设备名称",
+                "类型",
+                "设备形态",
+                "属地单位",
+                "检测目标",
+                "状态",
+                "操作",
+              ]}
               rows={pageList.map((d) => {
                 return [
                   d.id,
                   <span>{d.name}</span>,
                   d.type,
+                  deviceKindOf(d),
+                  territoryOfDevice(d) || "未指定",
                   d.items.map((it) => it.target).join(" / ") || "—",
                   <Badge>{d.state || "在用"}</Badge>,
                   <div className="actions">
@@ -388,7 +478,8 @@ export function DeviceMaster() {
             />
           </Field>
           <Note>
-            表头：{CSV_HEADS.join(" / ")}。前 3 列为设备身份，后 3 列为检测项；
+            表头：{CSV_HEADS.join(" / ")}。前 4 列为设备身份与形态（设备形态可留空，
+            按设备类型自动判定：管廊 / 区域类 → 虚拟设备，其余 → 实体设备），后 3 列为检测项；
             <b>同一设备编码可占多行</b>，每行一个检测项；数值类检测目标必须带单位。
             导入只读取 Excel，不支持手工填写；编码重复时按编码更新已有设备。
           </Note>
@@ -416,6 +507,7 @@ export function DeviceMaster() {
                       <th>设备编码</th>
                       <th>设备名称</th>
                       <th>设备类型</th>
+                      <th>设备形态</th>
                       <th>检测目标</th>
                       <th>采集方式</th>
                       <th>单位</th>
@@ -427,6 +519,7 @@ export function DeviceMaster() {
                         <td>{r.id}</td>
                         <td>{r.name}</td>
                         <td>{r.type}</td>
+                        <td>{r.deviceKind || "自动"}</td>
                         <td>{r.target || "—"}</td>
                         <td>{r.kind || "可见光"}</td>
                         <td>{r.unit || "—"}</td>
@@ -458,8 +551,10 @@ export function DeviceMaster() {
                     name: devForm.name.trim(),
                     // 设备类型用独立字段，避免与动作名 Action.type 冲突
                     deviceType: devForm.type.trim(),
+                    deviceKind: devForm.deviceKind,
                     region: devForm.region,
                     locationDesc: devForm.locationDesc.trim(),
+                    territory: devForm.territory,
                   });
                   if (ok) DEVFORM(null);
                 }}
@@ -490,6 +585,21 @@ export function DeviceMaster() {
               onChange={(e) => DEVFORM({ ...devForm, type: e.target.value })}
             />
           </Field>
+          <Field label="设备形态">
+            <select
+              value={devForm.deviceKind}
+              onChange={(e) =>
+                DEVFORM({
+                  ...devForm,
+                  deviceKind: e.target.value as DeviceKind,
+                })
+              }
+            >
+              {deviceKinds.map((k) => (
+                <option key={k}>{k}</option>
+              ))}
+            </select>
+          </Field>
           <Field label="所属区域">
             <select
               value={devForm.region}
@@ -509,6 +619,19 @@ export function DeviceMaster() {
                 DEVFORM({ ...devForm, locationDesc: e.target.value })
               }
             />
+          </Field>
+          <Field label="属地单位">
+            <select
+              value={devForm.territory}
+              onChange={(e) =>
+                DEVFORM({ ...devForm, territory: e.target.value })
+              }
+            >
+              <option value="">（未指定）</option>
+              {(s.territories || []).map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
           </Field>
         </Modal>
       )}
@@ -593,6 +716,10 @@ export function DeviceMaster() {
             <div>
               <span>设备类型</span>
               <strong>{detail.type}</strong>
+            </div>
+            <div>
+              <span>设备形态</span>
+              <strong>{deviceKindOf(detail)}</strong>
             </div>
             <div>
               <span>安装位置</span>

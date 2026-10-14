@@ -292,6 +292,20 @@ export function PointOnsite({ id }: { id?: string }) {
                 ))}
               </select>
             </Field>
+            {/* 地图：取自「地图管理」的同一份地图主数据（不是一个独立副本），
+                采集到的定位点也写回该图的标定数据——地图与点位始终一致 */}
+            <Field label="地图（与「地图管理」同一份）">
+              <select
+                value={mapId}
+                onChange={(e) => resetRun(undefined, e.target.value)}
+              >
+                {(s.maps || []).map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name} · {mapVer(x.version)}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <div className="onsite-readout">
               <span>
                 当前位置 <b>X {r?.x ?? "—"} / Y {r?.y ?? "—"}</b>

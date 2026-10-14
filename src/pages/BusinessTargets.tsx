@@ -9,30 +9,41 @@
  *              「巡检点管理 › 添加巡检点」的巡检项从这里选（也可就地快速新建）；
  *              引擎 action：ADD_BUSINESS_TARGET / UPDATE_BUSINESS_TARGET
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "../data/store";
-import { useViewState } from "../data/navigation";
-import { Badge, Btn, Empty, Field, Modal, Note, Panel, Steps, Table } from "../components/UI";
+import { back, go, useViewState } from "../data/navigation";
+import { Btn, Empty, Field, Modal, Note, Panel, Steps, Table } from "../components/UI";
 import { Pager } from "../components/Business";
+import { AlarmItemAddBar, AlarmItemTable } from "../components/AlarmItemTable";
 import { DeviceTree, deviceTreeRegions } from "../components/DeviceTree";
 import { defaultRangeOfUnit } from "../data/alarmRules";
 import {
+  derivedTargetNameOf,
+  enabledAlarmClassesOf,
+  itemFromTemplate,
+  itemKindOfTarget,
+  newAlarmItem,
+  settingOf,
+  targetNameOf,
+  withMainAlarmItem,
+} from "../data/alarmSettings";
+import {
   areaNameOf,
+  deviceKindOf,
   defaultRequirementOfInstrument,
 } from "../data/deviceMaster";
-import { ALARM_LEVELS } from "../data/types";
+import { deviceKinds } from "../data/types";
 import {
   alarmText,
-  kindOfTarget,
   logicText,
-  templateFor,
   templatesOf,
   triggerText,
   type AlarmTrigger,
 } from "../data/alarmTemplates";
 import type {
-  AlarmLevel,
+  AlarmItem,
   BusinessTarget,
+  DeviceKind,
   Instrument,
   JudgeType,
 } from "../data/types";
@@ -60,30 +71,52 @@ function judgeText(b: {
 
 /**
  * 巡检目标台账
- * @param tab 传 "space" 时预置为「空间与区域（非装置）」视图（侧边栏独立入口进入）
+ * @param tab 传 "space" 时预置为「虚拟设备」筛选视图（侧边栏独立入口进入）
+ * @param mode 传 "edit" 时渲染**编辑内置页**（同一份表单逻辑，去掉弹窗外壳）
+ * @param id 内置页模式下被编辑的台账 id；"new" / 缺省 = 新建
  */
-export function BusinessTargets({ tab }: { tab?: string } = {}) {
+export function BusinessTargets({
+  tab,
+  id,
+  mode,
+}: { tab?: string; id?: string; mode?: "edit" } = {}) {
   const { s, act } = useStore();
+  /** 内置页模式（列表页「编辑 / 添加」跳转进来）：台账设置弹窗装不下，改为独立页面 */
+  const editing = mode === "edit";
+  /** 路由 id：空 / "new" = 新建，否则为被编辑的台账 id */
+  const initId = editing && id && id !== "new" ? id : "";
   const [kw, KW] = useViewState("bt.q", ""),
     [areaF, AF] = useViewState("bt.area", "全部"),
     [devF, DF] = useViewState("bt.device", "全部"),
-    /**
-     * 目标类型归类：装置＝关联设备台账（仪表 / 阀门）；空间与区域＝非装置（气体 / 声纹 / 红外 / AI / 环境拍照）。
-     * tab 为 "space" 时从「空间与区域」独立入口进入，默认只看非装置类。
-     */
+    /** 设备形态筛选：全部 / 实体设备 / 虚拟设备（`tab="space"` 时预置虚拟设备） */
     [kindF, KF] = useViewState(
       "bt.kind",
-      tab === "space" ? "空间与区域" : "全部",
+      tab === "space" ? "虚拟设备" : "全部",
     ),
     /** 树「空间区域巡检」下选中的单个目标 id（空串 = 不收敛） */
     [tgtF, TF] = useViewState("bt.target", ""),
     [pager, PG] = useViewState("bt.page", 1);
   const [open, OPEN] = useState(false);
-  const [step, STEP] = useState(0);
+  /** 保存前的「配置结果」预览弹窗：结果不在页面上常驻展示，点保存才弹出做二次确认 */
+  const [preview, CLOSE] = useState(false);
+  /** 列表多选：勾选待删除的台账 id（批量删除） */
+  const [sel, SEL] = useState<string[]>([]);
+  /** 删除二次确认 */
+  const [confirm, setConfirm] = useState<{
+    title: string;
+    text: string;
+    run: () => boolean;
+  } | null>(null);
+  /** 筛选面板展开态 + 草稿条件（点「查询」才写回生效值） */
+  const [filterOpen, SETFILTEROPEN] = useState(false);
+  const [draftKind, SETDRAFTKIND] = useState(kindF);
+  const [step, STEP] = useState(initId ? 1 : 0);
   /** 编辑中的巡检目标台账 id；空串表示新增 */
-  const [editId, EDIT] = useState("");
+  const [editId, EDIT] = useState(initId);
   /** 抽屉第一步选中的仪表 id */
   const [pick, PICK] = useState("");
+  /** 台账名称是否被用户手改过：没改过时预填派生值并跟着仪表 / 算法刷新 */
+  const [nameTouched, NAMETOUCHED] = useState(false);
   /** 步骤①：先选「设备（仪表）」还是「区域（环境）」目标 */
   const [scope, SCOPE] = useState<"设备" | "区域">("设备");
   /**
@@ -95,29 +128,32 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
   /** 抽屉第一步的仪表搜索词（同样只影响抽屉内的中栏列表） */
   const [insKw, INSKW] = useState("");
   const [form, FORM] = useState({
+    /** 台账名称：留空时按仪表名 / 锚点派生（列表展示与告警名称的默认值都取这里） */
+    name: "",
     /** TGT-01：目标类型（仪表类挂设备；环境 / 区域类不关联设备） */
     targetKind: "仪表" as "仪表" | "环境" | "区域",
     /** TGT-02：区域 / 空间目标的参照物锚点 */
     anchor: "",
     requirementId: "",
     algorithm: "",
-    judge: "数值范围" as JudgeType,
-    unit: "",
-    min: 0,
-    max: 1,
-    expected: "",
     criteria: "",
-    /** 告警设置（平台唯一入口；巡检点不配置告警）：没有「告警开关」，判定异常即告警 */
-    alarmSource: "模板" as "模板" | "手动",
-    alarmLevel: "二级",
+    /**
+     * 告警项清单（入口：本处 /「告警管理 › 告警设置」，同一份数据）：
+     * **第一条 = 主告警项 = 台账的判定口径**（判断类型 / 阈值 / 单位 / 等级 / 声光报警同源），
+     * 每条都可选模板（一键带出内容字段）或直接手填
+     */
+    alarmItems: [] as AlarmItem[],
+    /** 告警类型：引用「告警管理 › 告警类别」里启用中的分类 */
+    alarmClass: "",
     alarmTrigger: ALARM_TRIGGER,
     alarmNotify: ["设备岗"] as string[],
-    /** 关联的告警模板（后台管理 › 告警模板管理），空串 = 按检测类型自动套用 */
-    alarmTemplateId: "",
-    /** 手动输入：触发逻辑 / 连续次数 / 声光报警秒数 / 处置流程（每行一步） */
+    /**
+     * 台账级配置（不在告警项里）：触发逻辑 + 处置流程
+     * @description 告警开关不在本页展示：台账创建即开启，停用只在「告警管理 › 告警设置」操作；
+     *              告警名称也不在此维护：名称统一由台账名称派生（alarmSettings.targetNameOf）
+     */
     alarmTriggerMode: "单次即触发" as "单次即触发" | "连续确认",
     alarmConsecutive: 2,
-    alarmSeconds: 10,
     alarmFlow: "",
     needPhoto: true,
     needVideo: false,
@@ -146,8 +182,28 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
   };
   const targetCountOf = (instrumentId: string) =>
     targets.filter((b) => b.instrumentId === instrumentId).length;
+  /**
+   * 台账名称预填：用户没手改过名称时，跟着锚点等表单改动刷新派生值
+   * @description 名称一打开就有值（不再是空的），且可直接改；手改过就不再被自动覆盖。
+   *              未手改的（等于派生值）保存为「未自定义」，换仪表 / 换算法后名称自动跟随
+   * @param patch 本次一并生效的表单改动，用于算出新的派生名
+   * @returns 要合并进表单的名称补丁；手改过则为空对象
+   */
+  const namePatch = (patch: Partial<typeof form> = {}) => {
+    if (nameTouched) return {};
+    const next = { ...form, ...patch };
+    return {
+      name: derivedTargetNameOf(s, {
+        id: editId,
+        instrumentId: pick,
+        anchor: next.anchor,
+        algorithm: next.algorithm,
+        requirementId: next.requirementId,
+      }),
+    };
+  };
 
-  /** 切换巡检要求：把模板默认的算法 / 判定 / 阈值 / 采集要求填进表单 */
+  /** 切换巡检要求：把要求默认的算法 / 判定 / 阈值 / 采集要求填进表单（主告警项随之刷新） */
   function applyRequirement(rid: string, ins?: Instrument) {
     const req = requirements.find((r) => r.id === rid);
     const range =
@@ -157,21 +213,58 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
           ? { min: req.min, max: req.max }
           : defaultRangeOfUnit(req.unit || ins?.unit) || { min: 0, max: 1 }
         : undefined;
-    FORM((old) => ({
-      ...old,
-      requirementId: rid,
-      algorithm: req?.algorithm || "",
-      judge: req?.judge || "数值范围",
-      unit: req?.unit || ins?.unit || "",
-      min: range?.min ?? 0,
-      max: range?.max ?? 1,
-      expected: req?.expected || "",
-      criteria: req?.description || "",
-      needPhoto: req?.needPhoto ?? true,
-      needVideo: req?.needVideo ?? false,
-      needReview: req?.needReview ?? false,
-      cycle: req?.cycle || "每日",
-    }));
+    FORM((old) => {
+      const prevMain = old.alarmItems[0];
+      /**
+       * 主告警项 = 台账判定口径：判定方式 / 阈值 / 单位 / 期望状态随巡检要求刷新；
+       * 判定口径既然换了就不再引用原模板（避免"引用了模板却不按模板判"）
+       */
+      const main: AlarmItem = {
+        ...(prevMain || {
+          id: "AI-" + Math.random().toString(36).slice(2, 8),
+          category: itemKindOfTarget(old),
+          envKind: undefined,
+          level: "二级" as AlarmItem["level"],
+          abnormalName: "",
+          alarmSeconds: 10,
+          judge: "数值范围" as AlarmItem["judge"],
+        }),
+        category: itemKindOfTarget(old),
+        templateId: undefined,
+        envKind: old.targetKind === "仪表" ? undefined : prevMain?.envKind,
+        judge: req?.judge || "数值范围",
+        value: req?.judge === "数值范围" ? undefined : req?.expected || "",
+        from: range?.min ?? 0,
+        to: range?.max ?? 1,
+        unit: req?.unit || ins?.unit || "",
+        abnormalName:
+          prevMain?.abnormalName ||
+          `${ins?.name || old.anchor || req?.name || "检测目标"} · 异常`,
+      };
+      return {
+        ...old,
+        // 台账名称预填：没手改过时跟着仪表 / 算法刷新（选仪表、切换巡检要求都会走到这里）
+        ...(nameTouched
+          ? {}
+          : {
+              name: derivedTargetNameOf(s, {
+                id: editId,
+                instrumentId: ins?.id || pick,
+                anchor: old.anchor,
+                algorithm: req?.algorithm || "",
+                requirementId: rid,
+              }),
+            }),
+        requirementId: rid,
+        algorithm: req?.algorithm || "",
+        criteria: req?.description || "",
+        alarmItems: withMainAlarmItem(old.alarmItems, main),
+        needPhoto: req?.needPhoto ?? true,
+        needVideo: req?.needVideo ?? false,
+        needReview: req?.needReview ?? false,
+        cycle: req?.cycle || "每日",
+      };
+    });
   }
   /**
    * 引用后台管理维护的算法清单（启用中的）
@@ -200,47 +293,38 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
   })();
   /** 引用后台管理维护的告警模板（启用中的） */
   const tplOptions = templatesOf(s).filter((t) => t.enabled);
+  /** 主告警项（第一条）：与台账判定口径同源——判断类型 / 阈值 / 单位 / 等级 / 声光报警都取它 */
+  const mainItem = form.alarmItems[0];
+  /** 主项的判定口径：台账 `judge / unit / min / max / expected` 在页面上的唯一来源 */
+  const mainJudge = mainItem?.judge || "数值范围";
+  const mainUnit = mainItem?.unit || "";
+  /** 主项引用的模板（表格里选的那一条；未引用 = 手填内容字段） */
+  const mainTpl = mainItem?.templateId
+    ? tplOptions.find((t) => t.id === mainItem.templateId)
+    : undefined;
   /**
-   * 该台账当前生效的告警模板（与引擎 rulesOf 同源）
-   * @description 关联的模板优先，未关联时按检测类型自动匹配启用模板；
-   *              第 3 段「告警规则」用它回显触发条件 / 触发逻辑 / 等级 / 声光报警 / 处置流程
+   * 右侧展示用的生效告警规则（与引擎 rulesOf 同源）
+   * @description 判定口径取主告警项，触发逻辑取台账级设置
    */
-  const effTpl = templateFor(
-    s,
-    // 检测类型：优先巡检要求的声明（环境 / 区域类没有量纲），否则按单位换算
-    kindOfTarget(s, form.requirementId, form.unit || instrumentOf(pick)?.unit),
-    form.unit || instrumentOf(pick)?.unit,
-    form.alarmTemplateId,
-  );
-  /** 告警规则来源是否为「选择现有模板」（否则 = 手动输入） */
-  const isTplMode = form.alarmSource === "模板";
-  /**
-   * 右侧展示 & 保存口径用的生效告警规则（与引擎 rulesOf 同源）
-   * @description 模板来源取模板（未指定/未命中时回落手动口径），手动来源取表单手填值
-   */
-  const effTrigger: AlarmTrigger =
-    isTplMode && effTpl
-      ? effTpl.trigger
-      : {
-          type: form.judge === "期望状态" ? "期望状态" : "数值范围",
-          unit: form.unit,
-          min: form.min,
-          max: form.max,
-          expected: form.expected,
-          mode: form.alarmTriggerMode,
-          consecutive: Math.max(2, form.alarmConsecutive),
-        };
-  /** 生效等级、声光报警秒数、处置流程（模板来源 → 模板；手动来源 → 手填） */
-  const effLevel = isTplMode && effTpl ? effTpl.level : form.alarmLevel;
-  const effSeconds =
-    isTplMode && effTpl ? effTpl.alarmSeconds : Math.max(0, form.alarmSeconds);
-  const effFlow =
-    isTplMode && effTpl
-      ? effTpl.flow
-      : form.alarmFlow
-          .split("\n")
-          .map((x) => x.trim())
-          .filter(Boolean);
+  const effTrigger: AlarmTrigger = {
+    type: mainJudge === "期望状态" ? "期望状态" : "数值范围",
+    unit: mainUnit,
+    min: mainItem?.from ?? 0,
+    max: mainItem?.to ?? 0,
+    expected: mainItem?.value || "",
+    mode: form.alarmTriggerMode,
+    consecutive: Math.max(2, form.alarmConsecutive),
+  };
+  /** 生效等级 / 声光报警：主项自己的值（引用模板时就是模板带出的值） */
+  const effLevel = mainItem?.level || "二级";
+  const effSeconds = Math.max(0, mainItem?.alarmSeconds ?? 0);
+  /** 处置流程：主项引用模板时由模板统一下发，否则取台账手填步骤 */
+  const effFlow = mainTpl
+    ? mainTpl.flow
+    : form.alarmFlow
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean);
   /** 巡检要求（第 1 段）与采集方式 / 单位：右侧展示面板与保存校验共用 */
   const effReq = requirements.find((r) => r.id === form.requirementId);
   /** 采集方式：仪表类用仪表自己的；环境 / 区域类没有仪表，由巡检要求给出 */
@@ -263,30 +347,55 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
   const envReqOptions = requirements.filter(
     (r) => r.targetKinds?.includes("区域") || r.targetKinds?.includes("环境"),
   );
+  /** 改某一条告警项（第一条改动即台账判定口径，不再单独维护 judge / min / max） */
+  function patchAlarmItem(i: number, patch: Partial<AlarmItem>) {
+    FORM((old) => ({
+      ...old,
+      alarmItems: old.alarmItems.map((x, j) =>
+        j === i ? { ...x, ...patch } : x,
+      ),
+    }));
+  }
   /**
-   * 关联 / 套用告警模板（后台管理 › 告警模板管理）
-   * @description 一次带出「判定方式 + 阈值 + 单位 + 期望状态 + 告警等级 + 触发条件说明」，
-   *              并把模板 ID 写进台账的告警设置（规则判定优先按关联模板走）；
-   *              传空串 = 取消关联（只清关联，不改已有阈值）
-   * @param id 模板 ID
+   * 某一条改选告警模板（后台管理 › 告警模板管理）
+   * @description 选中即带出「判断类型 + 阈值 + 单位 + 等级 + 声光报警」，仍可手改；
+   *              选「手填」（空串）= 只清模板引用，已带出的值保留
    */
-  function applyAlarmTemplate(id: string) {
-    const tpl = tplOptions.find((t) => t.id === id);
-    if (!tpl) {
-      FORM({ ...form, alarmTemplateId: "" });
-      return;
-    }
-    FORM({
-      ...form,
-      alarmTemplateId: tpl.id,
-      judge: tpl.trigger.type,
-      min: tpl.trigger.min,
-      max: tpl.trigger.max,
-      unit: tpl.trigger.unit || form.unit,
-      expected: tpl.trigger.expected || form.expected,
-      alarmLevel: tpl.level,
-      alarmTrigger: `${logicText(tpl.trigger)} · ${alarmText(tpl.alarmSeconds)}`,
+  function applyItemTemplate(i: number, templateId: string) {
+    const base = form.alarmItems[i];
+    if (!base) return;
+    const tpl = tplOptions.find((t) => t.id === templateId);
+    patchAlarmItem(i, tpl ? itemFromTemplate(base, tpl) : { templateId: undefined });
+  }
+  /**
+   * 追加一条告警项：分类按目标类型带出，异常名称按台账名预填（不留空）
+   * @param templateId 传模板 id 时按模板带出内容字段（判断类型 / 阈值 / 单位 / 等级 / 声光报警）
+   */
+  function addAlarmItem(templateId?: string) {
+    const tpl = templateId
+      ? tplOptions.find((t) => t.id === templateId)
+      : undefined;
+    FORM((old) => {
+      const base = newAlarmItem(
+        itemKindOfTarget(old),
+        "二级",
+        `${old.name.trim() || instrumentOf(pick)?.name || old.anchor || "检测目标"} · 异常`,
+      );
+      return {
+        ...old,
+        alarmItems: [
+          ...old.alarmItems,
+          tpl ? itemFromTemplate(base, tpl) : base,
+        ],
+      };
     });
+  }
+  /** 删除某一条（至少保留一条：第一条 = 台账判定口径） */
+  function removeAlarmItem(i: number) {
+    FORM((old) => ({
+      ...old,
+      alarmItems: old.alarmItems.filter((_, j) => j !== i),
+    }));
   }
   /** 打开新增抽屉：默认选中该仪表的"默认巡检要求"（采集方式 + 单位决定看什么） */
   function openAdd() {
@@ -296,25 +405,22 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
     NAVKEY("");
     INSKW("");
     STEP(0);
+    // 新增：名称未手改 → 选中仪表 / 要求后自动预填派生值
+    NAMETOUCHED(false);
     FORM({
+      name: "",
       targetKind: "仪表",
       anchor: "",
       requirementId: "",
       algorithm: "",
-      judge: "数值范围",
-      unit: "",
-      min: 0,
-      max: 1,
-      expected: "",
       criteria: "",
-      alarmSource: "模板",
-      alarmLevel: "二级",
+      // 告警项：选定巡检要求后由 applyRequirement 带出主项（至少一条）
+      alarmItems: [],
+      alarmClass: "",
       alarmTrigger: ALARM_TRIGGER,
       alarmNotify: ["设备岗"],
-      alarmTemplateId: "",
       alarmTriggerMode: "单次即触发",
       alarmConsecutive: 2,
-      alarmSeconds: 10,
       alarmFlow: "",
       needPhoto: true,
       needVideo: false,
@@ -337,26 +443,25 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
         : "",
     );
     INSKW("");
+    // 名称预填：有自定义名就带出来，没有则填派生值（打开即有内容、可直接改）
+    NAMETOUCHED(!!b.name);
     FORM({
+      name: targetNameOf(s, b),
       targetKind: b.targetKind || "仪表",
       anchor: b.anchor || "",
       requirementId: b.requirementId,
       algorithm: b.algorithm,
-      judge: b.judge,
-      unit: b.unit || "",
-      min: b.min ?? 0,
-      max: b.max ?? 1,
-      expected: b.expected || "",
       criteria: b.criteria || "",
-      // 老数据没有 source：关联了模板 = 模板来源，否则按手动（与引擎的缺省口径一致）
-      alarmSource: b.alarm?.source || (b.alarm?.templateId ? "模板" : "手动"),
-      alarmLevel: b.alarm?.level || "二级",
+      /**
+       * 告警项：与「告警管理 › 告警设置」同一份数据（第一条 = 台账判定口径，
+       * 老缓存缺项时由 settingOf 按台账判定口径补齐；主项模板从台账关联模板回落）
+       */
+      alarmItems: settingOf(s, b).items,
+      alarmClass: b.alarm?.category || "",
       alarmTrigger: b.alarm?.trigger || ALARM_TRIGGER,
       alarmNotify: b.alarm?.notify || ["设备岗"],
-      alarmTemplateId: b.alarm?.templateId || "",
       alarmTriggerMode: b.alarm?.triggerMode || "单次即触发",
       alarmConsecutive: b.alarm?.consecutive || 2,
-      alarmSeconds: b.alarm?.alarmSeconds ?? 10,
       alarmFlow: (b.alarm?.flow || []).join("\n"),
       needPhoto: b.needPhoto,
       needVideo: b.needVideo,
@@ -367,34 +472,67 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
     STEP(1);
     OPEN(true);
   }
+  /**
+   * 内置页模式：挂载即按路由 id 初始化表单
+   * @description 列表页「编辑 / 添加」已改为跳转本页（弹窗装不下）；仅初始化一次
+   */
+  useEffect(() => {
+    if (!editing) return;
+    const b = initId ? targets.find((t) => t.id === initId) : undefined;
+    if (b) openEdit(b);
+    else openAdd();
+    // 仅挂载时初始化：之后按用户的编辑动作走
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   /** 保存：新增走 ADD，编辑走 UPDATE */
   function save() {
+    const prev = editId ? targets.find((t) => t.id === editId) : undefined;
+    /** 主告警项 = 台账的判定口径（「告警管理 › 告警设置」里的第一条）：两处共用同一份数据 */
+    const main = form.alarmItems[0];
+    if (!main) return false;
+    const rangeJudged = main.judge === "数值范围";
     const payload = {
+      /**
+       * 台账名称：表单里预填的是派生值，用户没改过就按「未自定义」存（undefined），
+       * 换仪表 / 换算法后名称自动跟随；手改过则按输入存，清空同样回到派生
+       */
+      name: nameTouched && form.name.trim() ? form.name.trim() : undefined,
       // TGT-01/02：目标类型 + 区域锚点（环境 / 区域类不关联设备）
       targetKind: form.targetKind,
       anchor: form.anchor,
       requirementId: form.requirementId,
       algorithm: form.algorithm,
-      judge: form.judge,
-      unit: form.unit,
-      min: Number(form.min),
-      max: Number(form.max),
-      expected: form.expected,
+      // 判定口径随主告警项（第一条）走，不再单独维护
+      judge: main.judge,
+      unit: main.unit || "",
+      min: rangeJudged ? main.from ?? 0 : 0,
+      max: rangeJudged ? main.to ?? 0 : 1,
+      expected: rangeJudged ? "" : main.value || "",
       criteria: form.criteria,
-      // 告警设置（平台唯一入口）：来源可选手动输入或引用模板，手填口径随台账一并保存
+      /**
+       * 告警设置（与「告警管理 › 告警设置」同一份数据）：类型 + 状态 + 来源 +
+       * 触发逻辑 / 等级 / 声光报警 / 处置流程 + 告警项；来源由主项是否引用模板决定
+       */
       alarm: {
-        source: form.alarmSource,
-        level: form.alarmLevel as AlarmLevel,
+        ...prev?.alarm,
+        // 告警名称已废弃（统一由台账名称派生）：写回时清掉老缓存里的残留值
+        name: undefined,
+        category: form.alarmClass || undefined,
+        // 告警开关：台账创建即开启（缺省 true），停用只由「告警管理 › 告警设置」改写
+        enabled: prev?.alarm?.enabled !== false,
+        source: main.templateId ? "模板" : "手动",
+        level: main.level,
         trigger: form.alarmTrigger,
         notify: form.alarmNotify,
-        templateId: form.alarmTemplateId || undefined,
+        templateId: main.templateId,
         triggerMode: form.alarmTriggerMode,
         consecutive: Math.max(2, form.alarmConsecutive),
-        alarmSeconds: Math.max(0, form.alarmSeconds),
+        alarmSeconds: Math.max(0, main.alarmSeconds),
         flow: form.alarmFlow
           .split("\n")
           .map((x) => x.trim())
           .filter(Boolean),
+        items: form.alarmItems,
       },
       needPhoto: form.needPhoto,
       needVideo: form.needVideo,
@@ -405,7 +543,10 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
     const ok = editId
       ? act({ type: "UPDATE_BUSINESS_TARGET", id: editId, ...payload })
       : act({ type: "ADD_BUSINESS_TARGET", instrumentId: pick, ...payload });
-    if (ok) OPEN(false);
+    // 内置页保存后沿目录返回来源列表（从巡检项页跳来的会原路返回）
+    if (ok) back();
+    // 返回值给「保存前预览」弹窗用：失败时保持弹窗，好让用户看到提示
+    return ok;
   }
 
   const areas = ["全部", ...deviceTreeRegions(s)];
@@ -418,28 +559,63 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
     ),
   ];
   const keyword = kw.trim();
-  /** 空间 / 区域（非装置）判定：不关联设备台账 或 目标类型非「仪表」 */
-  const isSpaceTarget = (b: BusinessTarget) =>
-    !b.instrumentId || (b.targetKind && b.targetKind !== "仪表");
+  /**
+   * 目标归属的设备形态：关联设备的按其形态；不关联设备（环境 / 区域类目标）视为虚拟设备
+   * @description 与「设备台账」的 deviceKind 同源，避免两处各判一套
+   */
+  const deviceKindOfTarget = (b: BusinessTarget): DeviceKind => {
+    const dev = b.instrumentId ? deviceOf(b.instrumentId) : undefined;
+    return dev ? deviceKindOf(dev) : "虚拟设备";
+  };
+  /** 设备形态筛选值容错：老视图状态残留「装置 / 空间与区域」时一律回落「全部」 */
+  const kindFv = (["全部", ...deviceKinds] as string[]).includes(kindF)
+    ? kindF
+    : "全部";
+  /** 展开筛选面板：用当前生效值填充草稿 */
+  function toggleFilter() {
+    if (!filterOpen) SETDRAFTKIND(kindF);
+    SETFILTEROPEN(!filterOpen);
+  }
+  /** 查询：草稿写回生效值并收起面板 */
+  function applyFilter() {
+    KF(draftKind);
+    PG(1);
+    SETFILTEROPEN(false);
+  }
+  /** 重置：清空草稿并立即生效 */
+  function resetFilter() {
+    SETDRAFTKIND("全部");
+    KF("全部");
+    PG(1);
+  }
   const list = targets.filter((b) => {
     const c = crumb(b.instrumentId);
     const req = requirements.find((r) => r.id === b.requirementId);
-    if (kindF === "装置" && isSpaceTarget(b)) return false;
-    if (kindF === "空间与区域" && !isSpaceTarget(b)) return false;
+    if (kindFv !== "全部" && deviceKindOfTarget(b) !== kindFv) return false;
     if (areaF !== "全部" && c.area !== areaF) return false;
     if (devF !== "全部" && c.device !== devF) return false;
     // 树上点中「空间区域巡检」下的某个目标：列表收敛到这一条（点分组节点则回全部）
     if (tgtF && b.id !== tgtF) return false;
     return (
       !keyword ||
-      (b.id + b.algorithm + (req?.name || "") + c.area + c.device + c.instrument).includes(
-        keyword,
-      )
+      (
+        b.id +
+        (b.name || "") +
+        b.algorithm +
+        (req?.name || "") +
+        c.area +
+        c.device +
+        c.instrument
+      ).includes(keyword)
     );
   });
   const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
   const cur = Math.min(pager || 1, pages);
   const rows = list.slice((cur - 1) * PAGE_SIZE, cur * PAGE_SIZE);
+  /** 本页多选：全选 / 反选按当前页收敛（翻页时已选保留） */
+  const pageIds = rows.map((b) => b.id);
+  const allChecked =
+    pageIds.length > 0 && pageIds.every((x) => sel.includes(x));
   /**
    * 抽屉第一步（设备类）的仪表候选：按左栏树选中（区域 / 设备）+ 中栏关键词过滤
    * @description 与页面筛选解耦：三栏是「选检测目标」的独立导航
@@ -490,6 +666,12 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
 
   return (
     <>
+      {/*
+        列表视图：内置页模式（`mode="edit"`）下**不渲染列表**，
+        只渲染下方的编辑表单——原弹窗改为整页后，两者必须互斥
+      */}
+      {!editing && (
+        <>
       <div className="metric-strip">
         <div>
           <span>巡检目标台账</span>
@@ -510,34 +692,80 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
         <div className="device-main">
           <div className="toolbar">
             <div className="actions">
-              {/* 目标类型归类：装置（关联设备台账） vs 空间与区域（非装置）—— 便于单独查看非装置类目标 */}
-              <div className="segmented">
-                {(["全部", "装置", "空间与区域"] as const).map((x) => (
-                  <button
-                    key={x}
-                    className={kindF === x ? "active" : ""}
-                    onClick={() => {
-                      KF(x);
-                      PG(1);
-                    }}
-                  >
-                    {x}
-                  </button>
-                ))}
-              </div>
               <input
                 placeholder="搜索目标 / 仪表 / 设备 / 算法"
                 value={kw}
                 onChange={(e) => KW(e.target.value)}
               />
+              <Btn onClick={toggleFilter}>
+                {filterOpen ? "收起筛选" : "筛选"}
+                {kindFv !== "全部" ? "（1）" : ""}
+              </Btn>
             </div>
-            <Btn primary onClick={openAdd}>
-              ＋ 添加巡检目标台账
-            </Btn>
+            <div className="actions">
+              <Btn
+                danger
+                disabled={!sel.length}
+                onClick={() =>
+                  setConfirm({
+                    title: "删除巡检目标台账",
+                    text: `确认删除选中的 ${sel.length} 个巡检目标台账？其告警设置一并移除，且不可恢复。`,
+                    run: () => {
+                      const ok = act({
+                        type: "DELETE_BUSINESS_TARGETS",
+                        ids: sel,
+                      });
+                      if (ok) SEL([]);
+                      return ok;
+                    },
+                  })
+                }
+              >
+                删除选中{sel.length ? `（${sel.length}）` : ""}
+              </Btn>
+              <Btn primary onClick={() => go("business-target-edit", "new")}>
+                ＋ 添加巡检目标台账
+              </Btn>
+            </div>
           </div>
+          {filterOpen && (
+            <div className="filter-grid">
+              <label className="inline-filter">
+                <span>设备形态：</span>
+                <select
+                  value={draftKind}
+                  onChange={(e) => SETDRAFTKIND(e.target.value)}
+                >
+                  {["全部", ...deviceKinds].map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="filter-actions">
+                <Btn onClick={resetFilter}>重置</Btn>
+                <Btn primary onClick={applyFilter}>
+                  查询
+                </Btn>
+              </div>
+            </div>
+          )}
           <Panel title="巡检目标台账列表" extra={<span>{list.length} 条</span>}>
             <Table
               heads={[
+                <input
+                  type="checkbox"
+                  aria-label="全选本页巡检目标台账"
+                  checked={allChecked}
+                  onChange={(e) =>
+                    SEL(
+                      e.target.checked
+                        ? [...new Set([...sel, ...pageIds])]
+                        : sel.filter((x) => !pageIds.includes(x)),
+                    )
+                  }
+                />,
+                "名称",
+                "ID",
                 "目标",
                 "类型",
                 "区域",
@@ -555,7 +783,24 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                     };
                 const req = requirements.find((r) => r.id === b.requirementId);
                 return [
-                  <b>{c.instrument}</b>,
+                  // 多选：勾选后可批量删除（被巡检点引用的台账引擎会拦截）
+                  <input
+                    type="checkbox"
+                    aria-label={`选择 ${targetNameOf(s, b)}`}
+                    checked={sel.includes(b.id)}
+                    onChange={(e) =>
+                      SEL(
+                        e.target.checked
+                          ? [...sel, b.id]
+                          : sel.filter((x) => x !== b.id),
+                      )
+                    }
+                  />,
+                  // 名称 = 自定义台账名，留空时回落到仪表名（与告警名称同源）
+                  <b>{targetNameOf(s, b)}</b>,
+                  // ID 是巡检项 / 任务快照引用的主键：只读展示，便于排查对账
+                  <span className="muted">{b.id}</span>,
+                  c.instrument,
                   b.targetKind || (b.instrumentId ? "仪表" : "环境"),
                   c.area,
                   c.device,
@@ -565,7 +810,7 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                       {req?.kind} · {b.algorithm}
                     </small>
                   </>,
-                  <Btn onClick={() => openEdit(b)}>编辑</Btn>,
+                  <Btn onClick={() => go("business-target-edit", b.id)}>编辑</Btn>,
                 ];
               })}
             />
@@ -579,14 +824,37 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
         </div>
       </div>
 
+      {/* 批量删除二次确认（被巡检点引用的台账由引擎拦截并给出提示） */}
+      {confirm && (
+        <Modal title={confirm.title} onClose={() => setConfirm(null)}>
+          <p>{confirm.text}</p>
+          <div className="modal-actions">
+            <Btn onClick={() => setConfirm(null)}>取消</Btn>
+            <Btn
+              primary
+              onClick={() => {
+                if (confirm.run() !== false) setConfirm(null);
+              }}
+            >
+              确认删除
+            </Btn>
+          </div>
+        </Modal>
+      )}
+        </>
+      )}
+
       {open && (
-        <Modal
-          title={editId ? "编辑巡检目标台账" : "添加巡检目标台账"}
-          wide
-          onClose={() => OPEN(false)}
-          footer={
-            <>
-              <Btn onClick={() => OPEN(false)}>取消</Btn>
+        <div className="inner-page bt-edit-page">
+          {/* 内置页顶栏：原弹窗 title / footer 改到这里（页面空间大，告警项表格不再被挤扁） */}
+          <div className="context-bar">
+            <b>
+              {editId
+                ? `编辑巡检目标台账 · ${form.name.trim() || editId}`
+                : "添加巡检目标台账"}
+            </b>
+            <div className="actions">
+              <Btn onClick={() => back()}>取消</Btn>
               {step === 1 && (
                 <Btn disabled={!!editId} onClick={() => STEP(0)}>
                   上一步：换检测目标
@@ -600,21 +868,20 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                 <Btn
                   primary
                   disabled={!form.requirementId || !form.algorithm.trim()}
-                  onClick={save}
+                  onClick={() => CLOSE(true)}
                 >
                   {editId ? "保存修改" : "创建巡检目标台账"}
                 </Btn>
               )}
-            </>
-          }
-        >
+            </div>
+          </div>
           <Steps
             items={["选检测目标", "配业务逻辑与算法"]}
             current={step}
           />
           {step === 0 ? (
             <>
-              {/* 步骤①：先选「设备」还是「区域」，再在下方点选对应目标 */}
+              {/* 步骤①：先选「实体设备」还是「虚拟设备」，再在下方点选对应目标 */}
               <div className="segmented" style={{ marginBottom: 14 }}>
                 <button
                   className={scope === "设备" ? "active" : ""}
@@ -623,7 +890,7 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                     PICK("");
                   }}
                 >
-                  设备（仪表）
+                  实体设备
                 </button>
                 <button
                   className={scope === "区域" ? "active" : ""}
@@ -632,7 +899,7 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                     PICK("");
                   }}
                 >
-                  区域（环境）
+                  虚拟设备
                 </button>
               </div>
 
@@ -761,6 +1028,22 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                   业务目标 / 业务要求由系统按「锚点 + 巡检要求 + 判定方式」自动生成，不再手填。
                 </Note>
               )}
+              {/* 台账名称：打开即预填派生值（仪表名 / 锚点 / 巡检要求名 + 算法），可直接改、可清空 */}
+              <Field label="台账名称">
+                <input
+                  value={form.name}
+                  onChange={(e) => {
+                    // 手改过就不再被自动预填覆盖；清空 = 回到派生口径
+                    NAMETOUCHED(true);
+                    FORM({ ...form, name: e.target.value });
+                  }}
+                />
+              </Field>
+              {editId && (
+                <Field label="台账 ID">
+                  <span className="muted">{editId}</span>
+                </Field>
+              )}
               {/* TGT-02：区域 / 空间目标必须填写参照物锚点 */}
               {form.targetKind !== "仪表" && (
                 <Field
@@ -771,9 +1054,11 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                   <input
                     value={form.anchor}
                     placeholder="例如 3# 罐区北侧立柱 / 管廊 A 段起点"
-                    onChange={(e) =>
-                      FORM({ ...form, anchor: e.target.value })
-                    }
+                    onChange={(e) => {
+                      const anchor = e.target.value;
+                      // 锚点变化影响派生名：没手改过名称时同步刷新
+                      FORM({ ...form, anchor, ...namePatch({ anchor }) });
+                    }}
                   />
                 </Field>
               )}
@@ -782,8 +1067,7 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                 左：1、巡检要求 / 2、使用算法逻辑 / 3、告警规则（手动输入 or 选择现有模板）
                 右：把左栏配好的内容直接展示出来（采集方式与单位、算法、生效告警口径与处置流程）
               */}
-              <div className="bt-two-col">
-                <div className="bt-config">
+              <div className="bt-config bt-config-wide">
                   <div className="form-section">
                     <h4>1、巡检要求</h4>
                     <select
@@ -804,7 +1088,7 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                     {/* 采集方式：仪表类取仪表自己的；区域 / 环境类由巡检要求给出（只读展示） */}
                     <p className="muted">
                       采集方式 / 单位：{effCapture || "—"} ·{" "}
-                      {form.unit || instrumentOf(pick)?.unit || "—"}
+                      {mainUnit || instrumentOf(pick)?.unit || "—"}
                     </p>
                   </div>
                   <div className="form-section">
@@ -824,182 +1108,96 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                   </div>
                   <div className="form-section">
                     <h4>3、告警规则</h4>
-                    {/* 来源二选一：选择现有模板（一处维护、多点引用）/ 手动输入（本站自己定口径） */}
-                    <div className="radio-row" style={{ marginBottom: 10 }}>
-                      {(
-                        [
-                          ["模板", "选择现有模板"],
-                          ["手动", "手动输入"],
-                        ] as const
-                      ).map(([v, label]) => (
-                        <label key={v}>
-                          <input
-                            type="radio"
-                            name="alarm-source"
-                            checked={form.alarmSource === v}
-                            onChange={() => FORM({ ...form, alarmSource: v })}
-                          />
-                          {label}
-                        </label>
-                      ))}
+                    {/* 告警类型 / 状态：与「告警管理 › 告警设置」同一份数据，改任一处另一处同步 */}
+                    <Field label="告警类型">
+                      <select
+                        value={form.alarmClass}
+                        onChange={(e) =>
+                          FORM({ ...form, alarmClass: e.target.value })
+                        }
+                      >
+                        <option value="">未指定</option>
+                        {(() => {
+                          const names = enabledAlarmClassesOf(s).map(
+                            (c) => c.name,
+                          );
+                          // 台账已引用的分类被停用后仍要能回显，避免打开即丢值
+                          if (
+                            form.alarmClass &&
+                            !names.includes(form.alarmClass)
+                          )
+                            names.push(form.alarmClass);
+                          return names.map((n) => (
+                            <option key={n}>{n}</option>
+                          ));
+                        })()}
+                      </select>
+                    </Field>
+                    {/* 告警项表格：一行一条，每条可选模板（一键带出内容字段）或直接手填；第一条 = 台账判定口径 */}
+                    <div className="task-toolbar" style={{ marginTop: 12 }}>
+                      <AlarmItemAddBar
+                        templates={tplOptions}
+                        onAddManual={() => addAlarmItem()}
+                        onAddFromTemplate={(tid) => addAlarmItem(tid)}
+                      />
+                      <span className="muted">
+                        共 {form.alarmItems.length} 条告警项
+                      </span>
                     </div>
-                    {isTplMode ? (
-                      <>
-                        <select
-                          value={form.alarmTemplateId}
-                          onChange={(e) => applyAlarmTemplate(e.target.value)}
-                        >
-                          <option value="">不指定（按检测类型自动套用启用模板）</option>
-                          {tplOptions.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}（{t.level} · {logicText(t.trigger)} ·{" "}
-                              {alarmText(t.alarmSeconds)}）
-                            </option>
-                          ))}
-                        </select>
-                        <p className="muted">
-                          触发条件 / 触发逻辑 / 等级 / 声光报警 / 处置流程都由模板统一下发，
-                          右侧展示的就是生效结果。
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <Field label="触发条件">
-                          <div className="actions">
-                            <select
-                              value={form.judge}
-                              onChange={(e) =>
-                                FORM({
-                                  ...form,
-                                  judge: e.target.value as JudgeType,
-                                })
-                              }
-                            >
-                              <option>数值范围</option>
-                              <option>期望状态</option>
-                            </select>
-                            {form.judge === "数值范围" ? (
-                              <>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  aria-label="下限"
-                                  value={form.min}
-                                  onChange={(e) =>
-                                    FORM({
-                                      ...form,
-                                      min: Number(e.target.value),
-                                    })
-                                  }
-                                />
-                                <span>–</span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  aria-label="上限"
-                                  value={form.max}
-                                  onChange={(e) =>
-                                    FORM({
-                                      ...form,
-                                      max: Number(e.target.value),
-                                    })
-                                  }
-                                />
-                                <input
-                                  aria-label="单位"
-                                  placeholder="单位"
-                                  value={form.unit}
-                                  onChange={(e) =>
-                                    FORM({ ...form, unit: e.target.value })
-                                  }
-                                />
-                              </>
-                            ) : (
-                              <input
-                                aria-label="期望状态"
-                                placeholder="期望状态，例如 开启"
-                                value={form.expected}
-                                onChange={(e) =>
-                                  FORM({ ...form, expected: e.target.value })
-                                }
-                              />
-                            )}
-                          </div>
-                        </Field>
-                        <Field label="触发逻辑">
-                          <select
-                            value={form.alarmTriggerMode}
-                            onChange={(e) =>
-                              FORM({
-                                ...form,
-                                alarmTriggerMode: e.target
-                                  .value as typeof form.alarmTriggerMode,
-                              })
-                            }
-                          >
-                            <option value="单次即触发">
-                              识别即触发（本次识别到异常就告警）
-                            </option>
-                            <option value="连续确认">
-                              连续确认（连续 N 次异常才告警）
-                            </option>
-                          </select>
-                        </Field>
-                        {form.alarmTriggerMode === "连续确认" && (
-                          <Field label="连续确认次数">
-                            <input
-                              type="number"
-                              min={2}
-                              value={form.alarmConsecutive}
-                              onChange={(e) =>
-                                FORM({
-                                  ...form,
-                                  alarmConsecutive: Math.max(2, +e.target.value),
-                                })
-                              }
-                            />
-                          </Field>
-                        )}
-                        <Field label="告警等级">
-                          <select
-                            value={form.alarmLevel}
-                            onChange={(e) =>
-                              FORM({ ...form, alarmLevel: e.target.value })
-                            }
-                          >
-                            {ALARM_LEVELS.map((l) => (
-                              <option key={l}>{l}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        <Field label="声光报警（秒）">
-                          <input
-                            type="number"
-                            min={0}
-                            value={form.alarmSeconds}
-                            placeholder="0 表示不启动声光报警"
-                            onChange={(e) =>
-                              FORM({
-                                ...form,
-                                alarmSeconds: Math.max(0, +e.target.value),
-                              })
-                            }
-                          />
-                        </Field>
-                        <Field label="处理流程（每行一个步骤，受理后逐条复检）">
-                          <textarea
-                            rows={4}
-                            value={form.alarmFlow}
-                            placeholder={
-                              "核对读数与识别值是否一致\n对照工艺卡片确认工况\n通知值班长并转现场处置"
-                            }
-                            onChange={(e) =>
-                              FORM({ ...form, alarmFlow: e.target.value })
-                            }
-                          />
-                        </Field>
-                      </>
+                    <AlarmItemTable
+                      items={form.alarmItems}
+                      templates={tplOptions}
+                      onChange={patchAlarmItem}
+                      onPickTemplate={applyItemTemplate}
+                      onRemove={removeAlarmItem}
+                    />
+                    {/* 台账级配置：触发逻辑（告警项引用了模板时由模板下发）与处置流程 */}
+                    <Field label="触发逻辑">
+                      <select
+                        value={form.alarmTriggerMode}
+                        onChange={(e) =>
+                          FORM({
+                            ...form,
+                            alarmTriggerMode: e.target
+                              .value as typeof form.alarmTriggerMode,
+                          })
+                        }
+                      >
+                        <option value="单次即触发">
+                          识别即触发（本次识别到异常就告警）
+                        </option>
+                        <option value="连续确认">
+                          连续确认（连续 N 次异常才告警）
+                        </option>
+                      </select>
+                    </Field>
+                    {form.alarmTriggerMode === "连续确认" && (
+                      <Field label="连续确认次数">
+                        <input
+                          type="number"
+                          min={2}
+                          value={form.alarmConsecutive}
+                          onChange={(e) =>
+                            FORM({
+                              ...form,
+                              alarmConsecutive: Math.max(2, +e.target.value),
+                            })
+                          }
+                        />
+                      </Field>
                     )}
+                    <Field label="处理流程（每行一个步骤，受理后逐条复检）">
+                      <textarea
+                        rows={4}
+                        value={form.alarmFlow}
+                        placeholder={
+                          "核对读数与识别值是否一致\n对照工艺卡片确认工况\n通知值班长并转现场处置"
+                        }
+                        onChange={(e) =>
+                          FORM({ ...form, alarmFlow: e.target.value })
+                        }
+                      />
+                    </Field>
                     {/* TGT-03（待确认）：环境类目标的告警策略落点尚未定论，先沿用本处，待产品 + 算法方拍板 */}
                     {form.targetKind !== "仪表" && (
                       <Note>
@@ -1009,78 +1207,105 @@ export function BusinessTargets({ tab }: { tab?: string } = {}) {
                     )}
                   </div>
                 </div>
-                {/* 右栏：把左栏配好的内容直接展示出来（与左栏 1:1 对应，不重复输入） */}
-                <div className="bt-preview">
-                  <Panel
-                    title="配置结果 · 直接展示"
-                    extra={<span>{isTplMode ? "引用模板" : "手动输入"}</span>}
-                  >
-                    <div className="bt-sum">
-                      <section className="bt-sum-group">
-                        <h5>
-                          <i>1</i>巡检要求
-                        </h5>
-                        <p className="bt-sum-value">
-                          {effReq ? `${effReq.name}（${effReq.kind}）` : "—"}
-                        </p>
-                        {effReq?.description && (
-                          <p className="bt-sum-quote">{effReq.description}</p>
-                        )}
-                        <div className="bt-sum-kv">
-                          <span>采集方式</span>
-                          <b>{effCapture || "—"}</b>
-                          <span>单位</span>
-                          <b>{form.unit || instrumentOf(pick)?.unit || "—"}</b>
-                        </div>
-                      </section>
-                      <section className="bt-sum-group">
-                        <h5>
-                          <i>2</i>使用算法逻辑
-                        </h5>
-                        <p className="bt-sum-value">{form.algorithm || "—"}</p>
-                      </section>
-                      <section className="bt-sum-group">
-                        <h5>
-                          <i>3</i>告警规则
-                        </h5>
-                        <div className="bt-sum-kv">
-                          <span>来源</span>
-                          <b>
-                            {isTplMode
-                              ? effTpl
-                                ? `引用模板 ${effTpl.name}（${effTpl.id}）`
-                                : "引用模板 · 暂无匹配的启用模板"
-                              : "手动输入"}
-                          </b>
-                          <span>触发条件</span>
-                          <b>{triggerText(effTrigger)}</b>
-                          <span>触发逻辑</span>
-                          <b>{logicText(effTrigger)}</b>
-                          <span>告警等级</span>
-                          <b>{effLevel}</b>
-                          <span>声光报警</span>
-                          <b>{alarmText(effSeconds)}</b>
-                        </div>
-                        <h6>处置流程 · {effFlow.length} 步（受理后逐条复检）</h6>
-                        {effFlow.length ? (
-                          <ol className="flow-steps">
-                            {effFlow.map((x, i) => (
-                              <li key={i}>{x}</li>
-                            ))}
-                          </ol>
-                        ) : (
-                          <Note>
-                            未配置处置流程：受理后按该级别的处置建议执行，可在「3、告警规则」里补步骤。
-                          </Note>
-                        )}
-                      </section>
-                    </div>
-                  </Panel>
-                </div>
-              </div>
             </>
           )}
-        </Modal>
+
+          {/*
+            保存前预览（二次确认）：配置结果不在页面上常驻展示，
+            点「保存」才把当前配好的内容摊开给用户核对，确认后才真正落库
+          */}
+          {preview && (
+            <Modal
+              title="确认保存 · 配置结果预览"
+              wide
+              onClose={() => CLOSE(false)}
+              footer={
+                <>
+                  <Btn onClick={() => CLOSE(false)}>返回修改</Btn>
+                  <Btn
+                    primary
+                    onClick={() => {
+                      // 保存成功会自行离开本页；失败则保持弹窗，用户能看到提示后返回修改
+                      if (save()) CLOSE(false);
+                    }}
+                  >
+                    确认保存
+                  </Btn>
+                </>
+              }
+            >
+              <div className="bt-preview">
+                <Panel
+                  title="配置结果 · 直接展示"
+                  extra={<span>{mainTpl ? "引用模板" : "手填"}</span>}
+                >
+                  <div className="bt-sum">
+                    <section className="bt-sum-group">
+                      <h5>
+                        <i>1</i>巡检要求
+                      </h5>
+                      <p className="bt-sum-value">
+                        {effReq ? `${effReq.name}（${effReq.kind}）` : "—"}
+                      </p>
+                      {effReq?.description && (
+                        <p className="bt-sum-quote">{effReq.description}</p>
+                      )}
+                      <div className="bt-sum-kv">
+                        <span>采集方式</span>
+                        <b>{effCapture || "—"}</b>
+                        <span>单位</span>
+                        <b>{mainUnit || instrumentOf(pick)?.unit || "—"}</b>
+                      </div>
+                    </section>
+                    <section className="bt-sum-group">
+                      <h5>
+                        <i>2</i>使用算法逻辑
+                      </h5>
+                      <p className="bt-sum-value">{form.algorithm || "—"}</p>
+                    </section>
+                    <section className="bt-sum-group">
+                      <h5>
+                        <i>3</i>告警规则
+                      </h5>
+                      <div className="bt-sum-kv">
+                        <span>台账名称</span>
+                        <b>{form.name.trim() || "—"}</b>
+                        <span>告警类型</span>
+                        <b>{form.alarmClass || "—"}</b>
+                        <span>来源</span>
+                        <b>
+                          {mainTpl
+                            ? `引用模板 ${mainTpl.name}（${mainTpl.id}）`
+                            : "手填"}
+                        </b>
+                        <span>触发条件</span>
+                        <b>{triggerText(effTrigger)}</b>
+                        <span>触发逻辑</span>
+                        <b>{logicText(effTrigger)}</b>
+                        <span>告警等级</span>
+                        <b>{effLevel}</b>
+                        <span>声光报警</span>
+                        <b>{alarmText(effSeconds)}</b>
+                      </div>
+                      <h6>处置流程 · {effFlow.length} 步（受理后逐条复检）</h6>
+                      {effFlow.length ? (
+                        <ol className="flow-steps">
+                          {effFlow.map((x, i) => (
+                            <li key={i}>{x}</li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <Note>
+                          未配置处置流程：受理后按该级别的处置建议执行，可在「3、告警规则」里补步骤。
+                        </Note>
+                      )}
+                    </section>
+                  </div>
+                </Panel>
+              </div>
+            </Modal>
+          )}
+        </div>
       )}
     </>
   );

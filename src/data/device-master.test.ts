@@ -149,8 +149,10 @@ test("设备停用后拦截任务创建与派单（原 extras.equipment 空转�
   assert.equal(s.devices!.find((d) => d.id === "DEV-V001")!.state, "停用");
   assert.ok(constraints(s, s.tasks[0], s.robots[0]).includes("所属设备已停用"));
   assert.throws(() => run(s, quick(["P001"])), /已停用设备/);
-  // 未受影响设备的点位仍可下发
-  assert.ok(run(s, quick(["P007"])).tasks.length > s.tasks.length);
+  // 未受影响设备的点位仍可下发（P003 属 V002 缓冲罐，与停用的 V001 无关）
+  assert.ok(run(s, quick(["P003"])).tasks.length > s.tasks.length);
+  // P007 属装置区（装置区地图 MAP-B01）：跨区派单被拦，需装置区的机器人执行
+  assert.throws(() => run(s, quick(["P007"])), /区域不匹配/);
   // 恢复启用后拦截解除
   s = run(s, { type: "SET_DEVICE_STATE", deviceId: "DEV-V001", state: "在用" });
   assert.ok(!constraints(s, s.tasks[0], s.robots[0]).includes("所属设备已停用"));
@@ -287,5 +289,52 @@ test("一次停靠可覆盖多个检测目标：逻辑点由系统派生且不�
         requirement: "x",
       }),
     /已停用/,
+  );
+});
+
+test("设备形态：清单导入与新增设备按设备类型推导，显式填写以填写值为准", () => {
+  const item = (id: string) => ({
+    id,
+    target: "液位读数",
+    kind: "可见光",
+    unit: "m",
+    inspect: true,
+    cycle: "每日",
+    priority: "普通",
+  });
+  let s = seed();
+  // 种子已归类：储罐 → 实体设备；管廊（区域 / 空间类）→ 虚拟设备
+  assert.equal(s.devices!.find((d) => d.id === "DEV-V001")!.deviceKind, "实体设备");
+  assert.equal(s.devices!.find((d) => d.id === "DEV-PLA")!.deviceKind, "虚拟设备");
+  s = run(s, {
+    type: "IMPORT_DEVICES",
+    devices: [
+      // 未填设备形态 → 按设备类型推导（管廊 → 虚拟设备）
+      { id: "V021", name: "V021 管廊", type: "管廊", items: [item("II-V021-1")] },
+      // 显式填写优先于推导
+      {
+        id: "V022",
+        name: "V022 储罐",
+        type: "储罐",
+        deviceKind: "虚拟设备",
+        items: [item("II-V022-1")],
+      },
+    ],
+  });
+  assert.equal(s.devices!.find((d) => d.id === "V021")!.deviceKind, "虚拟设备");
+  assert.equal(s.devices!.find((d) => d.id === "V022")!.deviceKind, "虚拟设备");
+  // 新增设备：未指定按类型推导，非法值被拦截
+  s = run(s, { type: "ADD_DEVICE", id: "V023", name: "V023 管廊", deviceType: "管廊" });
+  assert.equal(s.devices!.find((d) => d.id === "V023")!.deviceKind, "虚拟设备");
+  assert.throws(
+    () =>
+      run(s, {
+        type: "ADD_DEVICE",
+        id: "V024",
+        name: "V024 储罐",
+        deviceType: "储罐",
+        deviceKind: "半实体",
+      }),
+    /设备形态.*不合法/,
   );
 });

@@ -16,7 +16,6 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  MapPin,
   Maximize,
   Minimize,
 } from "lucide-react";
@@ -89,8 +88,10 @@ const TOOLTIP_STYLE = {
 /** Recharts 统一坐标轴文字色 */
 const AXIS_TICK = { fill: "#94a3b8", fontSize: 11 } as const;
 
-type RangeKey = "今日" | "近7天" | "近30天" | "全部";
-const RANGES: RangeKey[] = ["今日", "近7天", "近30天", "全部"];
+type SmallRange = "今日" | "近7天" | "近30天";
+const SMALL_RANGES: SmallRange[] = ["今日", "近7天", "近30天"];
+type LargeRange = "近30天" | "半年" | "一年";
+const LARGE_RANGES: LargeRange[] = ["近30天", "半年", "一年"];
 
 export function MonitorCockpit({
   onSwitch,
@@ -99,9 +100,14 @@ export function MonitorCockpit({
   onSwitch?: (id: CockpitId) => void;
 }) {
   const { s } = useStore();
-  /** 全局筛选：区域 / 时间（头部筛选器，牵引全屏口径） */
-  const [region, SETR] = useState("全部区域");
-  const [range, SETRANGE] = useState<RangeKey>("近7天");
+  /** 全局区域：固定全厂区（顶栏筛选器已按需求移除） */
+  const region = "全部区域";
+  /** 小粒度时间（任务情况 / 风险设备 / 报警排行） */
+  const [sRange, SETS] = useState<SmallRange>("近7天");
+  /** 实时报警独立时间筛选（不复用 sRange，避免影响其他卡） */
+  const [aRange, SETA] = useState<SmallRange>("近7天");
+  /** 大粒度时间（告警趋势） */
+  const [lRange, SETL] = useState<LargeRange>("近30天");
   /** 实时时钟 */
   const [clock, SETCLOCK] = useState(() => new Date());
   const [fs, FS] = useState(false);
@@ -126,22 +132,32 @@ export function MonitorCockpit({
 
   const sc = scopedState(s, region);
   const TODAY = localDay(clock);
-  /** 时间范围起点 */
-  const rangeStart = useMemo(() => {
-    if (range === "全部") return 0;
-    if (range === "今日") return parseTime(TODAY + " 00:00");
-    return Date.now() - (range === "近7天" ? 7 : 30) * 86400000;
-  }, [range, TODAY]);
+  /** 实时报警独立时间范围起点（按今日 / 近7天 / 近30天） */
+  const aRangeStart = useMemo(() => {
+    if (aRange === "今日") return parseTime(TODAY + " 00:00");
+    return Date.now() - (aRange === "近7天" ? 7 : 30) * 86400000;
+  }, [aRange, TODAY]);
+  /** 小粒度时间范围起点（用于任务情况 / 风险设备 / 报警排行） */
+  const sRangeStart = useMemo(() => {
+    if (sRange === "今日") return parseTime(TODAY + " 00:00");
+    return Date.now() - (sRange === "近7天" ? 7 : 30) * 86400000;
+  }, [sRange, TODAY]);
+  /** 大粒度时间范围起点（用于告警趋势） */
+  const lRangeStart = useMemo(() => {
+    if (lRange === "近30天") return Date.now() - 30 * 86400000;
+    if (lRange === "半年") return Date.now() - 182 * 86400000;
+    return Date.now() - 365 * 86400000;
+  }, [lRange]);
+  /** 当前小粒度范围内的任务 */
   const tasksInRange = s.tasks.filter(
-    (t) =>
-      range === "全部" ||
-      (Number.isFinite(parseTime(t.created)) && parseTime(t.created) >= rangeStart),
+    (t) => {
+      if (sRange === "今日") return (t.created || "").slice(0, 10) === TODAY;
+      return Number.isFinite(parseTime(t.created)) && parseTime(t.created) >= sRangeStart;
+    }
   );
 
   // ── KPI ──
   const todayTasks = s.tasks.filter((t) => t.created.slice(0, 10) === TODAY).length;
-  const openAlarms = sc.alarms.filter((a) => !a.handledAt);
-  const openAlarmUrgent = openAlarms.filter((a) => a.level === "一级").length;
   const doneInRange = tasksInRange.filter((t) =>
     ["完成", "部分完成"].includes(t.state),
   ).length;
@@ -150,29 +166,48 @@ export function MonitorCockpit({
     : 0;
   const onlineRobots = sc.robots.filter((r) => r.state !== "离线").length;
 
-  /** 全局 KPI（综合总览=场景悬浮徽标；运营管理=扁平卡片行），两处共用同一口径 */
-  const kpis = [
-    { label: "今日巡检", value: String(todayTasks), cls: "cyan", sub: `${range} ${tasksInRange.length} 次` },
-    { label: "未处理报警", value: String(openAlarms.length), cls: openAlarms.length ? "red" : "cyan", sub: `紧急 ${openAlarmUrgent} 条` },
-    { label: "任务完成率", value: `${completeRate}%`, cls: "cyan", sub: `完成 ${doneInRange} / ${tasksInRange.length}` },
-    { label: "在线设备", value: String(onlineRobots), cls: "cyan", sub: `共 ${sc.robots.length} 台` },
-  ];
+  /** 实时报警：aRange 时间范围内 + 未处置 */
+  const alarmsInARange = useMemo(() => {
+    return sc.alarms.filter((a) => {
+      if (a.handledAt) return false;
+      if (aRange === "今日") return (a.time || "").slice(0, 10) === TODAY;
+      const t = parseTime(a.time);
+      return Number.isFinite(t) && t >= aRangeStart;
+    });
+  }, [sc.alarms, aRange, aRangeStart, TODAY]);
 
-  // ── 左·上：实时报警数据表格（等级优先 + 时间倒序） ──
-  const alarmRows = useMemo(() => {
-    const rank = (lv: string) => (lv === "一级" ? 0 : lv === "二级" ? 1 : 2);
-    return [...openAlarms]
-      .sort(
-        (a, b) => rank(a.level) - rank(b.level) || b.time.localeCompare(a.time),
-      )
-      .slice(0, 60);
-  }, [openAlarms]);
-  /** 点位 → 设备 / 区域（表格「设备 / 区域」列） */
-  const placeOf = (pointId: string) => {
-    const p = s.points.find((x) => x.id === pointId);
-    const regionName = p ? s.maps.find((m) => m.id === p.mapId)?.region : undefined;
-    return { device: p?.device || p?.object || pointId || "—", region: regionName || "—" };
+  // ── 实时报警 KPI：按级别 + 按分类聚合（不再逐条展示） ──
+  const LV_ORDER = ["一级", "二级", "三级"] as const;
+  const LEVEL_META: Record<string, { label: string; color: string; hint: string }> = {
+    一级: { label: "一级 · 紧急", color: "#ef4444", hint: "需立即处置" },
+    二级: { label: "二级 · 重要", color: "#f59e0b", hint: "需关注处理" },
+    三级: { label: "三级 · 一般", color: "#22c55e", hint: "记录观察" },
   };
+  const CATEGORY_META: Record<string, { label: string; color: string }> = {
+    业务:   { label: "业务异常", color: "#06b6d4" },
+    机器人: { label: "机器人",   color: "#a855f7" },
+    设备:   { label: "设备故障", color: "#f97316" },
+    环境:   { label: "环境异常", color: "#10b981" },
+    安全:   { label: "安全隐患", color: "#ef4444" },
+  };
+  /** 未处置告警按级别分组 */
+  const byLevel = useMemo(() => {
+    const m: Record<string, number> = {};
+    alarmsInARange.forEach((a) => (m[a.level] = (m[a.level] || 0) + 1));
+    return LV_ORDER.map((lv) => ({ lv, count: m[lv] || 0 }));
+  }, [alarmsInARange]);
+  /** 未处置告警按分类分组（自动从数据里提取所有 category） */
+  const byCategory = useMemo(() => {
+    const m: Record<string, number> = {};
+    alarmsInARange.forEach((a) => {
+      const c = a.category || "其他";
+      m[c] = (m[c] || 0) + 1;
+    });
+    // 按数量降序
+    return Object.entries(m)
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat, count]) => ({ cat, count }));
+  }, [alarmsInARange]);
 
   // ── 左·下：任务情况环形图 ──
   const taskDist = [
@@ -183,15 +218,23 @@ export function MonitorCockpit({
   ];
   const taskTotal = tasksInRange.length;
 
+  /** 判断时间字符串是否落在本月（YYYY-MM 前缀匹配） */
+  const monthOf = (d = new Date()) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const THIS_MONTH = monthOf();
+  /** 今日告警：总数 + 未处置 */
+  const todayAlarms = sc.alarms.filter((a) => (a.time || "").slice(0, 10) === TODAY);
+  const todayAlarmsOpen = todayAlarms.filter((a) => !a.handledAt);
+  const thisMonthTasks = sc.tasks.filter((t) => (t.time || "").startsWith(THIS_MONTH));
+
   // ── 左·下：报警排行 TOP10（按点位聚合，横向条形图） ──
   const rank = useMemo(() => {
     const m = new Map<string, number>();
     sc.alarms
       .filter((a) => {
-        if (range === "全部") return true;
-        if (range === "今日") return a.time.slice(0, 10) === TODAY;
+        if (sRange === "今日") return a.time.slice(0, 10) === TODAY;
         const t = parseTime(a.time);
-        return Number.isFinite(t) && t >= rangeStart;
+        return Number.isFinite(t) && t >= sRangeStart;
       })
       .forEach((a) => m.set(a.pointId, (m.get(a.pointId) || 0) + 1));
     return [...m.entries()]
@@ -202,16 +245,14 @@ export function MonitorCockpit({
         value,
         color: RANK_COLORS[i % RANK_COLORS.length],
       }));
-  }, [sc.alarms, s.points, range, rangeStart, TODAY]);
+  }, [sc.alarms, s.points, sRange, sRangeStart, TODAY]);
 
   // ── 右·上：风险设备（按被巡检设备聚合 + 状态呼吸灯） ──
   const riskDevices = useMemo(() => {
     const inRange = (t: string) =>
-      range === "全部"
-        ? true
-        : range === "今日"
-          ? t.slice(0, 10) === TODAY
-          : Number.isFinite(parseTime(t)) && parseTime(t) >= rangeStart;
+      sRange === "今日"
+        ? t.slice(0, 10) === TODAY
+        : Number.isFinite(parseTime(t)) && parseTime(t) >= sRangeStart;
     const m = new Map<
       string,
       { device: string; pointCount: number; alarmCount: number; score: number; urgent: number }
@@ -242,19 +283,19 @@ export function MonitorCockpit({
         level: riskLevel(x.score, x.urgent > 0),
         pct: Math.round((x.score / Math.max(1, x.score)) * 100),
       }));
-  }, [sc.points, sc.alarms, s.points, range, rangeStart, TODAY]);
+  }, [sc.points, sc.alarms, s.points, sRange, sRangeStart, TODAY]);
   const riskList = riskDevices.slice(0, 8);
 
   // ── 右·下：告警趋势（按真实时间聚合，无数据计 0、不插值） ──
-  const trendDays = range === "近30天" ? 30 : 7;
+  const lDays = lRange === "近30天" ? 30 : lRange === "半年" ? 182 : 365;
   const trendList = useMemo(() => {
     const out: { d: string; v: number }[] = [];
-    for (let i = trendDays - 1; i >= 0; i--) {
+    for (let i = lDays - 1; i >= 0; i--) {
       const key = localDay(new Date(Date.now() - i * 86400000));
       out.push({ d: key.slice(5), v: sc.alarms.filter((a) => a.time.slice(0, 10) === key).length });
     }
     return out;
-  }, [sc.alarms, trendDays]);
+  }, [sc.alarms, lDays]);
 
   return (
     <div className="cockpit-screen mcp-screen" ref={shellRef}>
@@ -265,30 +306,6 @@ export function MonitorCockpit({
         onSwitch={onSwitch}
         extra={
           <>
-            <div className="mcp-filters">
-              <label>
-                <MapPin size={12} />
-                <span>区域</span>
-                <select value={region} onChange={(e) => SETR(e.target.value)} aria-label="区域">
-                  {["全部区域", ...new Set(s.robots.map((r) => r.region))].map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <CalendarDays size={12} />
-                <span>时间</span>
-                <select
-                  value={range}
-                  onChange={(e) => SETRANGE(e.target.value as RangeKey)}
-                  aria-label="时间范围"
-                >
-                  {RANGES.map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
             <button
               className="cs-nav-icon"
               title={fs ? "退出全屏" : "全屏展示"}
@@ -314,21 +331,11 @@ export function MonitorCockpit({
               fit="xMidYMid slice"
             />
           </div>
-          {/* 场景悬浮 KPI：紧凑玻璃徽标，不占面板版面 */}
-          <div className="mcp-scene-kpis">
-            {kpis.map((k) => (
-              <span className="mcp-chip" key={k.label}>
-                {k.label}
-                <b className={k.cls}>{k.value}</b>
-                <small>{k.sub}</small>
-              </span>
-            ))}
-          </div>
           <div className="mcp-scene-tag">数字孪生场景 · {region}</div>
 
           {/* ══ 左栏：基础数据 / 任务情况 / 风险设备 ══ */}
           <aside className={"mcp-side mcp-side-l" + (openL ? "" : " folded")}>
-            {/* 基础数据：点位 / 机器人 / 任务 / 报警 / 充电桩 / 轨道 紧凑统计 */}
+            {/* 基础数据：巡检点 / 巡检机器人 / 本月告警 / 本月巡检 4 项 */}
             <section className="mcp-card">
               <div className="mcp-card-head">
                 <h3>基础数据</h3>
@@ -336,7 +343,7 @@ export function MonitorCockpit({
               </div>
               <ul className="mcp-base">
                 <li>
-                  <span>巡检点位</span>
+                  <span>巡检点</span>
                   <b>{sc.points.length}</b>
                   <small>已启用 {sc.points.filter((p) => p.state === "已启用").length}</small>
                 </li>
@@ -346,24 +353,14 @@ export function MonitorCockpit({
                   <small>在线 {onlineRobots}</small>
                 </li>
                 <li>
-                  <span>今日任务</span>
-                  <b>{todayTasks}</b>
-                  <small>{range} 共 {tasksInRange.length}</small>
+                  <span>今日告警</span>
+                  <b className={todayAlarms.length ? "red" : ""}>{todayAlarms.length}</b>
+                  <small>未处置 <b className="red">{todayAlarmsOpen.length}</b></small>
                 </li>
                 <li>
-                  <span>未处理报警</span>
-                  <b className={openAlarms.length ? "red" : ""}>{openAlarms.length}</b>
-                  <small>紧急 {openAlarmUrgent} 条</small>
-                </li>
-                <li>
-                  <span>充电桩</span>
-                  <b>{s.chargers.length}</b>
-                  <small>全厂</small>
-                </li>
-                <li>
-                  <span>轨道区段</span>
-                  <b>{s.railSections.length}</b>
-                  <small>全厂</small>
+                  <span>本月巡检数</span>
+                  <b>{thisMonthTasks.length}</b>
+                  <small>{THIS_MONTH} · 已执行</small>
                 </li>
               </ul>
             </section>
@@ -372,7 +369,12 @@ export function MonitorCockpit({
             <section className="mcp-card">
                 <div className="mcp-card-head">
                   <h3>任务情况</h3>
-                  <small>{range} · 共 {taskTotal} 个任务</small>
+                  <div className="mcp-range-chip" role="group" aria-label="任务情况时间">
+                    {SMALL_RANGES.map((r) => (
+                      <button key={r} className={sRange === r ? "on" : ""} onClick={() => SETS(r)}>{r}</button>
+                    ))}
+                  </div>
+                  <small>· 共 {taskTotal} 个任务</small>
                 </div>
                 <div className="mcp-donut">
                   <ResponsiveContainer width="100%" height="100%">
@@ -414,7 +416,12 @@ export function MonitorCockpit({
             <section className="mcp-card">
               <div className="mcp-card-head">
                 <h3>风险设备</h3>
-                <small>按被巡检设备聚合 · {range}</small>
+                <small>按被巡检设备聚合</small>
+                <div className="mcp-range-chip" role="group" aria-label="风险设备时间">
+                  {SMALL_RANGES.map((r) => (
+                    <button key={r} className={sRange === r ? "on" : ""} onClick={() => SETS(r)}>{r}</button>
+                  ))}
+                </div>
               </div>
               <div className="mcp-risk-list">
                 {riskList.map((x) => (
@@ -438,45 +445,86 @@ export function MonitorCockpit({
             </section>
           </aside>
 
-          {/* ══ 右栏：实时报警 / 报警排名 / 告警趋势 ══ */}
+          {/* ══ 右栏：实时报警 KPI / 报警排名 / 告警趋势 ══ */}
           <aside className={"mcp-side mcp-side-r" + (openR ? "" : " folded")}>
-            {/* 实时报警：窄栏紧凑列表（等级徽标 + 内容 + 设备归属 + 就地处置） */}
+            {/* 实时报警：按级别 + 按分类 KPI 聚合，不再逐条列内容；独立时间筛选 */}
             <section className="mcp-card">
               <div className="mcp-card-head">
                 <h3>实时报警</h3>
-                <small>
-                  按等级排序 · 共 {openAlarms.length} 条（紧急 {openAlarmUrgent}）
-                </small>
+                <div className="mcp-range-chip" role="group" aria-label="实时报警时间">
+                  {SMALL_RANGES.map((r) => (
+                    <button key={r} className={aRange === r ? "on" : ""} onClick={() => SETA(r)}>{r}</button>
+                  ))}
+                </div>
+                <small>· 未处置 {alarmsInARange.length}</small>
               </div>
-              <div className="mcp-alarm-list">
-                {alarmRows.slice(0, 30).map((a) => {
-                  const place = placeOf(a.pointId);
-                  return (
-                    <div key={a.id} className={"mcp-alarm-item lv-" + a.level}>
-                      <span className={"mcp-lv lv-" + a.level}>{a.level}</span>
-                      <div className="mcp-alarm-main">
-                        <b>{a.name}</b>
-                        <small>
-                          {place.device} · {place.region}
-                        </small>
+
+              {/* ── 第一组：按告警级别（3 卡固定布局） ── */}
+              <div className="mcp-alarm-group">
+                <div className="mcp-alarm-group-title">按告警级别</div>
+                <div className="mcp-alarm-kpi mcp-alarm-kpi-lv">
+                  {byLevel.map(({ lv, count }) => {
+                    const meta = LEVEL_META[lv]!;
+                    return (
+                      <div
+                        key={lv}
+                        className="mcp-kpi-cell"
+                        style={{ borderLeftColor: meta.color }}
+                      >
+                        <div className="mcp-kpi-cell-label">
+                          <span className="mcp-kpi-dot" style={{ background: meta.color }} />
+                          {meta.label}
+                        </div>
+                        <div className="mcp-kpi-cell-num" style={{ color: meta.color }}>
+                          {count}
+                        </div>
+                        <div className="mcp-kpi-cell-hint">{meta.hint}</div>
                       </div>
-                      <div className="mcp-alarm-side">
-                        <time>{a.time.slice(5, 16)}</time>
-                        <button className="mcp-btn" onClick={() => go("alarm", a.id)}>
-                          处置
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-                {!alarmRows.length && <p className="mcp-empty">当前无未处理报警。</p>}
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ── 第二组：按告警分类（2 卡自适应布局） ── */}
+              <div className="mcp-alarm-group">
+                <div className="mcp-alarm-group-title">按告警分类</div>
+                {byCategory.length > 0 ? (
+                  <div className="mcp-alarm-kpi">
+                    {byCategory.map(({ cat, count }) => {
+                      const meta = CATEGORY_META[cat] || { label: cat, color: "#64748b" };
+                      return (
+                        <div
+                          key={cat}
+                          className="mcp-kpi-cell"
+                          style={{ borderLeftColor: meta.color }}
+                        >
+                          <div className="mcp-kpi-cell-label">
+                            <span className="mcp-kpi-dot" style={{ background: meta.color }} />
+                            {meta.label}
+                          </div>
+                          <div className="mcp-kpi-cell-num" style={{ color: meta.color }}>
+                            {count}
+                          </div>
+                          <div className="mcp-kpi-cell-hint">占比 {alarmsInARange.length ? Math.round((count / alarmsInARange.length) * 100) : 0}%</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="mcp-empty">{aRange}内无未处置报警。</p>
+                )}
               </div>
             </section>
 
             <section className="mcp-card">
                 <div className="mcp-card-head">
                   <h3>报警排行 TOP10</h3>
-                  <small>按点位聚合 · {range}</small>
+                  <small>按点位聚合</small>
+                  <div className="mcp-range-chip" role="group" aria-label="报警排行时间">
+                    {SMALL_RANGES.map((r) => (
+                      <button key={r} className={sRange === r ? "on" : ""} onClick={() => SETS(r)}>{r}</button>
+                    ))}
+                  </div>
                 </div>
                 <div className="mcp-chart">
                   {rank.length ? (
@@ -518,7 +566,12 @@ export function MonitorCockpit({
             <section className="mcp-card">
               <div className="mcp-card-head">
                 <h3>告警趋势</h3>
-                <small>近 {trendDays} 天 · 按真实时间聚合</small>
+                <small>按真实时间聚合</small>
+                <div className="mcp-range-chip" role="group" aria-label="告警趋势时间">
+                  {LARGE_RANGES.map((r) => (
+                    <button key={r} className={lRange === r ? "on" : ""} onClick={() => SETL(r)}>{r}</button>
+                  ))}
+                </div>
               </div>
               <div className="mcp-chart grow">
                 <ResponsiveContainer width="100%" height="100%">

@@ -4,7 +4,7 @@ import { seed } from "./seed";
 import { transition as run, constraints } from "./engine";
 import { advanceAutomation } from "./automation";
 import { rulesOf } from "./alarmRules";
-import { planOccurrences } from "./planSchedule";
+import { planKindOf, planOccurrences } from "./planSchedule";
 const at = (time: string) => Date.parse("2026-09-28T" + time + ":00+08:00");
 function available() {
   const s = seed();
@@ -61,6 +61,33 @@ test("weekly and shift slots use business timezone, missing binding does not sil
       (t) => new Date(t + 8 * 3600000).getUTCDay() === 2,
     ),
   );
+});
+test("one-off plan fires once on its date; never repeats, never backfills", () => {
+  const on = (time: string, date = "2026-10-16") =>
+    Date.parse(date + "T" + time + ":00+08:00");
+  let s = seed();
+  const plan = s.plans.find((p) => p.id === "PL02")!;
+  assert.equal(planKindOf(plan), "定时任务");
+  // 与周期任务的多点展开不同：只产生「执行日期 + 执行时间」这一个时刻
+  assert.deepEqual(planOccurrences(plan, on("08:00")), [on("09:30")]);
+  // 提前生成窗口内自动生成一次，并按该时刻锁定 scheduleKey
+  s = advanceAutomation(s, on("09:20"));
+  const made = s.tasks.filter((t) => t.planId === "PL02");
+  assert.equal(made.length, 1);
+  assert.equal(made[0].scheduleKey, String(on("09:30")));
+  // 时钟继续走到次日，也不会再生成第二个
+  s = advanceAutomation(s, on("09:30"));
+  s = advanceAutomation(s, on("09:30", "2026-10-17"));
+  assert.equal(s.tasks.filter((t) => t.planId === "PL02").length, 1);
+  // 错过不补：次日才打开浏览器，不回补前一天的一次性任务
+  assert.equal(
+    advanceAutomation(seed(), on("09:30", "2026-10-17")).tasks.filter(
+      (t) => t.planId === "PL02",
+    ).length,
+    0,
+  );
+  // 老数据没有 kind，一律按「周期任务」收口
+  assert.equal(planKindOf({ ...plan, kind: undefined }), "周期任务");
 });
 test("field commands require capabilities and session, failed reply preserves state, exit stops output", () => {
   let s = seed();
@@ -163,7 +190,7 @@ test("point rules treat inclusive bounds as normal; empty/disabled rules record 
 
 test("customer history additions retain task snapshots and original active task scope", () => {
   const s = seed();
-  assert.equal(s.schema, 7);
+  assert.equal(s.schema, 10);
   assert.equal(s.tasks.find(t=>t.id==="T009")!.items.length,3);
   const history=s.tasks.find(t=>t.id==="T040")!;
   assert.equal(history.index,history.items.length);

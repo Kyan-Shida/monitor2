@@ -328,14 +328,110 @@ test("跨图切换点：地图拓扑可维护，两端不能是同一张地图",
   assert.throws(() => run(added, { type: "MAP_SWITCH_REMOVE", id: "SW-404" }));
 });
 
-test("空间管理是「资源与地图 › 空间」下的目录页：路由与菜单高亮都落在自身", () => {
-  const page = pages.find((x) => x.id === "space")!;
-  assert.equal(page.name, "空间管理");
-  assert.equal(page.group, "资源与地图");
-  assert.equal(page.sub, "空间");
-  // 已经是叶子页（无父级），因此侧边栏高亮不需要回落到别的页面
-  assert.equal(page.parent, undefined);
-  assert.equal(menuIdOf("space"), "space");
+test("空间管理菜单已收起：页面与路由保留，深链可直达", () => {
+  // 菜单项在 navigation 里被注释，故 pages 不含它；页面与路由仍保留（#/resources/space 可直达）
+  assert.equal(pages.find((x) => x.id === "space"), undefined);
   assert.equal(href("space"), "#/resources/space");
   assert.equal(parse("#/resources/space").page, "space");
+  // 不在菜单里时，高亮回落到自身（不会误高亮到别的叶子）
+  assert.equal(menuIdOf("space"), "space");
+});
+
+test("新增地图：在线机器人扫描回传数据包（数据包还不是地图，需「编辑」后才落为地图）", () => {
+  let s = seed();
+  assert.equal(s.mapPackets?.length || 0, 0);
+  const mapsBefore = s.maps.length;
+  // 离线机器人不能扫描回传
+  s.robots[0].state = "离线";
+  assert.throws(
+    () => run(s, { type: "ADD_MAP_PACKET", robotId: s.robots[0].id }),
+    /已离线/,
+  );
+  s.robots[0].state = "空闲";
+  // 在线机器人：登记数据包，未编辑前用占位名
+  s = run(s, { type: "ADD_MAP_PACKET", robotId: "R01" });
+  assert.equal(s.mapPackets!.length, 1);
+  assert.equal(s.mapPackets![0].name, "地图信息-01-R01");
+  assert.equal(s.mapPackets![0].robotId, "R01");
+  // 数据包还不是地图：地图张数不变
+  assert.equal(s.maps.length, mapsBefore);
+  // 删除数据包（删除不存在的数据包必须报错）
+  assert.throws(() => run(s, { type: "DELETE_MAP_PACKET", id: "PKT-404" }));
+  s = run(s, { type: "DELETE_MAP_PACKET", id: s.mapPackets![0].id });
+  assert.equal(s.mapPackets!.length, 0);
+});
+
+test("数据包 → 构建地图 → 重命名 / 删除；路网可保存", () => {
+  let s = seed();
+  s = run(s, { type: "ADD_MAP_PACKET", robotId: "R01" });
+  const pktId = s.mapPackets![0].id;
+  const mapsBefore = s.maps.length;
+  // 重命名数据包
+  s = run(s, { type: "RENAME_MAP_PACKET", id: pktId, name: "扫描-罐区-01" });
+  assert.equal(s.mapPackets![0].name, "扫描-罐区-01");
+  // 构建地图：数据包移除、地图 +1、状态为「未发布」
+  s = run(s, {
+    type: "BUILD_MAP",
+    packetId: pktId,
+    name: "罐区扫描地图",
+    region: "一期罐区",
+  });
+  assert.equal(s.mapPackets!.length, 0);
+  assert.equal(s.maps.length, mapsBefore + 1);
+  const built = s.maps[s.maps.length - 1];
+  assert.equal(built.state, "未发布");
+  assert.equal(built.source, "机器人扫描构建");
+  // 重命名地图
+  s = run(s, { type: "RENAME_MAP", id: built.id, name: "罐区地图 V1" });
+  assert.equal(s.maps.find((x) => x.id === built.id)!.name, "罐区地图 V1");
+  // 保存路网：只落线 / 弧（点走定位点标定数据）
+  s = run(s, {
+    type: "SAVE_ROADNET",
+    mapId: built.id,
+    paths: [
+      { id: "RL-1", name: "L_1", kind: "直线", pointIds: ["RP-1", "RP-2"] },
+    ],
+  });
+  assert.equal(
+    s.maps.find((x) => x.id === built.id)!.roadnet!.paths.length,
+    1,
+  );
+  // 空路网拒绝保存
+  assert.throws(
+    () => run(s, { type: "SAVE_ROADNET", mapId: built.id, paths: [] }),
+    /请先连线/,
+  );
+  // 图下有巡检点时不允许删除
+  assert.throws(
+    () => run(s, { type: "DELETE_MAP", id: s.points[0].mapId }),
+    /仍有巡检点/,
+  );
+  // 新图下无巡检点：可删除
+  s = run(s, { type: "DELETE_MAP", id: built.id });
+  assert.equal(s.maps.find((x) => x.id === built.id), undefined);
+});
+
+test("标定工作台打的点就是定位点：与标定数据同源，可改点类型 / 楼层", () => {
+  let s = seed();
+  const mapId = s.maps[0].id;
+  const before = targetsOf(s, mapId).length;
+  // 打点：直接写入该图的定位点（与现场采集共用一份）
+  s = run(s, { type: "ADD_TARGET", mapId, x: 42, y: 58, pointType: "充电点" });
+  const list = targetsOf(s, mapId);
+  assert.equal(list.length, before + 1);
+  const added = list[list.length - 1];
+  assert.equal(added.pointType, "充电点");
+  // 改点参数：点类型 / 楼层 / 楼层连接点
+  s = run(s, {
+    type: "UPDATE_TARGET",
+    mapId,
+    targetId: added.id,
+    pointType: "停靠点",
+    floor: 2,
+    floorLink: 3,
+  });
+  const up = targetsOf(s, mapId).find((t) => t.id === added.id)!;
+  assert.equal(up.pointType, "停靠点");
+  assert.equal(up.floor, 2);
+  assert.equal(up.floorLink, 3);
 });

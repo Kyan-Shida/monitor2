@@ -14,6 +14,17 @@ import {
   VERIFY_DAYS,
 } from "../data/selectors";
 import { archiveIdOf } from "../data/deviceMaster";
+import {
+  alarmClassOfAlarm,
+  enabledAlarmClassesOf,
+  targetNameOf,
+  targetOfAlarm,
+} from "../data/alarmSettings";
+import {
+  ALARM_KPI_DIMS,
+  alarmKpiRows,
+  type AlarmKpiDim,
+} from "../data/alarmKpi";
 import { metricValue } from "../data/metrics";
 import { Btn, Badge, Panel, Table, Field, Note, Modal } from "../components/UI";
 import { ObjectLink, Pager } from "../components/Business";
@@ -586,7 +597,9 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
     [devF, DF] = useViewState("alarms.dev", "全部"),
     [lvF, LF] = useViewState("alarms.lv", "全部"),
     [alFrom, AFR] = useViewState("alarms.from", ""),
-    [alTo, ATO] = useViewState("alarms.to", "");
+    [alTo, ATO] = useViewState("alarms.to", ""),
+    /** KPI 划分维度：区域 / 属地 / 设备 */
+    [dimF, DIMF] = useViewState("alarms.dim", "区域");
   const [showOpen, SETOPEN] = useState(false);
   const [modal, setModal] = useState<null | "result" | "task">(null);
   /** 保存处理前的二次确认（处理结果保存后不可二次编辑） */
@@ -603,9 +616,22 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
   /** 未处理 = 尚无人工处理（以处理时间为准；告警当前只做处理，不做处置推进） */
   const openStates = ["待确认", "处理中", "待复查", "已恢复"];
   const alarmsOpen = s.alarms.filter((a) => openStates.includes(a.state));
-  /** 分类范围（阶段条计数与列表同一份口径，点阶段即筛选） */
+  /**
+   * 告警类别口径（「告警管理 › 告警类别」）：筛选项 = 启用中的分类（与「等级」一致，
+   * 带命中条数）；分类范围与筛选共用同一函数，保证两个入口不会出现两套口径
+   */
+  const alarmClassOf = (a: (typeof s.alarms)[number]) => alarmClassOfAlarm(s, a);
+  const classOptions = enabledAlarmClassesOf(s).map((c) => c.name);
+  // 筛选值兜底：分类被停用 / 改名后，残留的筛选值回退「全部」
+  const catActive = catF === "全部" || classOptions.includes(catF) ? catF : "全部";
+  const countByClass = Object.fromEntries(
+    classOptions.map((n) => [
+      n,
+      s.alarms.filter((a) => a.taskId && alarmClassOf(a) === n).length,
+    ]),
+  ) as Record<string, number>;
   const alarmsInCat = s.alarms.filter(
-    (a) => catF === "全部" || a.category === catF,
+    (a) => catActive === "全部" || alarmClassOf(a) === catActive,
   );
   const alarmsAll = alarmsInCat.filter(
     (a) => filter === "全部" || a.state === filter,
@@ -641,7 +667,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
     const focus = id ? s.alarms.find((x) => x.id === id) : undefined;
     return (
       <Panel
-        title="告警管理"
+        title="告警记录"
       >
         {/* ALM-05：处理结果 + 是否误报 → 报警准确率与处理覆盖率（产品成熟度信号），口径取自指标中心 */}
         <div className="metric-strip">
@@ -673,6 +699,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             <strong>{metricValue(s, "alarmLabelRate")}%</strong>
           </div>
         </div>
+        {/* KPI 维度划分：区域 / 属地 / 设备，口径与上方总览卡同源（合计 = 告警总数） */}
         {focus && (
           <div className="context-bar">
             <b>驾驶舱下钻</b>
@@ -690,6 +717,30 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             </div>
           </div>
         )}
+        {/* KPI 维度划分：区域 / 属地 / 设备，口径与上方总览卡同源（明细行合计 = 告警总数） */}
+        <div className="toolbar">
+          <div className="segmented">
+            {ALARM_KPI_DIMS.map((d) => (
+              <button
+                key={d}
+                className={dimF === d ? "active" : ""}
+                onClick={() => DIMF(d)}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Table
+          heads={[dimF, "告警总数", "未处理", "报警准确率", "告警处理率"]}
+          rows={alarmKpiRows(s, dimF as AlarmKpiDim).map((r) => [
+            r.key,
+            r.total,
+            r.open,
+            `${r.accuracy}%`,
+            `${r.rate}%`,
+          ])}
+        />
         <div className="task-toolbar" style={{ marginTop: 12 }}>
           <Field label="分类">
             <select
@@ -698,8 +749,13 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                 CF(e.target.value);
               }}
             >
-              {["全部", "业务", "机器人"].map((x) => (
-                <option key={x}>{x}</option>
+              <option value="全部">
+                全部（{s.alarms.filter((a) => a.taskId).length}）
+              </option>
+              {classOptions.map((n) => (
+                <option key={n} value={n}>
+                  {n}（{countByClass[n]}）
+                </option>
               ))}
             </select>
           </Field>
@@ -756,8 +812,8 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
         <Table
           heads={[
             "告警编号",
-            "设备",
-            "目标",
+            "台账名称",
+            "告警分类",
             "告警等级",
             "风险信息",
             "发生时间",
@@ -779,6 +835,8 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             // 与巡检结果打通：风险原因取自该告警关联的结果（按快照口径）
             const rd = s.results.find((x) => x.id === a.resultId);
             const robot = s.robots.find((rb) => rb.id === a.robotId);
+            /** 告警所属台账：台账名称与「告警管理 › 告警设置」同一份口径 */
+            const bt = targetOfAlarm(s, a);
             return [
               // 告警编号即处理入口：直接进告警详情页（检查受理），不再弹窗
               <button
@@ -788,7 +846,10 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               >
                 {a.id}
               </button>,
-              p?.device ? (
+              // 台账名称：告警经台账派生；机器人本体告警没有台账，回落到设备 / 机器人
+              bt ? (
+                targetNameOf(s, bt)
+              ) : p?.device ? (
                 <ObjectLink type="archive" id={archiveIdOf(s, p.device)}>
                   {p.device}
                 </ObjectLink>
@@ -799,8 +860,8 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               ) : (
                 "—"
               ),
-              // 目标 = 对象 · 检测项（设备之下的被检目标）
-              p ? `${p.object} · ${p.item}` : "—",
+              // 告警类别 = 所属台账的告警类型（「告警管理 › 告警类别」的分类名称）
+              <Badge>{alarmClassOf(a)}</Badge>,
               <span className={"alarm-lv lv-" + levelClass(a.level)}>
                 <i />
                 {a.level}
@@ -1094,7 +1155,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               </>
             ) : (
               <Note>
-                未引用告警模板，暂无处置流程；可在「后台管理 › 告警模板管理」为对应检测类型配置模板后重新采集。
+                未引用告警模板，暂无处置流程；可在「告警管理 › 告警模板管理」为对应检测类型配置模板后重新采集。
               </Note>
             )}
           </Panel>

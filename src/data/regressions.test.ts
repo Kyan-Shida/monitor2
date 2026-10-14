@@ -11,8 +11,8 @@ test("state survives persistence and old schema migration", () => {
   const s = seed(); s.roleId = "user";
   persist(s);
   assert.equal(migrate(JSON.parse(saved))!.roleId, "user");
-  for (const schema of [1, 2, 3, 4, 5, 6]) {
-    assert.equal(migrate({ ...s, schema })!.schema, 7);
+  for (const schema of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+    assert.equal(migrate({ ...s, schema })!.schema, 10);
     assert.equal(migrate({ ...s, schema })!.roleId, "user");
   }
 });
@@ -55,11 +55,16 @@ test("autonomous point completion also continues the queue", () => {
 });
 
 test("sidebar highlight follows explicit source page across directories", () => {
-  // 回归：从「结果与异常 › 巡检结果查询 › 巡检结果详情」进入「执行回溯」
-  // （其静态挂在设备档案=资源与地图下），应高亮来源目录「结果与异常」，而非「资源与地图」
+  // 回归：从「分析与报表 › 巡检报表 › 巡检结果 › 巡检结果详情」进入「执行回溯」
+  // （其静态挂在设备档案=资源与地图下），应高亮来源目录「分析与报表」，而非「资源与地图」
   assert.equal(activeMenuId("replay-detail", { page: "result-view" }), "results");
-  assert.equal(activeGroupOf("replay-detail", { page: "result-view" }), "结果与异常");
+  assert.equal(activeGroupOf("replay-detail", { page: "result-view" }), "分析与报表");
   // 无显式来源时，按自身目录归属回落到「设备台账」（资源与地图）
   assert.equal(activeMenuId("replay-detail"), "equipment");
   assert.equal(activeGroupOf("replay-detail"), "资源与地图");
+});
+
+test("告警模板管理归入「告警管理」目录（原属后台管理）", () => {
+  assert.equal(activeMenuId("alarm-templates"), "alarm-templates");
+  assert.equal(activeGroupOf("alarm-templates"), "告警管理");
 });

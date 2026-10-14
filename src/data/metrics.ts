@@ -5,7 +5,7 @@
  */
 import type { State } from "./types";
 import { terminal } from "./selectors";
-import { deviceOf } from "./deviceMaster";
+import { areaNameOf, deviceOf } from "./deviceMaster";
 
 /** 口径配置：成本 / 人力换算系数（口径可配，配置中心可改） */
 export const METRIC_CONFIG = {
@@ -61,8 +61,13 @@ export function scopedState(s: State, region?: string): State {
     alarms: s.alarms.filter((a) => taskIds.has(a.taskId)),
     maps: s.maps.filter((m) => m.region === region),
     points: s.points.filter((p) => mapIds.includes(p.mapId)),
-    // 设备清单同按厂区裁剪：覆盖率的分母必须与分子同一范围，否则厂区筛选后覆盖率会被拉低
-    devices: s.devices?.filter((d) => !d.region || d.region === region),
+    // 设备清单同按厂区裁剪：覆盖率的分母必须与分子同一范围，否则厂区筛选后覆盖率会被拉低。
+    // 归属口径与设备树一致（areaNameOf：优先主数据 region，未指定时按安装位置前缀归属），
+    // 否则「装置区 A 段管廊」这类只填了安装位置的设备会漏进别的厂区、把分母撑大
+    devices: s.devices?.filter((d) => {
+      const rg = areaNameOf(s, d);
+      return rg === "未分区" || rg === region;
+    }),
     fieldOrders: s.fieldOrders.filter((f) =>
       s.robots.some((r) => r.id === f.robotId && r.region === region),
     ),

@@ -49,7 +49,7 @@ export function MapSurveyPanel({ mapId }: { mapId: string }) {
   const [tkKind, SETTK] = useState("停靠点");
 
   /** 可能失效 / 待校准的点位（阶段⑧差异比对的最小版信号） */
-  const risky = pts.filter((p) => p.calibrate === "待校准" || p.state === "待重新验证");
+  const risky = pts.filter((p) => p.calibrate === "待校准" || p.state === "停用");
 
   return (
     <>

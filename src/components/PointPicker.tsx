@@ -8,7 +8,7 @@ import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { useStore } from "../data/store";
 import { DeviceTree, type DeviceTreeValue } from "./DeviceTree";
-import { Btn } from "./UI";
+import { Btn, Modal } from "./UI";
 import { areaNameOf, devicesOfPoint } from "../data/deviceMaster";
 import type { DeviceAsset, Point } from "../data/types";
 
@@ -25,21 +25,35 @@ export function PointPicker({
   points,
   selected,
   onToggle,
+  onOptimize,
   onClear,
+  onReorder,
   children,
 }: {
   /** 候选巡检点（调用方已按搜索 / 状态等前置条件筛选） */
   points: Point[];
-  /** 已选巡检点 id */
+  /** 已选巡检点 id：**数组顺序即机器狗的执行顺序** */
   selected: string[];
   /** 单点勾选 / 取消 */
   onToggle: (id: string) => void;
+  /** 最优排序（按父线走、不走回头路） */
+  onOptimize?: () => void;
   /** 清空已选 */
   onClear: () => void;
+  /**
+   * 调整已选顺序（机器狗按该顺序跑子线）
+   * @description 传了就启用排序：每行给「上移 / 下移」按钮，同时支持按住行拖拽；
+   *              不传则只展示清单（临时任务等不关心顺序的场景）
+   */
+  onReorder?: (from: number, to: number) => void;
   /** 中栏：调用方渲染列表，入参为目录树裁剪后的巡检点 */
   children: (rows: Point[]) => ReactNode;
 }) {
   const { s } = useStore();
+  /** 拖拽中的行下标（HTML5 拖拽事件不携带"从哪来"，需自己记一份） */
+  const [drag, DRAG] = useState<number | null>(null);
+  /** 最优排序的二次确认弹窗 */
+  const [askOptimize, ASK] = useState(false);
   /** 目录树选中节点：与设备台账同口径（""=全部 / "r:区域" / "d:设备ID"） */
   const [node, setNode] = useState<DeviceTreeValue>("");
   /**
@@ -85,6 +99,7 @@ export function PointPicker({
     />
   );
   return (
+    <>
     <div className="pick-3col">
       {/* 左栏：与设备台账同一棵「区域 › 设备」树，计数按候选巡检点统计 */}
       <DeviceTree
@@ -106,16 +121,60 @@ export function PointPicker({
           <span>
             已选 <b>{picked.length}</b>
           </span>
+          {/* 最优排序：按父线（路网）次序重排，避免机器狗走回头路 */}
+          {!!picked.length && onOptimize && (
+            <Btn primary onClick={() => ASK(true)}>
+              最优排序
+            </Btn>
+          )}
           {!!picked.length && <Btn onClick={onClear}>清空</Btn>}
         </div>
+        {onReorder && !!picked.length && (
+          <p className="pick-order-tip">按下方顺序执行，可拖动或点箭头调序</p>
+        )}
         <ul>
-          {picked.map((p) => (
-            <li key={p.id}>
+          {picked.map((p, i) => (
+            <li
+              key={p.id}
+              className={drag === i ? "dragging" : undefined}
+              draggable={!!onReorder}
+              onDragStart={() => DRAG(i)}
+              onDragOver={(e) => {
+                // 只有开启排序时才接管放置，否则保持浏览器默认行为
+                if (onReorder) e.preventDefault();
+              }}
+              onDrop={() => {
+                if (onReorder && drag !== null && drag !== i) onReorder(drag, i);
+                DRAG(null);
+              }}
+              onDragEnd={() => DRAG(null)}
+            >
+              {onReorder && <span className="pick-order">{i + 1}</span>}
               {/* 长点位名换行显示（不截断成难辨认的片段），并补点位编码以便区分同名设备下的点 */}
               <div>
                 <span>{p.name}</span>
                 <small>{p.id}</small>
               </div>
+              {onReorder && (
+                <span className="pick-move">
+                  <button
+                    type="button"
+                    disabled={i === 0}
+                    aria-label={`上移 ${p.name}`}
+                    onClick={() => onReorder(i, i - 1)}
+                  >
+                    ▲
+                  </button>
+                  <button
+                    type="button"
+                    disabled={i === picked.length - 1}
+                    aria-label={`下移 ${p.name}`}
+                    onClick={() => onReorder(i, i + 1)}
+                  >
+                    ▼
+                  </button>
+                </span>
+              )}
               <button aria-label={`移除 ${p.name}`} onClick={() => onToggle(p.id)}>
                 <X size={13} />
               </button>
@@ -125,5 +184,28 @@ export function PointPicker({
         </ul>
       </aside>
     </div>
+
+      {/* 最优排序二次确认：说清会发生什么，再动手 */}
+      {askOptimize && (
+        <Modal title="最优排序" onClose={() => ASK(false)}>
+          <p>
+            依据父线（路网）节点序列重排已选巡检点，生成无折返执行顺序。
+            本次调整 {picked.length} 个巡检点的执行次序。
+          </p>
+          <div className="modal-actions">
+            <Btn onClick={() => ASK(false)}>取消</Btn>
+            <Btn
+              primary
+              onClick={() => {
+                onOptimize?.();
+                ASK(false);
+              }}
+            >
+              确认重排
+            </Btn>
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }

@@ -4,7 +4,7 @@ import { pointOf, terminal, fmtTime, judgeOf } from "../data/selectors";
 import { Panel, Table, Badge, Note } from "../components/UI";
 import { ObjectLink } from "../components/Business";
 import { ResultTrend } from "../components/ResultTrend";
-import { archiveIdOf, deviceOf } from "../data/deviceMaster";
+import { archiveIdOf, deviceOf, deviceKindOf } from "../data/deviceMaster";
 export function DeviceArchive({ id }: { id?: string; tab?: string }) {
   const { s } = useStore();
   // 设备口径：以设备主数据为准（唯一来源）；旧缓存缺主数据时回落到"由点位反推"
@@ -91,6 +91,7 @@ export function DeviceArchive({ id }: { id?: string; tab?: string }) {
           所属区域：{s.maps.find((m) => m.id === points[0]?.mapId)?.region}
           　设备编码：{dev?.id || archiveIdOf(s, device)}
           {dev && <>　设备类型：{dev.type}</>}
+          {dev && <>　设备形态：{deviceKindOf(dev)}</>}
           {dev?.locationDesc && <>　安装位置：{dev.locationDesc}</>}
           {dev?.state === "停用" && <>　<Badge>已停用</Badge></>}
         </p>

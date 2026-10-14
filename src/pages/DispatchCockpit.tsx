@@ -6,7 +6,7 @@
  *      调度中心 / 全屏 / 紧急停止 · 时钟），两舱样式完全一致；
  *   ② 指挥 KPI 数字条悬浮于场景顶部（半透明毛玻璃徽标，不再占一整行版面）；
  *   ③ 中央场景：地图舞台铺满主区（图层 / 图例左上角、缩放控件右下角、底部半透明悬浮操作台）；
- *      左栏（浮层 · 可折叠）= 设备状态 + 当前设备折叠面板；右栏（浮层 · 可折叠）= 实时告警 / SLA 倒计时 / 视频信息 三卡平铺；
+ *      左栏（浮层 · 可折叠）= 设备状态 + 当前设备折叠面板；右栏（浮层 · 可折叠）= 视频信息 单卡；
  *      贴边箭头整体收起 / 展开，折叠后场景全屏。
  *   配色口径（等价 Tailwind 语义，两舱统一）：底 `bg-slate-950 #020617` / 卡片 `slate-900 #0f172a` /
  *      边框 `slate-800 #1e293b` / 强调 `cyan-500 #06b6d4` + `red-500 #ef4444`。
@@ -14,7 +14,6 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BellRing,
   Camera,
   CameraOff,
   ChevronDown,
@@ -25,7 +24,6 @@ import {
   Maximize,
   Minimize,
   RotateCcw,
-  Route,
   TriangleAlert,
   Video as VideoIcon,
   Volume2,
@@ -36,12 +34,11 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Can } from "../components/Can";
 import { PERMS } from "../data/roles";
-import { Badge, Btn, Modal, Note } from "../components/UI";
+import { Btn, Modal, Note } from "../components/UI";
 import { MapCanvas } from "../components/MapCanvas";
 import { ScreenTopBar, type CockpitId } from "../components/ScreenTopBar";
 import { TakeoverDialog } from "../components/TakeoverDialog";
 import { Video } from "../components/Video";
-import { AutoScrollList } from "../components/AutoScrollList";
 import { ControlPad, type MoveCommand } from "../components/ControlPad";
 import { metricValue, scopedState } from "../data/metrics";
 import { deviceProfile, deviceTypes } from "../data/deviceProfile";
@@ -60,9 +57,6 @@ const PRESETS = [
   "前方危险，请勿靠近",
   "设备异常，请人员协助",
 ];
-
-/** 告警级别权重：用于分级抑制判断 */
-const levelRank = (l: string) => (l === "一级" ? 3 : l === "二级" ? 2 : 1);
 
 /** 悬浮操作台的分组：四组控制按需展开 */
 type PadKey = "nav" | "task" | "cam" | "av";
@@ -140,49 +134,11 @@ export function DispatchCockpit({
       x.robotId === robot?.id && x.state === "已接管" && x.expires > Date.now(),
   );
 
-  /** 未处理告警：尚无人工处理（处理时间为空） */
-  const openAlarms = useMemo(
-    () => s.alarms.filter((a) => !a.handledAt),
-    [s.alarms],
-  );
-  /** 选中机器后只看该机器任务的告警；未选中 / 全选时展示全部机器 */
-  const scopedAlarms = useMemo(
-    () =>
-      activeId
-        ? openAlarms.filter(
-            (a) => s.tasks.find((t) => t.id === a.taskId)?.robotId === activeId,
-          )
-        : openAlarms,
-    [openAlarms, s.tasks, activeId],
-  );
-  /** 告警去重合并：同锚点（业务点位 / 机器人本体异常按「分类+机器人」）+ 同级别的未关闭告警合并为一条 */
-  const alarmGroups = useMemo(() => {
-    const anchorOf = (a: Alarm) => a.pointId || `${a.category}:${a.robotId}`;
-    const groups = new Map<string, Alarm[]>();
-    scopedAlarms.forEach((a) => {
-      const key = `${anchorOf(a)}|${a.level}`;
-      groups.set(key, [...(groups.get(key) || []), a]);
-    });
-    return [...groups.entries()].map(([key, items]) => ({
-      key,
-      items,
-      head: items[0],
-      /** 分级抑制：同锚点存在更高级别告警时，低级别仅记录不推送处置 */
-      suppressed: scopedAlarms.some(
-        (x) =>
-          anchorOf(x) === anchorOf(items[0]) &&
-          levelRank(x.level) > levelRank(items[0].level),
-      ),
-    }));
-  }, [scopedAlarms]);
-  /** 指挥 KPI 数字条：6 项待处置量，与管理驾驶舱数字带同款（只读展示，不下钻） */
+  /** 指挥 KPI 数字条：5 项待处置量，悬浮场景顶部，只读展示 */
   const strip = [
     { n: mv("onlineCount"), label: "在线设备（台）" },
     { n: mv("executing"), label: "执行中任务（个）" },
-    { n: sc.alarms.filter((a) => !a.handledAt).length, label: "未处理告警（条）" },
-    { n: s.sessions.filter((x) => x.state === "已接管").length, label: "人工接管会话（个）" },
     { n: mv("lowBattery"), label: "低电量设备（台）" },
-    { n: mv("fieldPending"), label: "现场待处理（项）" },
   ];
 
   /**
@@ -245,10 +201,6 @@ export function DispatchCockpit({
         onSwitch={onSwitch}
         extra={
           <>
-            <Btn onClick={() => go("dispatch", robot?.id)}>
-              <Route size={13} />
-              调度中心
-            </Btn>
             <button
               className="cs-nav-icon"
               title="驾驶舱独占整屏展示"
@@ -269,7 +221,7 @@ export function DispatchCockpit({
       {fsError && <Note>{fsError}</Note>}
 
       <div className="ds-grid ds-scene-layout">
-        {/* 指挥 KPI 数字条：8 格待处置量，悬浮于场景顶部（半透明毛玻璃），不占版面高度 */}
+        {/* 指挥 KPI 数字条：5 格待处置量，悬浮于场景顶部（半透明毛玻璃），不占版面高度 */}
         <div className="cs-kpi-strip ds-strip-float">
           {strip.map((x) => (
             <div key={x.label} className="cs-kpi">
@@ -725,45 +677,8 @@ export function DispatchCockpit({
           </div>
         </main>
 
-        {/* ══ 右栏（浮层 · 可折叠）：实时告警 / 视频信息 两卡平铺 ══ */}
+        {/* ══ 右栏（浮层 · 可折叠）：视频信息 单卡 ══ */}
         <aside className={"ds-col ds-col-r" + (openR ? "" : " folded")}>
-          {/* 实时告警：去重合并 · 分级抑制 */}
-          <section className="ds-card grow">
-            <header className="ds-head">
-              <h3>
-                <BellRing size={13} />
-                实时告警
-              </h3>
-              <small>
-                分级抑制 · {activeId ? `${activeId} · ` : "全部机器 · "}
-                {alarmGroups.length} 组
-              </small>
-              <button className="ds-chip" onClick={() => go("alarms")}>
-                告警管理 ›
-              </button>
-            </header>
-            <AutoScrollList auto={false} listClass="cs-work-list readonly">
-              {!alarmGroups.length && <Note>当前无未关闭告警。</Note>}
-              {alarmGroups.map((g) => (
-                <button key={g.key}>
-                  <i className={"severity " + (g.head.level === "二级" ? "amber" : "red")} />
-                  <div>
-                    <b>{g.head.name}</b>
-                    <small>
-                      {g.head.pointId
-                        ? g.head.pointId
-                        : `${g.head.category}${g.head.robotId ? " " + g.head.robotId : ""}`}{" "}
-                      · {g.head.state}
-                      {g.items.length > 1 ? ` · 合并 ${g.items.length} 条` : ""}
-                      {g.suppressed ? " · 已抑制" : ""}
-                    </small>
-                  </div>
-                  <Badge>{g.head.level}</Badge>
-                </button>
-              ))}
-            </AutoScrollList>
-          </section>
-
           {/* 视频信息：选中设备后的双画面 */}
           <section className="ds-card grow">
             <header className="ds-head">
