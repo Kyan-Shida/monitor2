@@ -6,6 +6,7 @@
  */
 import type {
   State,
+  Tenant,
   Point,
   Task,
   Result,
@@ -1527,7 +1528,39 @@ const deriveBusinessTargets = (
     };
   });
 };
-export function seed(): State {
+/** 默认租户：沿用老缓存键 inspection-v14-prototype，老数据零迁移 */
+export const DEFAULT_TENANT = "T-DEFAULT";
+/** 演示用租户清单：切换即整份换数据 */
+export const TENANTS: Tenant[] = [
+  { id: "T-DEFAULT", name: "华东炼化", code: "HD", status: "启用" },
+  { id: "T-XB", name: "西部管道", code: "XB", status: "启用" },
+];
+/**
+ * 给非默认租户的数据加租户前缀（仅改 name/label，不动 id，避免引用断裂）
+ * @description 演示级隔离：切租户后左侧树、设备、机器人、台账名称整体变化，一眼可辨
+ */
+function retagForTenant(s: State, t: Tenant): State {
+  const pre = `${t.code}·`;
+  const tag = (o: any): any => {
+    if (o) {
+      if (typeof o.name === "string") o.name = pre + o.name;
+      if (typeof o.label === "string") o.label = pre + o.label;
+    }
+    return o;
+  };
+  return {
+    ...s,
+    areas: s.areas.map(tag),
+    devices: s.devices.map(tag),
+    instruments: s.instruments.map(tag),
+    requirements: s.requirements.map(tag),
+    points: s.points.map(tag),
+    maps: s.maps.map(tag),
+    robots: s.robots.map(tag),
+    businessTargets: (s.businessTargets || []).map(tag),
+  };
+}
+export function seed(tenantId: string = DEFAULT_TENANT): State {
   // 逻辑点由「设备主数据 + 点位」派生，避免两处手工维护导致口径漂移；
   // 并把派生结果回写到点位 logicalIds（一物理点可承载多条逻辑点）
   const pts = structuredClone(points);
@@ -1679,7 +1712,9 @@ export function seed(): State {
       },
     ];
   });
-  return {
+  const _s: State = {
+    tenantId,
+    tenants: TENANTS,
     schema: 10,
     points: pts,
     maps: [
@@ -1689,6 +1724,7 @@ export function seed(): State {
         region: "一期罐区",
         version: 3,
         state: "已发布",
+        status: "启用",
         source: "机器人首次走行",
         batch: "B001",
         cloud: "B001-multimodal.pcd",
@@ -1774,6 +1810,7 @@ export function seed(): State {
         region: "装置区",
         version: 1,
         state: "已发布",
+        status: "启用",
         source: "机器人首次走行",
         batch: "B002",
         cloud: "B002-multimodal.pcd",
@@ -1805,22 +1842,16 @@ export function seed(): State {
         },
         deviceListVersion: 1,
         /**
-         * 父线：装置区管廊沿线的路网
-         * @description A 段 / B 段管廊串成一条基线（A_1），B 段探头另接一条支线（A_2）
+         * 父线：装置区管廊沿线的连续路网
+         * @description 沿装置区道路形成一条连续折线（左上 → 右上 → 右下 → 中），无交叉、无断点
          */
         roadnet: {
           paths: [
             {
               id: "RL-B1",
               name: "A_1",
-              kind: "弧" as const,
-              pointIds: ["O302", "O107", "O301", "O303", "O110"],
-            },
-            {
-              id: "RL-B2",
-              name: "A_2",
-              kind: "弧" as const,
-              pointIds: ["O304", "O110"],
+              kind: "直线" as const,
+              pointIds: ["O302", "O107", "O301", "O110", "O303", "O304"],
             },
           ],
         },
@@ -3300,4 +3331,7 @@ export function seed(): State {
     ],
     roleId: "admin",
   };
+  return tenantId !== DEFAULT_TENANT
+    ? retagForTenant(_s, TENANTS.find((t) => t.id === tenantId)!)
+    : _s;
 }

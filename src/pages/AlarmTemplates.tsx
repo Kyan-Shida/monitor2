@@ -142,14 +142,6 @@ export function AlarmTemplates() {
     rulesOf(s).filter((r) => r.templateId === id).length;
   return (
     <>
-      <Note>
-        这里是平台配置<strong>告警触发逻辑</strong>的唯一入口：一条
-        <strong>告警模板</strong>
-        就包含触发条件（类型 / 阈值 / 期望状态）、触发逻辑（单次 / 连续确认）、声光报警时长、默认等级与处理流程
-        —— 原「告警规则库」已并入本页（它的级别 / 类型 / 阈值 / 触发条件都是模板字段）。
-        巡检目标台账、点位判定规则与告警处置页都<strong>引用</strong>
-        此处配置；历史结果与已生成告警保留当时的快照，不会被改写。
-      </Note>
       <Panel
         title="告警模板 · 触发条件 + 触发逻辑 + 声光报警 + 等级 + 处理流程"
         extra={

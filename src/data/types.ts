@@ -139,6 +139,11 @@ export interface MapAsset {
    * @description 平台**不区分试验版 / 正式版**：下发时会自动把当前内容定版为「已发布」
    */
   state: "未发布" | "已发布";
+  /**
+   * 逻辑启停：与派生的 `state` 解耦，用于人工停用某张地图
+   * @description 停用后该地图不再允许用于导航 / 任务下发；默认「启用」
+   */
+  status?: "启用" | "停用";
   source: string;
   batch: string;
   cloud: string;
@@ -1460,6 +1465,19 @@ export interface Extra {
   status: string;
   detail: string;
 }
+/**
+ * 租户（多租户演示级）
+ * @description 省事版方案：一份数据一个租户 —— 切换租户即整份换数据（缓存键不同），
+ *              不做行级隔离；切换在 store 层完成，页面无需感知。
+ */
+export interface Tenant {
+  id: string;
+  name: string;
+  /** 编码前缀：给该租户的数据命名加标，便于演示隔离 */
+  code: string;
+  status: "启用" | "停用";
+}
+
 export interface State {
   systemRules?: import("./alarmRules").SystemRules;
   alarmRules?: import("./alarmRules").AlarmRule[];
@@ -1483,6 +1501,10 @@ export interface State {
    * 7→8 告警类别集合 + 台账告警设置（告警名称 / 类型 / 开关 / 多条告警项）；
    * 8→9 告警推送人员名单；9→10 告警项的「告警分类」改为两档枚举（普通预警 / 环境预警）
    */
+  /** 租户清单（平台级，各租户一致） */
+  tenants?: Tenant[];
+  /** 当前租户 id：切换即换一份数据（缓存键 inspection-v14-prototype:<tenantId>） */
+  tenantId?: string;
   schema: 10;
   maps: MapAsset[];
   points: Point[];

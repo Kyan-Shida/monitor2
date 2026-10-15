@@ -4,7 +4,7 @@
  *              不含点云/轨道/充电桩等复杂图层（那些由 MapCanvas 在驾驶舱等场景使用）。
  * @interaction 被 Annotation.tsx、MapOnboarding.tsx、MapSurveyPanel.tsx 消费
  */
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 /** 图面上的一个标记（候选点 / 业务点） */
 export interface ImageMarker {
@@ -34,6 +34,7 @@ const DEFAULT_NAT = { w: 1000, h: 620 };
  * @param onBlank 图面**空白处**点击回调（返回百分比坐标）：直线 / 曲线连点时的「收尾 / 取消」入口
  * @param hint 底部提示文案（覆盖默认，说明当前工具怎么用）
  * @param showIds 是否在标记上显示编号尾号
+ * @param showLabels 是否在标记旁显示中文名称（p_N / 自定义名）
  * @param height 画布高度（px）
  */
 export function MapImageCanvas({
@@ -49,6 +50,7 @@ export function MapImageCanvas({
   onSelectPath,
   hint,
   showIds = false,
+  showLabels = false,
   height = 440,
 }: {
   image?: string;
@@ -75,6 +77,7 @@ export function MapImageCanvas({
   /** 底部提示文案（覆盖默认） */
   hint?: string;
   showIds?: boolean;
+  showLabels?: boolean;
   height?: number;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -209,25 +212,34 @@ export function MapImageCanvas({
           </svg>
         )}
         {markers.map((mk) => (
-          <button
-            key={mk.id}
-            type="button"
-            className={
-              "map-marker" +
-              (selected === mk.id ? " selected" : "") +
-              (mk.state === "已确认" ? " done" : "") +
-              (mk.source === "平台新增" ? " added" : "") +
-              (mk.draft ? " draft" : "")
-            }
-            style={{ left: `${mk.x}%`, top: `${mk.y}%` }}
-            title={`${mk.label || mk.id}${mk.kind ? " · " + mk.kind : ""}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect?.(mk.id);
-            }}
-          >
-            {showIds ? mk.id.slice(-4) : ""}
-          </button>
+          <React.Fragment key={mk.id}>
+            <button
+              type="button"
+              className={
+                "map-marker" +
+                (selected === mk.id ? " selected" : "") +
+                (mk.state === "已确认" ? " done" : "") +
+                (mk.source === "平台新增" ? " added" : "") +
+                (mk.draft ? " draft" : "")
+              }
+              style={{ left: `${mk.x}%`, top: `${mk.y}%` }}
+              title={`${mk.label || mk.id}${mk.kind ? " · " + mk.kind : ""}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect?.(mk.id);
+              }}
+            >
+              {showIds ? mk.id.slice(-4) : ""}
+            </button>
+            {showLabels && mk.label && (
+              <span
+                className="map-marker-label"
+                style={{ left: `${mk.x + 1.2}%`, top: `${mk.y - 1}%` }}
+              >
+                {mk.label}
+              </span>
+            )}
+          </React.Fragment>
         ))}
         {/* 选中光圈：跟随 selected marker 位置，给底图 img 叠加醒目定位反馈 */}
         {(() => {

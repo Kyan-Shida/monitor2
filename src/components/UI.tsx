@@ -10,13 +10,15 @@ export const Btn = ({
   children,
   primary = false,
   danger = false,
+  small = false,
   ...p
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   primary?: boolean;
   danger?: boolean;
+  small?: boolean;
 }) => (
   <button
-    className={"btn " + (primary ? "primary " : "") + (danger ? "danger" : "")}
+    className={"btn " + (primary ? "primary " : "") + (danger ? "danger " : "") + (small ? "small" : "")}
     {...p}
   >
     {children}
@@ -218,6 +220,7 @@ export function Modal({
   children,
   onClose,
   wide = false,
+  slim = false,
   footer,
 }: {
   title: string;
@@ -225,6 +228,11 @@ export function Modal({
   onClose: () => void;
   /** 宽版弹窗：列数较多的表格（如对象与检测项）使用，避免挤压换行 */
   wide?: boolean;
+  /**
+   * 窄版弹窗：仅承载少量按钮的轻量弹窗（如「更多操作」菜单），
+   * 避免默认 880px 宽度把几个按钮拉得很散、右侧留大片空白
+   */
+  slim?: boolean;
   /**
    * 固定底栏（取消 / 保存这类常驻操作）
    * @description 与滚动内容分离：按钮不随内容滚动、也不悬浮在内容之上，始终贴在窗体底部
@@ -245,7 +253,7 @@ export function Modal({
       <div
         role="dialog"
         aria-label={title}
-        className={"modal" + (wide ? " wide" : "")}
+        className={"modal" + (wide ? " wide" : "") + (slim ? " slim" : "")}
         onClick={(e) => e.stopPropagation()}
       >
         {header}

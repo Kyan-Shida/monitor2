@@ -87,8 +87,9 @@
 | `annotation` | `#/resources/annotation` | `src/pages/InspectionPoints.tsx` | **巡检点管理**（原「点位标注与验证工作台」槽位）：已配置巡检点列表（地图/状态筛选 + 搜索 + 分页）+「**巡检点导入**」（`components/PointCalibration.tsx`，右侧抽屉：先选**数据来源机器人（机器狗）**，再「从机器人拉取数据」（接口未接入、不造假数据）/「上传表格文件」（CSV/TXT/JSON 解析 → 绑定地图或暂存））|
 | `point-edit` | `#/resources/points/edit` | `src/pages/PointEdit.tsx` | **添加 / 编辑巡检点内置页**（父页面 `annotation`）：巡检点名称 + 地图 + 标定点（**定位ID = 来源绑定键**）+ 多个巡检项（名称 + 业务目标 + 原子动作 / 云台参数），逐项保存 |
 | `point-annotate` | `#/resources/points/annotate` | `src/pages/Annotation.tsx` | **地图标注工作台内置页**（父页面 `annotation`）：候选目标 / 图面双击打点 / 试采与自主验证；仍被地图上线工作台第 1 步内嵌 |
-| `maps` | `#/robots/maps` | `src/pages/Maps.tsx` | **地图管理（第一个模块）**：地图列表（区域/状态筛选 + 搜索 + 分页 + 「详情」）+「＋ 导入地图」（**只导入①点云地图文件**，不含定位ID与巡检点）；旧深链 `?tab=workflow/survey/archive/changes` 仍可进入（已不在界面暴露） |
-| `map-detail` | `#/robots/maps/detail/:id` | `src/pages/MapDetail.tsx` | **地图详情内置页**（父页面 `maps`）：信息 / 空间版本 m / 版本历史 / 纯点云底图预览；**操作区只有一个按钮**——**地图下发**（`components/MapDispatch.tsx`：多选设备批量下发 + 回执）；`?tab=sync` 可直达抽屉，旧深链 `?tab=workbench` 提示标定已迁至巡检点管理。**本页不含任何定位ID / 标定点 / 巡检点**（`MapSpatialPreview` 只渲染纯点云底图；原「地图工作台」已下线，标定数据改由 `mapCalibration.ts` 独立存储） |
+| `maps` | `#/robots/maps` | `src/pages/Maps.tsx` | **地图管理（第一个模块）**：地图列表（区域/状态筛选 + 搜索 + 分页）+ 卡片操作组（**导航 / 编辑 / 地图下发 / ⋯**，`small` 按钮单行排列）+ **绑定徽章行**（显示已绑定机器人设备与版本，落后标红；点击弹 `MapBindPicker` detail 模式）+「＋ 导入地图」（**只导入①点云地图文件**，不含定位ID与巡检点）；「⋯」更多操作用 `Modal slim` 窄版（含详情/重命名/启停/删除，**不含地图下发**）；旧深链 `?tab=workflow/survey/archive/changes` 仍可进入（已不在界面暴露） |
+| `map-detail` | `#/robots/maps/detail/:id` | `src/pages/MapDetail.tsx` | **地图详情内置页**（父页面 `maps`）：信息 / 空间版本 / 版本历史 / 纯点云底图预览 + **启用状态开关**（`TOGGLE_MAP_STATUS`）；顶栏**不再放「地图下发」按钮**（动作已收口到地图卡片，`?tab=sync` 深链仍可直达抽屉）。**本页不含任何定位ID / 标定点 / 巡检点**（`MapSpatialPreview` 只渲染纯点云底图；原「地图工作台」已下线，标定数据改由 `mapCalibration.ts` 独立存储） |
+| `map-navigate` | `#/robots/maps/navigate/:id` | `src/pages/MapNavigate.tsx` | **地图导航实时监控内置页（2026-10-15 新增，父页面 `maps`）**：从地图卡片「导航」→ 选机器人设备（`MapBindPicker` picker 模式）→ 进入本页，导航操作 + 实时监控二合一；`?tab=` 带所选机器人 id |
 
 > 已删除：`objects`（设备 → 对象 → 检测项）独立页——能力已并入设备主数据；设备的检测项现由「设备清单」行内「详情」右侧抽屉承载；
 > `routes`（路线管理，含「路线与轨道」子分组）——2026-09-30 删除，路线随地图带入。
@@ -184,7 +185,8 @@
 | `Operations.tsx` | `robots` / `robot` / `health`（合并页，页内 3 Tab）/ `robot-map`（隐藏，兼容旧链）/ `manual`（菜单已移入「巡检执行 › 执行」）/ `device`（隐藏，兼容旧链）/ `calendar`(转调 Legacy) | 机器台账 + 运行监测 + 机器人能力/地图/人工操作/机型 |
 | `RobotNew.tsx` | `robot-new` | 新增机器人表单页（引擎 `ADD_ROBOT`） |
 | `OperationsLegacy.tsx` | `calendar`（其余分支为历史死代码） | 旧版运维页；现仅任务日历在用 |
-| `Maps.tsx` | — | 地图管理（内部 tab：list / detail / archive / sync / changes） |
+| `Maps.tsx` | — | 地图管理（内部 tab：list / detail / archive / sync / changes）+ 卡片操作组与 `MapBindPicker` / `MapDispatch` 弹窗编排 |
+| `MapNavigate.tsx` | — | 地图导航实时监控内置页（`map-navigate`，2026-10-15 新增） |
 | `Annotation.tsx` | `point-annotate`（内置页） | 地图标注工作台（候选目标 / 试采 / 自主验证）；不再是菜单页 |
 | `Planning.tsx` | `plans` / `plan-edit` / `tasks` / `quick` / `templates` | 计划 + 任务 + 模板 |
 | `DispatchDesk.tsx` / `Scheduling.tsx` | `dispatch` / `queue` | 调度中心（左资源列 + 右工作区）/ 旧三栏调度工作台（`Scheduling.tsx` 本版不可达） |
@@ -199,7 +201,7 @@
 
 | 文件 | 导出 / 内容 |
 |------|------------|
-| `UI.tsx` | `Btn` / `Badge` / `Panel` / `Field` / `Note` / `Empty` / `Table` / `Modal`（`drawer` / `drawerWidth` 切右侧抽屉形态，`footer` 为固定底栏）/ `Steps` / `Download` |
+| `UI.tsx` | `Btn`（新增 `small` 小号形态）/ `Badge` / `Panel` / `Field` / `Note` / `Empty` / `Table` / `Modal`（`drawer` / `drawerWidth` 切右侧抽屉形态，`wide` 宽版 / `slim` 窄版（轻量按钮弹窗），`footer` 为固定底栏）/ `Steps` / `Download` |
 | `Business.tsx` | `ObjectLink`（支持 `to` / `from` 下钻） / `Kpis` / `EventTimeline` / `Pager` |
 | `MapCanvas.tsx` | SVG 伪地图（点位/候选/机器人/充电桩/轨道，支持缩放与点选） |
 | `Video.tsx` | 视频 / 证据占位画面 |
@@ -210,14 +212,16 @@
 | `RoleMatrix.tsx` | 角色权限矩阵 |
 | `TaskPeekDrawer.tsx` | 调度中心「任务详情」右侧抽屉（决策速览：来源 / 类型 / 阶段 / 计划时间 / 排队位置 / 阻塞校验 / 点位快照，底部「打开完整任务详情」跳内置页） |
 | `TaskDetailPanel.tsx` | 任务详情内容（概要头 + 任务摘要 / 任务控制与版本约束 + 派单历史 + 检测项快照与结果）；`task-detail` 内置页与任务列表详情抽屉共用同一实现 |
+| `MapBindPicker.tsx` | 机器人设备选择器（2026-10-15 新增）：`picker` 模式（导航/编辑入口，单选已绑定设备）/ `detail` 模式（徽章下拉，只读展示绑定与版本状态 + 「前往地图下发」） |
+| `TenantSwitcher.tsx` | 顶栏租户切换器（2026-10-15 新增，纯图标 + tooltip）：演示级多租户，切换即整份换数据 |
 
 ### 数据层（`src/data/`）
 
 | 文件 | 内容 |
 |------|------|
 | `navigation.ts` | `groups` / `paths` / `parents` / `hiddenIds` / `routeMeta` / `parse` / `href` / `go` / `back` / `menuIdOf` / `useViewState`（含 `Route.from` 机制与存储容错） |
-| `store.tsx` | `Store` Provider 与 `useStore()`；状态持久化（失败降级为内存态） |
-| `seed.ts` | 全部演示种子数据（点位/地图/机器人/模板/计划/任务/结果/告警/日志/工单…）及构造助手 |
+| `store.tsx` | `Store` Provider 与 `useStore()`；状态持久化（失败降级为内存态）；**多租户（省事版）**：按租户分缓存键（默认租户沿用老键零迁移），`setTenant` 整份换数据 |
+| `seed.ts` | 全部演示种子数据（点位/地图/机器人/模板/计划/任务/结果/告警/日志/工单…）及构造助手；`TENANTS` 租户清单与 `seed(tenantId)` 按租户给名称加前缀 |
 | `engine.ts` | 状态机 `transition(state, action)`：调度/执行/复核/告警/地图/工单等全部动作 |
 | `metrics.ts` | 指标定义与口径（`metricValue` / `metricsFor` / `metricOk`） |
 | `selectors.ts` | 派生计算（`pointOf` / `stageOf` / `queueFor` / `schedule` / `checks` / `fmtTime` / `terminal` …） |
@@ -674,3 +678,19 @@
 | **操控台** | 上装（云台与镜头）/ 下装（机器人移动）**分块**；新增「位姿与移动后坐标」（`PointActionPlan.at` / `AtomicActionConfig.at`，移动按钮 0.5 米步进）；参数总览改为**一份清单**（含位置坐标），不再按能力分块 |
 | **交互收口** | 操控台上装 / 下装两块改**折叠**（标题即按钮，点开才展开，默认收起）；「机器人能力」页改**树形**（类型可展开 + 计数徽标 + 参数行）；巡检项能力项的「能力参数」改**两段式**（先选能力类型，再选其下参数，不再 30 项平铺） |
 | **验证** | `tsc` 无新增错误（仅外部 MonitorCockpit）· 测试全绿（**116 项**）· `vite build` 通过 |
+
+## 2026-10-15 地图卡片操作组 / 导航内置页 / 多租户省事版 / 顶栏通知与告警中心
+
+| 变更 | 说明 |
+|---|---|
+| **地图卡片操作组** | 卡片底部按钮固定 4 个：**导航 / 编辑 / 地图下发 / ⋯**，统一 `Btn small`（`min-width 44px`、字号 11px、`flex-wrap: nowrap` 单行右对齐）；「⋯」更多操作改 `Modal slim` 窄版（详情 / 重命名 / 启停 / 删除），**移除重复的「地图下发」入口** |
+| **导航 / 编辑一律弹选择器** | 新增 `components/MapBindPicker.tsx`（双模式：`picker` 单选一台已绑定设备进入流程；`detail` 只读展示绑定清单与版本落后状态）。导航 → 选完跳 `map-navigate`；编辑 → 所选设备写入 `sessionStorage("calib.roverId")` 再进 `map-calibrate`；不再按绑定数量短路 |
+| **地图绑定可视化** | 卡片新增徽章行 `.map-card-rovers`：展示已绑定机器人设备（前 3 个 + `+N`，hover 弹 `detail` 模式看全量；未绑定显示虚线「未绑定设备」框）；设备版本落后标红 `Vx↓Vy` |
+| **地图导航内置页** | 新增 `pages/MapNavigate.tsx`（内置页 `map-navigate`，`navigation.ts` 注册 paths / parents / routeMeta）：导航操作 + 实时监控二合一；未绑定时空态引导去「地图下发」 |
+| **地图详情** | 顶栏「地图下发」按钮移除（动作收口到卡片）；新增「启用状态」字段（`TOGGLE_MAP_STATUS`，engine 新动作，老缓存缺 `status` 默认「启用」） |
+| **多租户省事版** | `store.tsx` 按租户分 localStorage 键（默认租户沿用老键零迁移，`inspection-v14-prototype:<tid>`）；`seed.ts` 新增 `TENANTS`（华东炼化 / 西部管道）与 `seed(tenantId)`（非默认租户名称加 `HD·` / `XB·` 前缀，不动 id）；`storeContext` 新增 `setTenant`；顶栏新增 `components/TenantSwitcher.tsx`（纯图标 + hover tooltip，仅超管可用） |
+| **顶栏双下拉** | 新增 `components/NotificationCenter.tsx`（系统消息 / 任务通知 / 审批提醒三分类 Tab），与 `AlarmCenter`（告警）并列，均为**图标 + 文字**入口；告警头部按最高等级变色 + 分级摘要 chips，**移除按钮右上角脉动红点** |
+| **标定工作台** | 工具条由左侧竖排改为**顶栏下横向条**（`.calib-layout` grid 去掉 92px 工具列）：工具按钮 + 删除选中 + 「显示点名称」toggle + 元素浏览 / 现场采集入口；`MapImageCanvas` 新增 `showLabels`（点旁显示 `p_N` 名称）；元素浏览由全屏 Modal 改为**悬浮侧栏** `calib-drawer`（fixed 定位、无遮罩、企业极简风） |
+| **删除类收口** | `engine` 剔除定位点时同步清理父线引用（避免悬空节点）；`RoutePreview` 移除「父线不连通」提示；`DispatchDesk` 移除「＋临时任务 / 暂停任务 / 人工接管」按钮；`AlarmTemplates` 移除顶部规则说明 note；`Planning` 巡检路线表格移除小字点序描述与空状态提示 note |
+| **术语统一** | 界面可见文案的「机器狗」统一改为**机器人设备**（`MapBindPicker` 标题、卡片按钮 title、`MapNavigate` / `QuickTaskDrawer` 空态提示）；`deviceType: "机器狗"` 机型枚举与代码注释保留不动 |
+| **UI 基础件** | `Btn` 新增 `small`；`Modal` 新增 `slim` 窄版（轻量按钮弹窗，避免 880px 拉散）；样式清理（`.ts-label` / `.bell-dot` / `.calib-browse` 等无用类删除，新增 `.mbp-*` / `.rover-chip*` / `.calib-drawer` / `.map-marker-label` 等） |

@@ -1,7 +1,7 @@
 import { useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import { StoreContext as C } from "./storeContext";
 import { advanceAutomation } from "./automation";
-import { seed } from "./seed";
+import { seed, TENANTS } from "./seed";
 import { SAMPLE_MAP_IMAGE } from "./sampleMap";
 import { publishStateOf, transition, type Action } from "./engine";
 import { roleOf } from "./roles";
@@ -16,7 +16,20 @@ import type {
   RobotPayloadAbility,
   BusinessTarget,
 } from "./types";
-const KEY = "inspection-v14-prototype";
+const BASE_KEY = "inspection-v14-prototype";
+const DEFAULT_TENANT = "T-DEFAULT";
+/** 当前租户：存独立键，切租户即整份换数据 */
+function getTenant(): string {
+  try {
+    return localStorage.getItem("inspection-tenant") || DEFAULT_TENANT;
+  } catch {
+    return DEFAULT_TENANT;
+  }
+}
+/** 默认租户沿用老键（零迁移）；其余租户用带后缀的独立键 */
+function keyOf(tid: string): string {
+  return tid === DEFAULT_TENANT ? BASE_KEY : `${BASE_KEY}:${tid}`;
+}
 /** 当前数据模型版本，须与 types.ts 的 State.schema 一致 */
 const SCHEMA = 10;
 /**
@@ -171,6 +184,8 @@ function withSeedDefaults(s: State): State {
   });
   // 地图状态是派生值（口径见 engine.publishStateOf）：老缓存存的是旧口径，载入时按机器 / 下发记录校正
   const needMapState = s.maps?.some((m) => m.state !== publishStateOf(s, m));
+  // 地图逻辑启停：新加字段，老缓存缺 status 时默认「启用」
+  const needMapStatus = s.maps?.some((m) => !m.status);
   /** 告警被清空过的老缓存：回填示例，否则工作台与「告警事件」是空表（只为演示可读性） */
   const needAlarms = !s.alarms?.length;
   // 巡检点标定数据是独立模块：老缓存里没有该集合时从 seed 回填（地图上不再挂点位）
@@ -254,6 +269,7 @@ function withSeedDefaults(s: State): State {
     !needMapImage &&
     !needDevices &&
     !needMapState &&
+    !needMapStatus &&
     !needAlarms &&
     !needCalibrations &&
     !needSyncs &&
@@ -329,6 +345,7 @@ function withSeedDefaults(s: State): State {
         const ids = new Set(targetsOf(s, m.id).map((t) => t.id));
         return {
           ...m,
+          ...(needMapStatus ? { status: (m.status || "启用") as "启用" | "停用" } : {}),
           ...(needHistoryNorm ? { history: normalizeHistory(m.history) } : {}),
           ...(needMapImage && m.image === undefined
             ? { image: SAMPLE_MAP_IMAGE }
@@ -494,10 +511,15 @@ function withSeedDefaults(s: State): State {
   };
 }
 function initial() {
+  const tid = getTenant();
   try {
-    return withSeedDefaults(migrate(JSON.parse(localStorage.getItem(KEY) || "null")) || seed());
+    const raw = migrate(JSON.parse(localStorage.getItem(keyOf(tid)) || "null")) as State | null;
+    const s = withSeedDefaults(raw || seed(tid));
+    if (!s.tenants) s.tenants = TENANTS;
+    if (!s.tenantId) s.tenantId = tid;
+    return s;
   } catch {
-    return seed();
+    return seed(tid);
   }
 }
 /**
@@ -508,7 +530,7 @@ function initial() {
  */
 export function persist(n: State) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(n));
+    localStorage.setItem(keyOf(n.tenantId || DEFAULT_TENANT), JSON.stringify(n));
   } catch {
     /* 存储不可用：本次浏览改为纯内存态，刷新即回到初始演示数据 */
   }
@@ -523,7 +545,7 @@ export function Store({ children }: { children: ReactNode }) {
       globalThis.crypto?.randomUUID?.() ||
       `clock-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const onStorage = (e: StorageEvent) => {
-      if (e.key === KEY && e.newValue) {
+      if (e.key && e.key.startsWith(BASE_KEY) && e.newValue) {
         try {
           const n = withSeedDefaults(migrate(JSON.parse(e.newValue)));
           if (n) {
@@ -592,6 +614,26 @@ export function Store({ children }: { children: ReactNode }) {
     msg(`已切换角色：${roleOf(rid).name}（${roleOf(rid).scope}）`);
     setTimeout(() => msg(""), 3000);
   }
+  /**
+   * 切换演示租户：整份换数据（不同缓存键），并回到当前角色落地页
+   * @param tid 租户 ID，见 seed.ts 的 TENANTS
+   */
+  function setTenant(tid: string) {
+    try {
+      localStorage.setItem("inspection-tenant", tid);
+    } catch {}
+    const n = withSeedDefaults(
+      migrate(JSON.parse(localStorage.getItem(keyOf(tid)) || "null")) || seed(tid),
+    );
+    latest.current = n;
+    set(n);
+    persist(n);
+    msg(`已切换租户：${n.tenants?.find((t) => t.id === tid)?.name || tid}`);
+    setTimeout(() => msg(""), 3000);
+    try {
+      location.hash = "";
+    } catch {}
+  }
   return (
     <C.Provider
       value={{
@@ -599,8 +641,9 @@ export function Store({ children }: { children: ReactNode }) {
         act,
         message,
         setRole,
+        setTenant,
         reset: () => {
-          const n = seed();
+          const n = seed(latest.current.tenantId || DEFAULT_TENANT);
           latest.current = n;
           set(n);
           persist(n);

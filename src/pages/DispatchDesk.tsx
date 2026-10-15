@@ -173,9 +173,6 @@ export function DispatchDesk({ id }: { id?: string }) {
             电量 {r.battery}% · {mapVer(r.mapVersion)}
           </span>
         </div>
-        <Btn primary onClick={() => setQuick(true)}>
-          ＋ 临时任务
-        </Btn>
       </div>
       {/* 平台态势：全平台 6 项指标，横向一条，不与单台机器人信息混排 */}
       <div className="fleet-summary">
@@ -205,17 +202,11 @@ export function DispatchDesk({ id }: { id?: string }) {
                 <Btn primary onClick={() => go("execution-monitor", current.id)}>
                   查看实时执行
                 </Btn>
-                {current.state === "执行中" && (
-                  <Btn onClick={() => act({ type: "PAUSE", id: current.id })}>
-                    暂停任务
-                  </Btn>
-                )}
                 {current.state === "暂停" && (
                   <Btn onClick={() => act({ type: "START", id: current.id })}>
                     恢复任务
                   </Btn>
                 )}
-                <Btn onClick={() => go("manual", rid)}>人工接管</Btn>
               </div>
             ) : (
               <p>当前无执行任务，符合条件的任务将按队列执行。</p>

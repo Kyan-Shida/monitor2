@@ -71,6 +71,7 @@ import { canSee, roleOf, roles } from "./data/roles";
 import { Maps } from "./pages/Maps";
 import { MapDetail } from "./pages/MapDetail";
 import { MapCalibrate } from "./pages/MapCalibrate";
+import { MapNavigate } from "./pages/MapNavigate";
 import { SpaceManage } from "./pages/SpaceManage";
 import { BusinessTargets } from "./pages/BusinessTargets";
 import { InspectionPoints } from "./pages/InspectionPoints";
@@ -94,6 +95,7 @@ import { FeedbackReview } from "./components/FeedbackReview";
 import { PageTabs } from "./components/PageTabs";
 import { AlarmCenter } from "./components/AlarmCenter";
 import { NotificationCenter } from "./components/NotificationCenter";
+import { TenantSwitcher } from "./components/TenantSwitcher";
 import { ObjectDetails } from "./pages/ObjectDetails";
 import { DeviceArchive } from "./pages/DeviceArchive";
 import { DeviceMaster } from "./pages/DeviceMaster";
@@ -208,7 +210,7 @@ export default function App() {
     setReviewEnabled(next);
     try { localStorage.setItem("inspection-review-enabled", String(next)); } catch { /* memory only */ }
   }
-  const { message, reset: resetData, s, setRole } = useStore();
+  const { message, reset: resetData, s, setRole, setTenant } = useStore();
   const role = roleOf(s.roleId);
   /** 用户菜单容器：点击菜单外区域自动收起 */
   const userRef = useRef<HTMLDivElement>(null);
@@ -312,6 +314,8 @@ export default function App() {
   else if (page === "map-detail") body = <MapDetail id={id} tab={tab} />;
   // 地图标定工作台（内置页）：像素地图打点、连线成路网（地图卡片「编辑」进入）
   else if (page === "map-calibrate") body = <MapCalibrate id={id} key={id} />;
+  // 地图导航实时监控页（内置页）：选完机器狗后进入，导航操作 + 实时监控二合一
+  else if (page === "map-navigate") body = <MapNavigate id={id} tab={tab} />;
   // 空间管理（资源与地图 › 空间）：全局坐标系配准、全局↔局部换算、地图拓扑与版本校验
   else if (page === "space") body = <SpaceManage />;
   // 设备主数据（阶段③）：清单导入 / 启停 / 是否巡检的后台，沿用 equipment 路由
@@ -635,6 +639,8 @@ export default function App() {
             <AlarmCenter />
             {/* 通知中心：系统消息 / 任务通知 / 审批提醒 合并下拉 */}
             <NotificationCenter />
+            {/* 顶栏常驻租户切换（多租户省事版）：仿 SaaS 组织上下文切换 */}
+            <TenantSwitcher />
             {/* 用户下拉菜单：头像 + 姓名角色，点击展开角色切换与退出登录（原型阶段代替真实登录） */}
             <div className="user-menu-wrap" ref={userRef}>
               <button

@@ -232,15 +232,6 @@ export function RoutePreview({
           因此未绘制；可到「地图管理 › 编辑（地图标定）」重新连线，或保存一次路网以清理这些段。
         </Note>
       )}
-      {offRoadLegs.length > 0 && (
-        <Note>
-          父线在这几处不连通，子线只能按虚线直连：
-          {offRoadLegs
-            .map((l) => `「${l.from.name}」→「${l.to.name}」`)
-            .join("；")}
-          。可到「地图管理 › 编辑（地图标定）」把这两点连起来后保存路网。
-        </Note>
-      )}
       {missing > 0 && (
         <Note>
           有 <b>{missing}</b> 个已选巡检点不在当前父线地图上，未参与预览；

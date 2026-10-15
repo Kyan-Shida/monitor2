@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from "react";
 import { useStore } from "../data/store";
-import { go } from "../data/navigation";
+import { go, useViewState } from "../data/navigation";
 import { Btn, Modal, Panel, Table } from "../components/UI";
 import { MapImageCanvas } from "../components/MapImageCanvas";
 import { targetsOf } from "../data/mapCalibration";
@@ -52,6 +52,8 @@ const PATH_FIELDS: {
 
 export function MapCalibrate({ id }: { id?: string }) {
   const { s, act } = useStore();
+  /** 进入前在「地图卡片 → 编辑」选中的机器狗 id（供实时位姿优先使用） */
+  const [pickedRover] = useViewState("calib.roverId", "");
   const m = s.maps.find((x) => x.id === id) || s.maps[0];
   /** 定位点：直接用该图的标定数据（与「现场采集新增巡检点」共用一份，保证地图与点位一致） */
   const pts: Candidate[] = m
@@ -62,6 +64,8 @@ export function MapCalibrate({ id }: { id?: string }) {
   const [tool, TOOL] = useState<Tool>("元素选择");
   /** 正在连接的点（直线满 2 点自动成线；曲线由「完成连线」收口） */
   const [draft, DRAFT] = useState<string[]>([]);
+  /** 是否在定位点旁显示名称标签（p_N / 自定义名） */
+  const [showLabels, SETL] = useState(false);
   /** 鼠标在图面上的实时位置（百分比） */
   const [hover, HOVER] = useState({ x: 0, y: 0 });
   /** 选中的元素 id（定位点 id 或线 id）：右侧显示参数、图上高亮 */
@@ -115,6 +119,16 @@ export function MapCalibrate({ id }: { id?: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /** Delete：删除当前选中元素（定位点 / 父线） */
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Delete") removeSel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, paths, pts]);
+
   if (!m)
     return (
       <Panel title="地图标定">
@@ -140,8 +154,9 @@ export function MapCalibrate({ id }: { id?: string }) {
    */
   const [live, LIVE] = useState(false);
   const [livePose, LIVE_POSE] = useState({ x: 50, y: 50, yaw: 0 });
-  /** 在场机器狗：锁定了本图的机器人（优先取在线执行中的那台） */
+  /** 在场机器狗：优先「编辑前选中的那台」，其次本图在线执行中的，最后本图任意一台 */
   const rover =
+    (s.robots || []).find((r) => r.id === pickedRover) ||
     (s.robots || []).find((r) => r.mapId === m.id && r.state === "执行中") ||
     (s.robots || []).find((r) => r.mapId === m.id);
   useEffect(() => {
@@ -284,6 +299,38 @@ export function MapCalibrate({ id }: { id?: string }) {
   function save() {
     act({ type: "SAVE_ROADNET", mapId: m!.id, paths });
   }
+  /** 删除当前选中元素：定位点用 DISCARD_TARGET，父线从本地草稿移除 */
+  function removeSel() {
+    if (!sel) return;
+    if (selPoint) {
+      act({ type: "DISCARD_TARGET", mapId: m.id, targetId: selPoint.id });
+    } else if (selPath) {
+      PATHS((old) => old.filter((v) => v.id !== sel));
+    }
+    SEL("");
+  }
+  /** 删除父线中的某个节点；若删除后节点不足 2 个则删除整条父线 */
+  function removeNode(pid: string) {
+    if (!selPath) return;
+    let removedLine = false;
+    PATHS((old) => {
+      const next = old
+        .map((v) =>
+          v.id === selPath.id
+            ? { ...v, pointIds: v.pointIds.filter((id) => id !== pid) }
+            : v,
+        )
+        .filter((v) => {
+          if (v.id === selPath.id && v.pointIds.length < 2) {
+            removedLine = true;
+            return false;
+          }
+          return true;
+        });
+      return next;
+    });
+    if (removedLine) SEL("");
+  }
 
   /** 元素浏览的行：点 / 线 / 弧（点行即选中并高亮） */
   const browseRows = (
@@ -323,47 +370,69 @@ export function MapCalibrate({ id }: { id?: string }) {
         <span>像素地图打点、连线成路网；坐标按「分辨率 + 原点」换算为全局坐标</span>
       </div>
 
-      <div className="calib-layout">
-        <aside className="calib-tools">
-          <span className="calib-tools-title">元素选择</span>
-          {TOOLS.map((t) => (
-            <button
-              key={t}
-              className={"calib-tool" + (tool === t ? " on" : "")}
-              onClick={() => {
-                TOOL(t);
-                DRAFT([]);
-              }}
-            >
-              {t}
-            </button>
-          ))}
-          {(tool === "直线" || tool === "曲线") && (
-            <>
-              <span className="calib-tip">
-                {tool === "直线"
-                  ? "依次点选 2 个定位点即成直线（不新增点）"
-                  : "依次点选 ≥3 个定位点，再点「完成连线」（不新增点）"}
-              </span>
-              <span className="calib-tip">
-                已选 <b>{draft.length}</b> 个点
-                {draft.length ? " · 再点该点可撤销" : ""} · Esc 放弃
-              </span>
-              <Btn disabled={!draft.length} onClick={undraft}>
-                撤销上一点
-              </Btn>
-              {tool === "曲线" && (
-                <Btn primary disabled={draft.length < 3} onClick={closePath}>
-                  完成连线
-                </Btn>
-              )}
-              <Btn disabled={!draft.length} onClick={() => DRAFT([])}>
-                取消连线
-              </Btn>
-            </>
-          )}
-        </aside>
+      <div className="calib-tools">
+        <span className="calib-tools-label">工具</span>
+        {TOOLS.map((t) => (
+          <button
+            key={t}
+            className={"calib-tool" + (tool === t ? " on" : "")}
+            onClick={() => {
+              TOOL(t);
+              DRAFT([]);
+            }}
+          >
+            {t}
+          </button>
+        ))}
+        {sel && (
+          <button
+            type="button"
+            className="calib-delete"
+            title={
+              selPoint
+                ? "删除该定位点"
+                : selPath
+                  ? "删除该父线"
+                  : "删除选中元素"
+            }
+            onClick={removeSel}
+          >
+            <span className="calib-delete-ic">✕</span>
+            删除选中
+          </button>
+        )}
+        <span className="calib-tools-sep"></span>
+        <label className="calib-toggle">
+          <span>显示点名称</span>
+          <input
+            type="checkbox"
+            checked={showLabels}
+            onChange={(e) => SETL(e.target.checked)}
+          />
+          <span className="calib-toggle-track"></span>
+        </label>
+        {(tool === "直线" || tool === "曲线") && (
+          <>
+            <span className="calib-tools-sep"></span>
+            <span className="calib-tip-inline">
+              {tool === "直线" ? "点 2 个定位点即成线" : "点 ≥3 个定位点，再点完成"}
+            </span>
+            <span className="calib-tip-inline">
+              已选 <b>{draft.length}</b> 点
+            </span>
+            <Btn small disabled={!draft.length} onClick={undraft}>撤销</Btn>
+            {tool === "曲线" && (
+              <Btn small primary disabled={draft.length < 3} onClick={closePath}>完成连线</Btn>
+            )}
+            <Btn small disabled={!draft.length} onClick={() => DRAFT([])}>取消</Btn>
+          </>
+        )}
+        <span className="calib-tools-sep"></span>
+        <Btn small onClick={() => BROWSE(true)}>元素浏览</Btn>
+        <Btn small onClick={() => go("point-onsite")}>现场采集</Btn>
+      </div>
 
+      <div className="calib-layout">
         <div className="calib-canvas">
           <MapImageCanvas
             image={m.image || SAMPLE_MAP_IMAGE}
@@ -377,6 +446,7 @@ export function MapCalibrate({ id }: { id?: string }) {
             }))}
             selected={selPoint ? sel : undefined}
             onSelect={pickPoint}
+            showLabels={showLabels}
             // 只有「单点」在地图上打点；直线 / 曲线只把已有定位点连起来
             onAdd={tool === "单点" ? addPointAt : undefined}
             // 直线 / 曲线：点空白 = 就近吸附定位点，或收尾 / 放弃当前连线
@@ -422,10 +492,6 @@ export function MapCalibrate({ id }: { id?: string }) {
             onHover={(x, y) => HOVER({ x, y })}
             height={560}
           />
-          <div className="calib-browse">
-            <Btn onClick={() => BROWSE(true)}>元素浏览</Btn>
-            <Btn onClick={() => go("point-onsite")}>现场采集</Btn>
-          </div>
         </div>
 
         <aside className="calib-poser">
@@ -591,6 +657,29 @@ export function MapCalibrate({ id }: { id?: string }) {
                   </div>
                 </dl>
               )}
+
+              {/* 经过节点：可删除画错的中间点 */}
+              {selPath.pointIds.length > 0 && (
+                <div className="calib-nodes">
+                  <div className="calib-nodes-title">经过节点</div>
+                  {selPath.pointIds.map((pid, idx) => {
+                    const pIdx = noOf(pid);
+                    const label = pIdx
+                      ? `p_${pIdx}`
+                      : pid;
+                    return (
+                      <div key={`${selPath.id}-${pid}-${idx}`} className="calib-node">
+                        <span>
+                          {idx + 1}. {label}
+                        </span>
+                        <button className="calib-node-del" onClick={() => removeNode(pid)}>
+                          删除
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <button className="calib-acc" onClick={() => OA(!openAdv)}>
                 <span>高级参数</span>
                 <span>{openAdv ? "⌄" : "›"}</span>
@@ -646,18 +735,6 @@ export function MapCalibrate({ id }: { id?: string }) {
           )}
 
           <div className="calib-poser-foot">
-            {/* 删掉画错 / 已失效的线：只动本地草稿，点「保存路网」才落库 */}
-            {selPath && (
-              <Btn
-                danger
-                onClick={() => {
-                  PATHS((old) => old.filter((v) => v.id !== sel));
-                  SEL("");
-                }}
-              >
-                删除该线
-              </Btn>
-            )}
             <Btn primary onClick={save}>
               保存路网
             </Btn>
@@ -666,8 +743,19 @@ export function MapCalibrate({ id }: { id?: string }) {
       </div>
 
       {browse && (
-        <Modal title="元素浏览" wide onClose={() => BROWSE(false)}>
-          <div className="segmented" style={{ marginBottom: 12 }}>
+        <aside className="calib-drawer" role="dialog" aria-label="元素浏览">
+          <div className="calib-drawer-head">
+            <b>元素浏览</b>
+            <button
+              type="button"
+              className="calib-drawer-close"
+              title="收起"
+              onClick={() => BROWSE(false)}
+            >
+              ✕
+            </button>
+          </div>
+          <div className="segmented" style={{ marginBottom: 8 }}>
             {(["点", "线", "弧"] as const).map((x) => (
               <button
                 key={x}
@@ -679,7 +767,7 @@ export function MapCalibrate({ id }: { id?: string }) {
             ))}
           </div>
           <Table heads={["ID", "名称"]} rows={browseRows} />
-        </Modal>
+        </aside>
       )}
     </>
   );

@@ -853,6 +853,15 @@ export function transition(state: State, a: Action): State {
       detail = `已删除地图「${hit!.name}」`;
       break;
     }
+    /** 切换地图逻辑启停状态（启用 / 停用） */
+    case "TOGGLE_MAP_STATUS": {
+      const hit = s.maps.find((x) => x.id === a.id);
+      must(hit, "未找到地图");
+      hit.status = hit.status === "停用" ? "启用" : "停用";
+      object = hit.id;
+      detail = `地图「${hit.name}」已${hit.status}`;
+      break;
+    }
     /**
      * 保存路网（标定工作台）：只存线 / 弧
      * @description 「点」是定位点，打点时即时写入标定数据（`ADD_TARGET`），与现场采集共用同一份；
@@ -1708,8 +1717,14 @@ export function transition(state: State, a: Action): State {
       must(!t.pointId, "已关联业务点位的巡检点请先维护点位");
       t.state = "已剔除";
       cal.updatedAt = new Date().toLocaleString("zh-CN");
-      object = cal.id;
-      detail = `已剔除巡检点`;
+      // 同步清理本图路网中对该定位点的引用，避免父线出现悬空节点
+      const keptPaths =
+        m.roadnet?.paths
+          .map((v) => ({ ...v, pointIds: v.pointIds.filter((pid) => pid !== a.targetId) }))
+          .filter((v) => v.pointIds.length >= 2) || [];
+      m.roadnet = { paths: keptPaths };
+      object = a.targetId;
+      detail = `定位点「${t.externalId || t.id}」已删除，并清理关联父线`;
       break;
     }
     /**

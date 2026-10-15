@@ -358,7 +358,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     return (
       <>
         <Panel
-          title="巡检路线 · 从父线（区域地图）上挑点组成子线"
+          title="巡检路线"
           extra={
             <>
               <div className="actions">
@@ -391,15 +391,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               )?.name || "—",
               <>
                 {t.points.length} 个
-                <small className="cell-muted">
-                  {t.points
-                    .map(
-                      (pid) => s.points.find((p) => p.id === pid)?.name || pid,
-                    )
-                    .slice(0, 3)
-                    .join(" → ")}
-                  {t.points.length > 3 ? " → …" : ""}
-                </small>
               </>,
               <span className="ver">v{t.version}</span>,
               <span className={"badge " + (t.state === "启用" ? "green" : "")}>
@@ -511,10 +502,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                   .filter(Boolean) as Point[]
               }
             />
-            <Note>
-              子线按「已选」清单的顺序执行：机器狗沿父线行驶到 1 → 2 → 3 …
-              依次作业；如需调整顺序，在右侧清单里拖动或点箭头。
-            </Note>
             {pickerTable}
           </Modal>
         )}
@@ -1013,11 +1000,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         }
       >
         {/* TASK-01：任务生成规则说明；DSP-01：计划任务直接绑定机器人、临时任务走调度 */}
-        {allFiltered.length === 0 && (
-          <Note>
-            当前时间范围（{timeRange}）内没有任务。可放宽到「近 7 天 / 近 30 天」，或核对来源 / 状态等筛选条件。
-          </Note>
-        )}
         <Table
           heads={[
             // 选择态下才渲染复选框列（含表头全选）

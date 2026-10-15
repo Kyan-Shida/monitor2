@@ -255,7 +255,7 @@ export function QuickTaskDrawer({
           {pickedMaps
             .map((id) => s.maps.find((m) => m.id === id)?.name || id)
             .join(" / ")}
-          ）。一台机器狗一次只跑一张地图，请只保留同一张地图上的巡检点；
+          ）。一台机器人设备一次只跑一张地图，请只保留同一张地图上的巡检点；
           <b>跨区域巡检能力将在后续版本开放</b>。
         </Note>
       )}

@@ -26,6 +26,8 @@ import {
 import { Pager } from "../components/Business";
 import { MapOnboarding } from "../components/MapOnboarding";
 import { MapSurveyPanel } from "../components/MapSurveyPanel";
+import { MapBindPicker } from "../components/MapBindPicker";
+import { MapDispatch } from "../components/MapDispatch";
 import { SAMPLE_MAP_FILE, SAMPLE_MAP_IMAGE } from "../data/sampleMap";
 import { MAP_IMAGE_MAX_SIZE } from "../data/types";
 import type { MapAsset, MapPacket } from "../data/types";
@@ -72,6 +74,14 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const [pkRegion, PKR] = useState("一期罐区");
   /** 卡片「⋯」：当前打开更多操作的地图 id */
   const [moreId, MORED] = useState("");
+  /** 绑定机器狗弹窗：打开时等于目标地图 id，空串则关闭 */
+  const [bindMapId, SET_BIND] = useState("");
+  /** 地图下发弹窗：打开时等于目标地图 id，空串则关闭 */
+  const [dispatchMapId, SET_DISPATCH] = useState("");
+  /** 绑定弹窗模式：picker = 导航/编辑单选入口；detail = 徽章下拉（多选+已绑定展示） */
+  const [bindMode, SET_BIND_MODE] = useState<"picker" | "detail">("picker");
+  /** 弹窗触发者：nav = 导航按钮；edit = 编辑按钮；detail = 徽章下拉 */
+  const [bindAction, SET_BIND_ACTION] = useState<"nav" | "edit" | "detail">("detail");
   /** 重命名弹窗：地图或数据包（kind 区分） */
   const [rename, RN] = useState<{
     kind: "map" | "packet";
@@ -343,37 +353,111 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                 </div>
               </article>
             ))}
-            {rows.map((x) => (
-              <article className="map-card" key={x.id}>
-                <div className="map-card-img">
-                  <img src={x.image || SAMPLE_MAP_IMAGE} alt={x.name} />
-                </div>
-                <div className="map-card-body">
-                  <div className="map-card-name">
-                    <b>{x.name}</b>
-                    <small>
-                      {x.region} · V{x.version} · {x.state}
-                      {x.updatedAt ? ` · ${x.updatedAt}` : ""}
-                    </small>
+            {rows.map((x) => {
+              const bound = s.robots.filter((r) => r.mapId === x.id);
+              const outdated = bound.filter((r) => r.mapVersion < x.version);
+              const TOP_N = 3;
+              const shown = bound.slice(0, TOP_N);
+              const extra = bound.length - TOP_N;
+              const dispatchable = s.robots.filter(
+                (r) => !r.region || r.region === x.region,
+              );
+              return (
+                <article className="map-card" key={x.id}>
+                  <div className="map-card-img">
+                    <img src={x.image || SAMPLE_MAP_IMAGE} alt={x.name} />
                   </div>
-                  <div className="map-card-actions">
-                    <Btn
-                      title="下发到机器人（机器人据此导航）"
-                      onClick={() => go("map-detail", x.id, "sync")}
+                  <div className="map-card-body">
+                    <div className="map-card-name">
+                      <b>{x.name}</b>
+                      <small>
+                        {x.region} · V{x.version} · {x.state}
+                        {x.updatedAt ? ` · ${x.updatedAt}` : ""}
+                        {outdated.length ? (
+                          <span className="outdated">
+                            {" "}· ⚠{outdated.length} 台待更新
+                          </span>
+                        ) : (
+                          ""
+                        )}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      className={
+                        "map-card-rovers" + (bound.length ? "" : " empty")
+                      }
+                      onClick={() => {
+                        SET_BIND(x.id);
+                        SET_BIND_MODE("detail");
+                        SET_BIND_ACTION("detail");
+                      }}
+                      title={
+                        bound.length
+                          ? `已绑定 ${bound.length} 台 · 点击查看绑定详情`
+                          : `未绑定 · 点击前往地图下发`
+                      }
                     >
-                      导航
-                    </Btn>
-                    <Btn
-                      title="进入标定工作台：打点、连线成路网"
-                      onClick={() => go("map-calibrate", x.id)}
-                    >
-                      编辑
-                    </Btn>
-                    <Btn onClick={() => MORED(x.id)}>⋯</Btn>
+                      {bound.length === 0 ? (
+                        <span className="rover-chip empty">未绑定设备 ▾</span>
+                      ) : (
+                        <>
+                          {shown.map((r) => (
+                            <span
+                              key={r.id}
+                              className={
+                                "rover-chip" +
+                                (r.mapVersion < x.version ? " outdated" : "")
+                              }
+                            >
+                              🐕 {r.name.slice(-2)} V{r.mapVersion}
+                              {r.mapVersion < x.version
+                                ? `↓V${x.version}`
+                                : ""}
+                            </span>
+                          ))}
+                          {extra > 0 && (
+                            <span className="rover-chip muted">+{extra}</span>
+                          )}
+                        </>
+                      )}
+                    </button>
+                    <div className="map-card-actions">
+                      <Btn
+                        small
+                        title="选择一台已绑定本地图的机器人设备去跑路线"
+                        onClick={() => {
+                          SET_BIND(x.id);
+                          SET_BIND_MODE("picker");
+                          SET_BIND_ACTION("nav");
+                        }}
+                      >
+                        导航
+                      </Btn>
+                      <Btn
+                        small
+                        title="选择一台已绑定本地图的机器人设备，带实时位姿进入标定工作台"
+                        onClick={() => {
+                          SET_BIND(x.id);
+                          SET_BIND_MODE("picker");
+                          SET_BIND_ACTION("edit");
+                        }}
+                      >
+                        编辑
+                      </Btn>
+                      <Btn
+                        small
+                        title="把本地图下发给所选机器人设备，并同步到机器人端"
+                        onClick={() => SET_DISPATCH(x.id)}
+                      >
+                        地图下发
+                      </Btn>
+                      <Btn small onClick={() => MORED(x.id)}>⋯</Btn>
+                    </div>
                   </div>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
         )}
         <Pager page={cur} count={list.length} size={PAGE_SIZE} onChange={PG} />
@@ -525,10 +609,10 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         </Modal>
       )}
 
-      {/* 地图卡片「⋯」：详情 / 重命名 / 删除地图 */}
+      {/* 地图卡片「⋯」：详情 / 重命名 / 删除地图 / 启停 / 地图下发 */}
       {moreMap && (
-        <Modal title={`${moreMap.name} · 更多操作`} onClose={() => MORED("")}>
-          <div className="actions">
+        <Modal slim title={`${moreMap.name} · 更多操作`} onClose={() => MORED("")}>
+          <div className="map-more-actions">
             <Btn
               onClick={() => {
                 const mid = moreMap.id;
@@ -548,6 +632,13 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               重命名
             </Btn>
             <Btn
+              onClick={() => {
+                act({ type: "TOGGLE_MAP_STATUS", id: moreMap.id });
+              }}
+            >
+              {moreMap.status === "停用" ? "启用" : "停用"}
+            </Btn>
+            <Btn
               danger
               onClick={() => {
                 const x = moreMap;
@@ -558,6 +649,16 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               删除地图
             </Btn>
           </div>
+        </Modal>
+      )}
+      {/* 地图下发弹窗：从更多操作进入 */}
+      {dispatchMapId && (
+        <Modal
+          wide
+          title="地图下发"
+          onClose={() => SET_DISPATCH("")}
+        >
+          <MapDispatch mapId={dispatchMapId} />
         </Modal>
       )}
 
@@ -736,6 +837,34 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           </div>
         </Modal>
       )}
+      {bindMapId && s.maps.find((x) => x.id === bindMapId) ? (
+        <MapBindPicker
+          map={s.maps.find((x) => x.id === bindMapId)!}
+          mode={bindMode}
+          onClose={() => SET_BIND("")}
+          onAfter={(rid) => {
+            const mid = bindMapId;
+            const action = bindAction;
+            SET_BIND("");
+            if (action === "edit") {
+              // 记录所选机器狗：标定页「实时位姿」优先使用它
+              try {
+                sessionStorage.setItem("view:calib.roverId", JSON.stringify(rid));
+              } catch {
+                /* 存储不可用（隐私模式）时降级为自动匹配 */
+              }
+              go("map-calibrate", mid);
+            } else {
+              go("map-navigate", mid, rid);
+            }
+          }}
+          onDispatch={() => {
+            const mid = bindMapId;
+            SET_BIND("");
+            SET_DISPATCH(mid);
+          }}
+        />
+      ) : null}
     </>
   );
 
@@ -743,6 +872,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   function changeModals() {
     const pts = s.points.filter((p) => p.mapId === m.id);
     return modal ? (
+      <>
       <Modal
         title={modal === "change" ? "登记现场变化" : "修订地图版本"}
         wide
@@ -813,6 +943,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           </>
         )}
       </Modal>
-    ) : null;
+    </>
+  ) : null;
   }
 }

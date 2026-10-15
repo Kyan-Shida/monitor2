@@ -237,6 +237,8 @@ const paths: Record<string, string> = {
   "map-detail": "robots/maps/detail",
   /** 地图标定工作台（内置页）：像素地图打点、连线成路网 */
   "map-calibrate": "robots/maps/calibrate",
+  /** 地图导航实时监控页（内置页）：选完机器狗后进入 */
+  "map-navigate": "robots/maps/navigate",
   /** 独立大屏窗口：由顶栏「驾驶舱大屏」以新标签页打开，不进入侧边栏与中心 Tab */
   bigscreen: "screen/bigscreen",
   /** 视频监控流大屏：与数据大屏 / 机器人监控并列的第三个大屏 Tab */
@@ -249,6 +251,7 @@ const parents: Record<string, string> = {
   health: "robots",
   "map-detail": "maps",
   "map-calibrate": "maps",
+  "map-navigate": "maps",
   /** 单任务现场态势（内置页）：归属「实时执行监控」 */
   "execution-monitor": "execution",
   /** EXE-03：「人工操作与遥控」降为执行监控的内置页（菜单隐藏，仅保留行内入口） */
@@ -436,6 +439,14 @@ export const routeMeta = [
     id: "map-calibrate",
     name: "地图标定工作台",
     path: paths["map-calibrate"],
+    parent: "maps",
+  },
+  {
+    // 地图导航实时监控页（内置页）：无侧边栏入口，由地图卡片「导航」进入
+    ...pages.find((x) => x.id === "maps")!,
+    id: "map-navigate",
+    name: "地图导航",
+    path: paths["map-navigate"],
     parent: "maps",
   },
   {

@@ -17,7 +17,7 @@ import { MapDispatch } from "../components/MapDispatch";
 import { mapVer } from "../data/versionLabel";
 
 export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
-  const { s } = useStore();
+  const { s, act } = useStore();
   const m = s.maps.find((x) => x.id === id) || s.maps[0];
   /** 抽屉：空串表示关闭；深链 `?tab=sync` 可直接打开下发抽屉 */
   const [drawer, DRAWER] = useState(tab === "sync" ? "下发" : "");
@@ -46,12 +46,6 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
           {m.id} · {m.region} · {mapVer(m.version)}
         </span>
         <Badge>{m.state}</Badge>
-        {/* 地图管理只保留一个动作：地图下发（同步给设备）；巡检点标定不在这里 */}
-        <div className="actions">
-          <Btn primary onClick={openDispatch}>
-            地图下发
-          </Btn>
-        </div>
       </div>
 
       {legacyWorkbench && (
@@ -78,6 +72,16 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
           <dt>状态</dt>
           <dd>
             <Badge>{m.state}</Badge>
+          </dd>
+          <dt>启用状态</dt>
+          <dd>
+            <Badge>{m.status || "启用"}</Badge>
+            <Btn
+              danger={m.status !== "停用"}
+              onClick={() => act({ type: "TOGGLE_MAP_STATUS", id: m.id })}
+            >
+              {m.status === "停用" ? "启用" : "停用"}
+            </Btn>
           </dd>
           <dt>更新时间</dt>
           <dd>{m.updatedAt || "—"}</dd>
