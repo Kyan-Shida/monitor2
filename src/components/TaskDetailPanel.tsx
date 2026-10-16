@@ -1,7 +1,7 @@
 /**
  * @file TaskDetailPanel.tsx
  * @description 任务详情内容：概要头（主操作随状态切换）+ 任务摘要 + 派单历史 +
- *              「点位 + 动作序列」快照与结果
+ *              「点位与检测项」快照与结果
  * @interaction ObjectDetails.tsx（「任务详情」内置页）、Planning.tsx（任务列表「详情」抽屉）——两处共用同一实现，避免口径漂移
  */
 import { useStore } from "../data/store";
@@ -12,28 +12,7 @@ import { ObjectLink } from "./Business";
 import { RoutePreview } from "./RoutePreview";
 import { stageOf, fmtTime, queueFor } from "../data/selectors";
 import { archiveIdOf } from "../data/deviceMaster";
-import type { PointActionPlan, Snapshot, Task } from "../data/types";
-
-/**
- * 到位动作与视角摘要（任务详情「点位 + 动作序列」用）
- * @param p 任务内点位快照
- * @returns 一句话摘要；未编排视角时说明按默认视角执行
- */
-function viewSummary(p: Snapshot): string {
-  const ap: PointActionPlan | undefined = p.actionPlan;
-  if (!ap)
-    return "未编排视角（按默认视角执行，可在「巡检点管理 › 编辑巡检点」补配）";
-  const bits = [
-    ap.viewDir || "观察方向未设",
-    `PTZ ${ap.ptz.pan}/${ap.ptz.tilt}/${ap.ptz.zoom}`,
-  ];
-  if (ap.dwellSec != null) bits.push(`停留 ${ap.dwellSec}s`);
-  if (ap.light != null) bits.push(`补光 ${ap.light}`);
-  if (ap.lift) bits.push(`升降 ${ap.lift}`);
-  if (ap.preset) bits.push(ap.preset);
-  if (ap.avoidPolicy) bits.push(ap.avoidPolicy);
-  return bits.join(" · ");
-}
+import type { Task } from "../data/types";
 
 export function TaskDetailPanel({
   task,
@@ -68,7 +47,7 @@ export function TaskDetailPanel({
           ? {
               label: "巡检结果",
               page: "results",
-              title: "查看该任务产出的巡检结果与复核状态",
+              title: "查看该任务产出的巡检结果与告警",
             }
           : {
               label: "执行回溯",
@@ -230,13 +209,12 @@ export function TaskDetailPanel({
           </>
         )}
       </Panel>
-      <Panel title="点位 + 动作序列（检测项快照与结果）">
+      <Panel title="点位与检测项（快照与结果）">
         <Table
           heads={[
             "业务点位",
             "设备 / 对象",
             "检测项与要求",
-            "到位动作与视角",
             "版本",
             "结果",
           ]}
@@ -250,10 +228,6 @@ export function TaskDetailPanel({
             <>
               {p.item}
               <small>{p.requirement}</small>
-            </>,
-            <>
-              {p.actions?.join(" / ") || "按检测项执行"}
-              <small>{viewSummary(p)}</small>
             </>,
             `${mapVer(p.mapVersion)}`,
             s.results

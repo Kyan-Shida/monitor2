@@ -27,7 +27,12 @@ import { ObjectLink, Kpis } from "../components/Business";
 import { stageOf, terminal } from "../data/selectors";
 import { DUE_SOON_MS, metricValue } from "../data/metrics";
 import { canSee, roleOf } from "../data/roles";
-import { ALARM_LEVELS } from "../data/types";
+import { mainOfAlarm } from "../data/alarmSettings";
+import {
+  ALARM_CLASS_MAINS,
+  ALARM_LEVELS,
+  type AlarmClassMain,
+} from "../data/types";
 import type { KpiTone } from "../components/Business";
 import mascot from "../assets/mascot-robot.jpg";
 
@@ -119,6 +124,8 @@ export function Workbench() {
   const { s } = useStore();
   /** 当前展开明细的待办分类 key；空串表示弹窗未打开 */
   const [openKey, OPEN] = useState("");
+  /** 未处理告警弹窗内的标签页：业务预警 / 机器人预警（与「告警记录」同一组口径） */
+  const [alarmMain, SETALARMMAIN] = useState<AlarmClassMain>("业务预警");
   /** 当前时间：每 30 秒刷新一次，驱动顶部问候语与日期展示 */
   const [now, SETN] = useState(() => new Date());
   useEffect(() => {
@@ -128,6 +135,8 @@ export function Workbench() {
 
   /** 未处理告警：尚无人工处理（处理时间为空），异常即告警，检查受理在告警页完成 */
   const openAlarms = s.alarms.filter((a) => !a.handledAt);
+  /** 当前标签页的未处理告警：弹窗列表与标题计数都按它统计 */
+  const alarmList = openAlarms.filter((a) => mainOfAlarm(a.category) === alarmMain);
   const pendingTasks = s.tasks.filter((t) => t.state === "待调度");
   const running = s.tasks.filter((t) => t.state === "执行中");
 
@@ -176,6 +185,18 @@ export function Workbench() {
     人工接管: "purple",
   };
 
+  /**
+   * 首页左栏展示的机器人：需关注的（离线 / 低电量 / 版本落后）排前 + 最多 6 台
+   * @description 首页是概览不是台账——全量由状态徽标给总数、余量给「还有 N 台」提示；
+   *              异常机必须露头，不能因排序靠后被挤出首屏
+   */
+  const dashRobots = useMemo(() => {
+    const attention = new Set(robotAttention.map((x) => x.robot.id));
+    return [...s.robots]
+      .sort((a, b) => Number(attention.has(b.id)) - Number(attention.has(a.id)))
+      .slice(0, 6);
+  }, [s.robots, robotAttention]);
+
   /** 今日任务：当日创建或当日有动作的 + 所有执行中（简化口径，避免过度计算） */
   const todayTasks = useMemo(() => {
     const today = new Date();
@@ -200,18 +221,6 @@ export function Workbench() {
   const todayProgress = todayTasks.length
     ? Math.round((todayDone / todayTasks.length) * 100)
     : 0;
-
-  /** 最近告警：按时间倒序，取前 6 条 */
-  const recentAlarms = useMemo(
-    () => [...s.alarms].sort((a, b) => Date.parse(b.time) - Date.parse(a.time)).slice(0, 6),
-    [s.alarms],
-  );
-  /** 告警按级别聚合（用于小徽标） */
-  const alarmByLevel = useMemo(() => {
-    const m: Record<string, number> = {};
-    s.alarms.forEach((a) => (m[a.level] = (m[a.level] || 0) + 1));
-    return m;
-  }, [s.alarms]);
 
   const allClear =
     !openAlarms.length &&
@@ -241,12 +250,26 @@ export function Workbench() {
       title: "未处理告警",
       empty: "没有未处理告警",
       group: "告警管理",
+      // 标题计数保持「未处理告警总数」，与顶部 KPI 同口径；标签页只过滤列表
       count: openAlarms.length,
       items: (
+        <>
+          {/* 标签页：业务预警 / 机器人预警（与「告警记录」「告警中心」同一组口径） */}
+          <div className="segmented" style={{ marginBottom: 12 }}>
+            {ALARM_CLASS_MAINS.map((m) => (
+              <button
+                key={m}
+                className={alarmMain === m ? "active" : ""}
+                onClick={() => SETALARMMAIN(m)}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
         <ul className="todo-list">
-          {!openAlarms.length && <TodoEmpty text="没有未处理告警" />}
+          {!alarmList.length && <TodoEmpty text={`没有未处理的${alarmMain}`} />}
           {groupTodo(
-            openAlarms,
+            alarmList,
             (a) => a.level,
             (a) => (
               <Todo
@@ -270,6 +293,7 @@ export function Workbench() {
             ALARM_LEVELS,
           )}
         </ul>
+        </>
       ),
     },
     {
@@ -463,7 +487,7 @@ export function Workbench() {
         }))}
       />
 
-      {/* 仪表盘主区：三栏布局填充页面空白 —— 机器人状态 / 今日巡检 / 最近告警 */}
+      {/* 仪表盘主区：两栏布局填充页面空白 —— 机器人状态总览 / 今日巡检概览 */}
       <section className="wb-dashboard">
         {/* 左：机器人状态总览 */}
         <div className="wb-dash-col wb-robots">
@@ -488,9 +512,9 @@ export function Workbench() {
               </span>
             ))}
           </div>
-          {/* 机器人列表：每台一行，点击进详情 */}
+          {/* 机器人列表：需关注优先、最多 6 台，余量看「查看全部」（列表内部滚动兜底） */}
           <ul className="wb-robot-list">
-            {s.robots.map((r) => {
+            {dashRobots.map((r) => {
               const map = s.maps.find((m) => m.id === r.mapId);
               const currentTask = r.current
                 ? s.tasks.find((t) => t.id === r.current)
@@ -529,6 +553,12 @@ export function Workbench() {
               );
             })}
           </ul>
+          {/* 余量提示：首页只露前几台，剩余走「查看全部」进机器台账 */}
+          {s.robots.length > dashRobots.length && (
+            <button className="wb-dash-more wb-robot-more" onClick={() => go("robots")}>
+              还有 {s.robots.length - dashRobots.length} 台未展示 · 查看全部
+            </button>
+          )}
         </div>
 
         {/* 中：今日巡检概览 */}
@@ -608,52 +638,6 @@ export function Workbench() {
           )}
         </div>
 
-        {/* 右：最近告警 */}
-        <div className="wb-dash-col wb-alarms">
-          <div className="wb-dash-head">
-            <div className="wb-dash-head-title">
-              <BellRing size={15} />
-              最近告警
-            </div>
-            <button className="wb-dash-more" onClick={() => go("alarms")}>
-              查看全部
-            </button>
-          </div>
-          {/* 级别聚合徽标：一级高亮红 */}
-          <div className="wb-alarm-badges">
-            {ALARM_LEVELS.map((lv) => (
-              <span
-                key={lv}
-                className={`wb-alarm-badge lv-${lv}`}
-                onClick={() => go("alarms")}
-              >
-                <b>{alarmByLevel[lv] || 0}</b>
-                <small>{lv}</small>
-              </span>
-            ))}
-          </div>
-          {/* 时间轴式列表 */}
-          <ul className="wb-alarm-list">
-            {!recentAlarms.length && <Note>当前无告警记录。</Note>}
-            {recentAlarms.map((a) => (
-              <li
-                key={a.id}
-                className={`wb-alarm-item lv-${a.level}`}
-                onClick={() => go("alarm", a.id)}
-                title="点击进入告警详情"
-              >
-                <span className="wb-alarm-dot" />
-                <div>
-                  <b>{a.name}</b>
-                  <small>
-                    {shortTime(a.time)} · <Badge>{a.level}</Badge>
-                    {a.handledAt ? "已处理" : "未处理"}
-                  </small>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
       </section>
 
       {allClear && <Note>当前没有待处理事项，巡检业务已全部闭环。</Note>}

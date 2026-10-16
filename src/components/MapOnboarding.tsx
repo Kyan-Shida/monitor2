@@ -21,7 +21,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
   const m = s.maps.find((x) => x.id === mapId)!;
   const points = s.points.filter((p) => p.mapId === m.id && p.state !== "停用");
   const robots = s.robots.filter((r) => r.region === m.region);
-  const [step, setStep] = useState(m.state === "已发布" ? 2 : points.length ? 1 : 0);
+  const [step, setStep] = useState(m.syncState === "已同步" ? 2 : points.length ? 1 : 0);
   const [rid, setRid] = useState(robots.find((r) => r.state === "空闲")?.id || robots[0]?.id || "");
   const r = robots.find((x) => x.id === rid);
   const aligned = (robot: (typeof robots)[number] | undefined) =>
@@ -36,7 +36,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
   const facts = [
     m.image ? "底图已上传" : "底图待上传",
     `${points.length} 个点位`,
-    m.state,
+    m.syncState,
     `${robots.filter(aligned).length} / ${robots.length} 版本一致`,
   ];
   return (
@@ -44,7 +44,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
       <div className="context-bar">
         <b>{m.name} · 上线工作台</b>
         <span>{mapVer(m.version)}</span>
-        <Badge>{m.state}</Badge>
+        <Badge>{m.syncState}</Badge>
         <Btn onClick={() => go("map-detail", m.id)}>地图详情</Btn>
       </div>
       <nav className="onboarding-steps" aria-label="地图上线步骤">
@@ -91,7 +91,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
           />
           <Btn
             primary
-            disabled={m.state === "已发布"}
+            disabled={m.syncState === "已同步"}
             onClick={() => {
               if (act({ type: "PUBLISH", id: m.id })) setStep(3);
             }}
@@ -116,7 +116,7 @@ export function MapOnboarding({ mapId }: { mapId: string }) {
             rows={robots.map((r) => [
               r.name,
               mapVer(r.mapVersion),
-              <Badge>{m.state === "已发布" && aligned(r) ? "地图上线完成" : "待完成上线"}</Badge>,
+              <Badge>{m.syncState === "已同步" && aligned(r) ? "地图上线完成" : "待完成上线"}</Badge>,
             ])}
           />
         </Panel>

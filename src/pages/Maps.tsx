@@ -12,7 +12,7 @@
  */
 import { useEffect, useState } from "react";
 import { useStore } from "../data/store";
-import { go, useViewState } from "../data/navigation";
+import { go, usePageSize, useViewState } from "../data/navigation";
 import {
   Btn,
   Badge,
@@ -24,10 +24,11 @@ import {
   Modal,
 } from "../components/UI";
 import { Pager } from "../components/Business";
+import { FilterPanel } from "../components/FilterPanel";
 import { MapOnboarding } from "../components/MapOnboarding";
 import { MapSurveyPanel } from "../components/MapSurveyPanel";
-import { MapBindPicker } from "../components/MapBindPicker";
 import { MapDispatch } from "../components/MapDispatch";
+import { DeleteConfirm } from "../components/ListDelete";
 import { SAMPLE_MAP_FILE, SAMPLE_MAP_IMAGE } from "../data/sampleMap";
 import { MAP_IMAGE_MAX_SIZE } from "../data/types";
 import type { MapAsset, MapPacket } from "../data/types";
@@ -43,8 +44,6 @@ const LEGACY_TABS: Record<string, string> = {
   survey: "建图与坐标（后置能力）",
   changes: "地图 / 点位变化管理",
 };
-/** 地图列表每页条数（原型固定值，与其余列表页一致的操作方式） */
-const PAGE_SIZE = 8;
 
 export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const { s, act } = useStore();
@@ -64,6 +63,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     [pid, P] = useState("P002"),
     /** 导入地图前的二次确认开关 */
     [confirmImport, CI] = useState(false);
+    /** 更新地图时的目标地图 id：非空表示「重新上传 SLAM 底图」模式（否则为新建地图） */
+    const [importTarget, IT] = useState("");
   /** 「新增地图」：选中的在线机器人 / 数据包回传进度 / 是否正在回传 */
   const [scanRid, SRID] = useState("");
   const [pct, SETPCT] = useState(0);
@@ -74,14 +75,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const [pkRegion, PKR] = useState("一期罐区");
   /** 卡片「⋯」：当前打开更多操作的地图 id */
   const [moreId, MORED] = useState("");
-  /** 绑定机器狗弹窗：打开时等于目标地图 id，空串则关闭 */
-  const [bindMapId, SET_BIND] = useState("");
   /** 地图下发弹窗：打开时等于目标地图 id，空串则关闭 */
   const [dispatchMapId, SET_DISPATCH] = useState("");
-  /** 绑定弹窗模式：picker = 导航/编辑单选入口；detail = 徽章下拉（多选+已绑定展示） */
-  const [bindMode, SET_BIND_MODE] = useState<"picker" | "detail">("picker");
-  /** 弹窗触发者：nav = 导航按钮；edit = 编辑按钮；detail = 徽章下拉 */
-  const [bindAction, SET_BIND_ACTION] = useState<"nav" | "edit" | "detail">("detail");
   /** 重命名弹窗：地图或数据包（kind 区分） */
   const [rename, RN] = useState<{
     kind: "map" | "packet";
@@ -94,7 +89,38 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const [query, Q] = useViewState("maps.query", ""),
     [regionF, RF] = useViewState("maps.filter.region", "全部"),
     [stateF, SF] = useViewState("maps.filter.state", "全部"),
-    [pager, PG] = useViewState("maps.page", 1);
+    [pager, PG] = useViewState("maps.page", 1),
+    /** 每页条数：全站统一走 usePageSize（默认 5 条） */
+    [pageSize, SETPAGESIZE] = usePageSize("maps.size");
+  /** 列表块筛选：展开态 + 草稿条件（点「查询」才写回生效值，与设备台账同款） */
+  const [filterOpen, SETFILTEROPEN] = useState(false);
+  const [draft, DRAFT] = useState({ region: regionF, state: stateF, q: query });
+  /** 已生效的筛选条件数（「筛选」按钮上的计数） */
+  const filterCount =
+    (regionF !== "全部" ? 1 : 0) +
+    (stateF !== "全部" ? 1 : 0) +
+    (query.trim() ? 1 : 0);
+  /** 展开筛选面板：用当前生效值填充草稿 */
+  function toggleFilter() {
+    if (!filterOpen) DRAFT({ region: regionF, state: stateF, q: query });
+    SETFILTEROPEN(!filterOpen);
+  }
+  /** 查询：草稿写回生效值并收起面板（列表回到第 1 页） */
+  function applyFilter() {
+    RF(draft.region);
+    SF(draft.state);
+    Q(draft.q);
+    PG(1);
+    SETFILTEROPEN(false);
+  }
+  /** 重置：清空草稿并立即生效 */
+  function resetFilter() {
+    DRAFT({ region: "全部", state: "全部", q: "" });
+    RF("全部");
+    SF("全部");
+    Q("");
+    PG(1);
+  }
 
   /** 在线机器人（非离线）：只有在线机器才能扫描回传数据包 */
   const onlineRobots = s.robots.filter((r) => r.state !== "离线");
@@ -135,7 +161,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     C("sample-multimodal.pcd");
     V("sample-video.mp4");
   }
-  /** 二次确认通过后真正执行导入：把表单内容创建为一张「未发布」地图 */
+  /** 二次确认通过后真正执行导入 / 更新：带 importTarget 时为「重新上传 SLAM 底图」更新已有地图 */
   function doImport() {
     if (
       act({
@@ -146,10 +172,12 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         image,
         cloud,
         video,
+        ...(importTarget ? { id: importTarget } : {}),
       })
     ) {
       CI(false);
       M("");
+      IT("");
     }
   }
   /** 选择本地地图图片：读为底图（地图是纯点云，上传不携带任何点位 / 业务信息） */
@@ -246,73 +274,76 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     );
 
   const regions = ["全部", ...new Set(s.maps.map((x) => x.region))];
-  // 状态是派生值：未发布 = 当前版本还没下发给所有旧版本机器（新图从未下发也算）；已发布 = 已下发到位
-  const states = ["全部", "未发布", "已发布"];
+  // 同步状态是派生值：未同步 = 当前版本还没下发给所有旧版本机器（新图从未下发也算）；已同步 = 已下发到位
+  const states = ["全部", "未同步", "已同步"];
   const kw = query.trim();
   const list = s.maps.filter(
     (x) =>
       (!kw || (x.name + x.id + x.region).includes(kw)) &&
       (regionF === "全部" || x.region === regionF) &&
-      (stateF === "全部" || x.state === stateF),
+      (stateF === "全部" || x.syncState === stateF),
   );
-  const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(list.length / pageSize));
   const cur = Math.min(pager || 1, pages);
-  const rows = list.slice((cur - 1) * PAGE_SIZE, cur * PAGE_SIZE);
+  const rows = list.slice((cur - 1) * pageSize, cur * pageSize);
 
   return (
     <>
-      <div className="toolbar">
-        <div className="actions">
-          <label className="inline-filter">
-            <span>区域：</span>
-            <select value={regionF} onChange={(e) => RF(e.target.value)}>
-              {regions.map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-filter">
-            <span>状态：</span>
-            <select value={stateF} onChange={(e) => SF(e.target.value)}>
-              {states.map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          <input
-            placeholder="搜索地图名称 / 编号 / 区域"
-            value={query}
-            onChange={(e) => Q(e.target.value)}
-          />
-        </div>
-        <div className="actions">
-          <Btn
-            onClick={() => {
-              SRID("");
-              SETPCT(0);
-              SETSCANNING(false);
-              M("scan");
-            }}
-          >
-            ＋ 新增地图
-          </Btn>
-          <Btn
-            primary
-            onClick={() => {
-              M("import");
-              ER("");
-              IMG("");
-              F("");
-            }}
-          >
-            ＋ 导入地图
-          </Btn>
-        </div>
-      </div>
+      {/* 列表块：计数 + 筛选 / 新增 / 导入 都收在面板头，条件展开在面板体内（与设备台账同款） */}
       <Panel
+        className="panel-filters-wrap"
         title="地图列表"
-        extra={<span>{packets.length + list.length} 张</span>}
+        extra={
+          <div className="actions">
+            <span className="panel-count">
+              {packets.length + list.length} 张
+            </span>
+            <Btn onClick={toggleFilter}>
+              {filterOpen ? "收起筛选" : "筛选"}
+              {filterCount ? `（${filterCount}）` : ""}
+            </Btn>
+            <Btn
+              onClick={() => {
+                SRID("");
+                SETPCT(0);
+                SETSCANNING(false);
+                M("scan");
+              }}
+            >
+              ＋ 新增地图
+            </Btn>
+            <Btn
+              primary
+              onClick={() => {
+                M("import");
+                IT("");
+                ER("");
+                IMG("");
+                F("");
+              }}
+            >
+              ＋ 导入地图
+            </Btn>
+          </div>
+        }
       >
+        {filterOpen && (
+          <FilterPanel
+            fields={[
+              { key: "region", label: "区域", options: regions },
+              { key: "state", label: "同步状态", options: states },
+              {
+                key: "q",
+                label: "搜索地图",
+                placeholder: "名称 / 编号 / 区域",
+              },
+            ]}
+            value={draft}
+            onChange={(next) => DRAFT({ ...draft, ...next })}
+            onSearch={applyFilter}
+            onReset={resetFilter}
+          />
+        )}
         {!packets.length && !rows.length ? (
           <Empty>
             还没有地图。点「＋ 新增地图」让在线机器人扫描回传数据包，或「＋ 导入地图」上传现成的纯点云地图。
@@ -356,12 +387,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             {rows.map((x) => {
               const bound = s.robots.filter((r) => r.mapId === x.id);
               const outdated = bound.filter((r) => r.mapVersion < x.version);
-              const TOP_N = 3;
-              const shown = bound.slice(0, TOP_N);
-              const extra = bound.length - TOP_N;
-              const dispatchable = s.robots.filter(
-                (r) => !r.region || r.region === x.region,
-              );
               return (
                 <article className="map-card" key={x.id}>
                   <div className="map-card-img">
@@ -371,7 +396,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                     <div className="map-card-name">
                       <b>{x.name}</b>
                       <small>
-                        {x.region} · V{x.version} · {x.state}
+                        {x.region} · V{x.version} · {x.syncState}
                         {x.updatedAt ? ` · ${x.updatedAt}` : ""}
                         {outdated.length ? (
                           <span className="outdated">
@@ -382,69 +407,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                         )}
                       </small>
                     </div>
-                    <button
-                      type="button"
-                      className={
-                        "map-card-rovers" + (bound.length ? "" : " empty")
-                      }
-                      onClick={() => {
-                        SET_BIND(x.id);
-                        SET_BIND_MODE("detail");
-                        SET_BIND_ACTION("detail");
-                      }}
-                      title={
-                        bound.length
-                          ? `已绑定 ${bound.length} 台 · 点击查看绑定详情`
-                          : `未绑定 · 点击前往地图下发`
-                      }
-                    >
-                      {bound.length === 0 ? (
-                        <span className="rover-chip empty">未绑定设备 ▾</span>
-                      ) : (
-                        <>
-                          {shown.map((r) => (
-                            <span
-                              key={r.id}
-                              className={
-                                "rover-chip" +
-                                (r.mapVersion < x.version ? " outdated" : "")
-                              }
-                            >
-                              🐕 {r.name.slice(-2)} V{r.mapVersion}
-                              {r.mapVersion < x.version
-                                ? `↓V${x.version}`
-                                : ""}
-                            </span>
-                          ))}
-                          {extra > 0 && (
-                            <span className="rover-chip muted">+{extra}</span>
-                          )}
-                        </>
-                      )}
-                    </button>
                     <div className="map-card-actions">
-                      <Btn
-                        small
-                        title="选择一台已绑定本地图的机器人设备去跑路线"
-                        onClick={() => {
-                          SET_BIND(x.id);
-                          SET_BIND_MODE("picker");
-                          SET_BIND_ACTION("nav");
-                        }}
-                      >
-                        导航
-                      </Btn>
-                      <Btn
-                        small
-                        title="选择一台已绑定本地图的机器人设备，带实时位姿进入标定工作台"
-                        onClick={() => {
-                          SET_BIND(x.id);
-                          SET_BIND_MODE("picker");
-                          SET_BIND_ACTION("edit");
-                        }}
-                      >
-                        编辑
-                      </Btn>
                       <Btn
                         small
                         title="把本地图下发给所选机器人设备，并同步到机器人端"
@@ -460,7 +423,16 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             })}
           </div>
         )}
-        <Pager page={cur} count={list.length} size={PAGE_SIZE} onChange={PG} />
+        <Pager
+          page={cur}
+          count={list.length}
+          size={pageSize}
+          onChange={PG}
+          onSize={(n) => {
+            SETPAGESIZE(n);
+            PG(1);
+          }}
+        />
       </Panel>
 
       {modal === "scan" && (
@@ -527,8 +499,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         <Modal title="构建地图" onClose={() => PKT(null)}>
           <Note>
             数据包「{packet.name}」来自 {packet.robotId}（{packet.at}）。
-            填写地图名称与所属区域后，它将作为一张<b>可标定的 SLAM 地图</b>进入列表——
-            可进「编辑」在像素地图上打点、连线成路网，并按分辨率 / 原点做像素 → 全局坐标换算。
+            填写地图名称与所属区域后，它将作为一张<b>可标定的 SLAM 地图</b>进入列表，
+            其路网与定位点由标定工作台维护（按分辨率 / 原点做像素 → 全局坐标换算）。
           </Note>
           <Field label="地图名称">
             <input
@@ -567,7 +539,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
 
       {/*
         数据包卡片「⋯」：重命名 / 构建地图 / 删除
-        @description 「构建地图」把数据包转成可标定的 SLAM 地图，之后进「编辑」打点 / 连线
+        @description 「构建地图」把数据包转成可标定的 SLAM 地图（路网与定位点在标定工作台维护）
       */}
       {morePacket && (
         <Modal
@@ -639,6 +611,24 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               {moreMap.status === "停用" ? "启用" : "停用"}
             </Btn>
             <Btn
+              onClick={() => {
+                const x = moreMap;
+                MORED("");
+                N(x.name);
+                RG(x.region);
+                IMG("");
+                F("");
+                C("");
+                V("");
+                ER("");
+                CI(false);
+                IT(x.id);
+                M("import");
+              }}
+            >
+              更新地图
+            </Btn>
+            <Btn
               danger
               onClick={() => {
                 const x = moreMap;
@@ -702,54 +692,44 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         </Modal>
       )}
 
-      {/* 删除地图：二次确认（图下仍有巡检点时由引擎拦截） */}
-      {delMap && (
-        <Modal title={`删除地图「${delMap.name}」`} onClose={() => DELM(null)}>
-          <p>
-            删除后该地图及其标定数据、下发记录一并移除；图下仍有巡检点时不可删除。
-          </p>
-          <div className="modal-actions">
-            <Btn onClick={() => DELM(null)}>取消</Btn>
-            <Btn
-              danger
-              onClick={() => {
-                const ok = act({ type: "DELETE_MAP", id: delMap.id });
-                if (ok) DELM(null);
-              }}
-            >
-              确认删除
-            </Btn>
-          </div>
-        </Modal>
-      )}
+      {/* 删除地图：二次确认（通用组件；图下仍有巡检点时由引擎拦截） */}
+      <DeleteConfirm
+        state={
+          delMap
+            ? {
+                title: `删除地图「${delMap.name}」`,
+                text: "删除后该地图及其标定数据、下发记录一并移除；图下仍有巡检点时不可删除。",
+                run: () => act({ type: "DELETE_MAP", id: delMap.id }),
+              }
+            : null
+        }
+        onClose={() => DELM(null)}
+      />
 
-      {/* 删除数据包（尚未成为地图）：二次确认 */}
-      {delPacket && (
-        <Modal
-          title={`删除数据包「${delPacket.name}」`}
-          onClose={() => DELPKT(null)}
-        >
-          <p>该数据包尚未成为地图，删除后不可恢复。</p>
-          <div className="modal-actions">
-            <Btn onClick={() => DELPKT(null)}>取消</Btn>
-            <Btn
-              danger
-              onClick={() => {
-                act({ type: "DELETE_MAP_PACKET", id: delPacket.id });
-                DELPKT(null);
-              }}
-            >
-              确认删除
-            </Btn>
-          </div>
-        </Modal>
-      )}
+      {/* 删除数据包（尚未成为地图）：二次确认（通用组件） */}
+      <DeleteConfirm
+        state={
+          delPacket
+            ? {
+                title: `删除数据包「${delPacket.name}」`,
+                text: "该数据包尚未成为地图，删除后不可恢复。",
+                run: () => {
+                  act({ type: "DELETE_MAP_PACKET", id: delPacket.id });
+                },
+              }
+            : null
+        }
+        onClose={() => DELPKT(null)}
+      />
 
       {modal === "import" && (
         <Modal
-          title="导入地图"
+          title={importTarget ? `更新地图 · ${name}` : "导入地图"}
           wide
-          onClose={() => M("")}
+          onClose={() => {
+            M("");
+            IT("");
+          }}
         >
           <Field label="地图名称">
             <input
@@ -813,17 +793,21 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               disabled={!image || !name.trim()}
               onClick={() => CI(true)}
             >
-              导入地图
+              {importTarget ? "更新地图" : "导入地图"}
             </Btn>
           </div>
         </Modal>
       )}
 
       {modal === "import" && confirmImport && (
-        <Modal title="确认导入地图" onClose={() => CI(false)}>
+        <Modal
+          title={importTarget ? "确认更新地图" : "确认导入地图"}
+          onClose={() => CI(false)}
+        >
           <Table
             heads={["项目", "内容"]}
             rows={[
+              ...(importTarget ? [["目标地图", importTarget]] : []),
               ["地图名称", name || "—"],
               ["区域", region || "—"],
               ["底图", image ? "已上传" : "未上传"],
@@ -832,39 +816,11 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           <div className="modal-actions">
             <Btn onClick={() => CI(false)}>返回修改</Btn>
             <Btn primary onClick={doImport}>
-              确认导入
+              {importTarget ? "确认更新" : "确认导入"}
             </Btn>
           </div>
         </Modal>
       )}
-      {bindMapId && s.maps.find((x) => x.id === bindMapId) ? (
-        <MapBindPicker
-          map={s.maps.find((x) => x.id === bindMapId)!}
-          mode={bindMode}
-          onClose={() => SET_BIND("")}
-          onAfter={(rid) => {
-            const mid = bindMapId;
-            const action = bindAction;
-            SET_BIND("");
-            if (action === "edit") {
-              // 记录所选机器狗：标定页「实时位姿」优先使用它
-              try {
-                sessionStorage.setItem("view:calib.roverId", JSON.stringify(rid));
-              } catch {
-                /* 存储不可用（隐私模式）时降级为自动匹配 */
-              }
-              go("map-calibrate", mid);
-            } else {
-              go("map-navigate", mid, rid);
-            }
-          }}
-          onDispatch={() => {
-            const mid = bindMapId;
-            SET_BIND("");
-            SET_DISPATCH(mid);
-          }}
-        />
-      ) : null}
     </>
   );
 

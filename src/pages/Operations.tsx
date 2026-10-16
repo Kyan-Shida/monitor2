@@ -1,27 +1,37 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
-import { go, useViewState } from "../data/navigation";
-import { Btn, Badge, Panel, Table, Note } from "../components/UI";
+import { go, usePageSize, useViewState } from "../data/navigation";
+import { Btn, Badge, Panel, Table, Note, Empty } from "../components/UI";
 import { profileOf } from "../data/deviceProfile";
-import { capabilityMatrix } from "../data/robotCapabilities";
-import { ObjectLink, Kpis, EventTimeline, Pager } from "../components/Business";
+import { capabilityMatrix, componentStatuses } from "../data/robotCapabilities";
+import { ObjectLink, Kpis, Pager } from "../components/Business";
+import { FilterPanel } from "../components/FilterPanel";
 import { MapCanvas } from "../components/MapCanvas";
-import { Video } from "../components/Video";
 import { Operations as Legacy } from "./OperationsLegacy";
 import { ControlConsole } from "./Execution";
+import type { Robot } from "../data/types";
 import {
   currentTask,
   queueFor,
-  robotQueue,
   stageOf,
   fmtTime,
   robotColors,
   terminal,
 } from "../data/selectors";
+/** 机器人状态筛选选项（台账列表与页内筛选同一份名单） */
+const ROBOT_STATES = [
+  "全部",
+  "空闲",
+  "执行中",
+  "充电",
+  "人工接管",
+  "故障",
+  "离线",
+];
 export function Operations({
   page,
   id,
-  tab = "monitor",
+  tab = "tasks",
 }: {
   page: string;
   id?: string;
@@ -32,9 +42,21 @@ export function Operations({
   const [q, Q] = useViewState("robots.query", ""),
     [status, ST] = useViewState("robots.status", "全部"),
     [pn, PN] = useViewState("robots.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [pageSize, SETPAGESIZE] = usePageSize("robots.size");
+  /** 筛选草稿：复用全站 FilterPanel，点「查询」才写回生效值 */
+  const [draft, DRAFT] = useState({ q, status });
+  /** 筛选面板展开态：默认收起，由 panel 头部的「筛选」按钮切换 */
+  const [filterOpen, SETFILTEROPEN] = useState(false);
+  /** 已生效的筛选条件数（「筛选」按钮上的计数） */
+  const filterCount = (q.trim() ? 1 : 0) + (status !== "全部" ? 1 : 0);
+  /** 展开 / 收起筛选面板：展开时用当前生效值刷新草稿 */
+  const toggleFilter = () => {
+    if (!filterOpen) DRAFT({ q, status });
+    SETFILTEROPEN(!filterOpen);
+  };
   const r = s.robots.find((r) => r.id === id) || s.robots[0];
   const t = currentTask(s, r);
-  const queued = queueFor(s, r.id);
   if (page === "calendar")
     return <Legacy page={page} id={id} />;
   if (page === "robots") {
@@ -43,41 +65,58 @@ export function Operations({
         (r.id + r.name + r.region).includes(q) &&
         (status === "全部" || r.state === status),
     );
+    /** 查询：草稿写回生效值，并收起筛选面板（列表回到第 1 页） */
+    const applyFilter = () => {
+      Q(draft.q);
+      ST(draft.status);
+      PN(1);
+      SETFILTEROPEN(false);
+    };
+    /** 重置：清空条件并立即生效（面板保持展开，便于继续调条件） */
+    const resetFilter = () => {
+      DRAFT({ q: "", status: "全部" });
+      Q("");
+      ST("全部");
+      PN(1);
+    };
     return (
       <>
-        <div className="filter-bar">
-          <input
-            aria-label="机器人搜索"
-            placeholder="机器人 / 区域"
-            value={q}
-            onChange={(e) => {
-              Q(e.target.value);
-              PN(1);
-            }}
-          />
-          <select
-            aria-label="机器人状态"
-            value={status}
-            onChange={(e) => {
-              ST(e.target.value);
-              PN(1);
-            }}
-          >
-            {["全部", "空闲", "执行中", "充电", "人工接管", "故障", "离线"].map(
-              (x) => (
-                <option key={x}>{x}</option>
-              ),
-            )}
-          </select>
-          {/* ROB-01：新增机器人入口放在台账列表内（robot-new 为内置页，带返回）；
-              ROB-03：台账固定为列表视图，运行视图（卡片）已下线 */}
-          <Btn primary onClick={() => go("robot-new")}>
-            ＋ 新增机器人
-          </Btn>
-        </div>
-        {/* ROB-03：台账固定为列表视图（原「运行视图」卡片已下线）；
-            运行监测 / 机器人能力两个内置页的入口固定在行尾「操作」列，另可从「能力摘要」直入能力页 */}
-        <Panel title="机器人实时状态">
+        {/* ROB-01：新增机器人入口收在列表右侧（robot-new 为内置页，带返回）；
+            ROB-03：台账固定为列表视图（原「运行视图」卡片已下线）；
+            详情页内含机器能力标签页，故行内不再单列「能力」入口。
+            列表块：筛选 / 新增 / 分页都收在同一个面板内（与设备台账同款） */}
+        <Panel
+          className="panel-filters-wrap"
+          title="机器人实时状态"
+          extra={
+            <div className="actions">
+              {/* 筛选：与设备台账 / 巡检目标台账同一套 FilterPanel（草稿条件，点「查询」才生效） */}
+              <Btn onClick={toggleFilter}>
+                {filterOpen ? "收起筛选" : "筛选"}
+                {filterCount ? `（${filterCount}）` : ""}
+              </Btn>
+              <Btn primary onClick={() => go("robot-new")}>
+                ＋ 新增机器人
+              </Btn>
+            </div>
+          }
+        >
+          {filterOpen && (
+            <FilterPanel
+              fields={[
+                {
+                  key: "q",
+                  label: "机器人 / 区域",
+                  placeholder: "名称 / 区域关键字",
+                },
+                { key: "status", label: "当前状态", options: ROBOT_STATES },
+              ]}
+              value={draft}
+              onChange={(next) => DRAFT({ ...draft, ...next })}
+              onSearch={applyFilter}
+              onReset={resetFilter}
+            />
+          )}
           <Table
             heads={[
               "机器名称",
@@ -86,7 +125,7 @@ export function Operations({
               "待执行",
               "操作",
             ]}
-            rows={rows.slice((pn - 1) * 6, pn * 6).map((r) => [
+            rows={rows.slice((pn - 1) * pageSize, pn * pageSize).map((r) => [
               <ObjectLink type="robot" id={r.id}>
                 {r.name}
               </ObjectLink>,
@@ -101,12 +140,20 @@ export function Operations({
               ),
               <div className="actions">
                 <Btn onClick={() => go("robot", r.id)}>详情</Btn>
-                <Btn onClick={() => go("health", r.id)}>能力</Btn>
               </div>,
             ])}
           />
+          <Pager
+            page={pn}
+            count={rows.length}
+            size={pageSize}
+            onChange={PN}
+            onSize={(n) => {
+              SETPAGESIZE(n);
+              PN(1);
+            }}
+          />
         </Panel>
-        <Pager page={pn} count={rows.length} onChange={PN} />
       </>
     );
   }
@@ -273,7 +320,9 @@ export function Operations({
         </>
       );
   }
-  if (page === "robot")
+  if (page === "robot") {
+    /** 标签页兜底：运行监测 / 运行记录已下线，旧深链（?tab=monitor、?tab=records）一律回到历史任务 */
+    const rTab = tab === "ability" ? "ability" : "tasks";
     return (
       <>
         <div className="robot-fixed-summary">
@@ -296,12 +345,11 @@ export function Operations({
         </div>
         <div className="object-tabs">
           {[
-            ["monitor", "运行监测"],
-            ["tasks", "任务"],
-            ["records", "运行记录"],
+            ["tasks", "历史任务"],
+            ["ability", "机器参数"],
           ].map(([k, n]) => (
             <button
-              className={tab === k ? "active" : ""}
+              className={rTab === k ? "active" : ""}
               key={k}
               onClick={() => go("robot", r.id, k)}
             >
@@ -309,88 +357,8 @@ export function Operations({
             </button>
           ))}
         </div>
-        {tab === "monitor" && (
+        {rTab === "tasks" && (
           <>
-            <div className="workbench-surface robot-live">
-              <section>
-                <h3>实时位置 / {r.region || "未分配区域"}</h3>
-                <MapCanvas
-                  points={s.points.filter((p) => p.mapId === r.mapId)}
-                  robots={[r]}
-                  onRobot={(id) => go("robot", id)}
-                  onSelect={(tid) =>
-                    go("point", s.points.find((p) => p.targetId === tid)?.id)
-                  }
-                />
-              </section>
-              <section>
-                <h3>实时视频 / 当前目标</h3>
-                <Video label={t?.items[t.index]?.name || "现场巡视画面"} />
-              </section>
-              <section>
-                <h3>当前执行上下文</h3>
-                <dl>
-                  <dt>任务</dt>
-                  <dd>
-                    <ObjectLink type="execution" id={t?.id}>
-                      {t?.name || "当前无任务"}
-                    </ObjectLink>
-                  </dd>
-                  <dt>业务点位</dt>
-                  <dd>
-                    <ObjectLink type="point" id={t?.items[t.index]?.id}>
-                      {t?.items[t.index]?.name || "—"}
-                    </ObjectLink>
-                  </dd>
-                  <dt>执行阶段</dt>
-                  <dd>
-                    <Badge>{stageOf(t)}</Badge>
-                  </dd>
-                  <dt>有效检测项</dt>
-                  <dd>
-                    {t?.done.length || 0} / {t?.items.length || 0}
-                  </dd>
-                  <dt>排队</dt>
-                  <dd>
-                    <ObjectLink type="queue" id={r.id}>
-                      {queued.length} 项待执行
-                    </ObjectLink>
-                  </dd>
-                </dl>
-                <div className="actions">
-                  <Btn
-                    primary
-                    disabled={!t}
-                    onClick={() => go("execution-monitor", t?.id)}
-                  >
-                    进入实时执行监控
-                  </Btn>
-                </div>
-              </section>
-            </div>
-          </>
-        )}
-        {tab === "tasks" && (
-          <>
-            <Panel
-              title="当前任务与待执行队列"
-              extra={
-                <Btn onClick={() => go("queue", r.id)}>管理机器人未来队列</Btn>
-              }
-            >
-              {/* 与「设备巡检任务」列表同口径（任务 / 来源 / 状态），并保留队列专属的完成度 */}
-              <Table
-                heads={["任务", "来源", "状态", "完成度"]}
-                rows={robotQueue(s, r).map((x) => [
-                  <ObjectLink type="task-detail" id={x.id}>
-                    {x.name}
-                  </ObjectLink>,
-                  x.source,
-                  <Badge>{x.state}</Badge>,
-                  `${x.done.length}/${x.items.length}`,
-                ])}
-              />
-            </Panel>
             <Panel title="历史任务">
               {/* 与「设备巡检任务」列表同口径；本页已按机器人限定，故省略「机器人」列 */}
               <Table
@@ -426,13 +394,10 @@ export function Operations({
             </Panel>
           </>
         )}
-        {tab === "records" && (
-          <Panel title="故障、接管与任务事件">
-            <EventTimeline robotId={r.id} />
-          </Panel>
-        )}
+        {rTab === "ability" && <RobotCapabilityTab robot={r} />}
       </>
     );
+  }
   const robots = s.robots.filter(
     (r) => region === "全部区域" || r.region === region,
   );
@@ -477,7 +442,10 @@ export function Operations({
                     st === "在线" ? r.state !== "离线" : r.state === st,
                   ).length,
                   action: () => {
-                    ST(st === "在线" ? "全部" : st);
+                    const next = st === "在线" ? "全部" : st;
+                    ST(next);
+                    // 同步筛选草稿：总览跳转到台账后，筛选面板要显示同一个条件
+                    DRAFT({ q: "", status: next });
                     go("robots");
                   },
                 }),
@@ -705,5 +673,127 @@ export function Operations({
         {!running.length && <Note>当前区域没有执行中的任务。</Note>}
       </Panel>
     </>
+  );
+}
+
+/**
+ * 机器人详情 › 机器能力（原「机器人能力」页并入详情）
+ * @description 一处汇总该机器人的硬件（机型 / 固件 / 约束）、软件与算法（本体部署）、
+ *              能力与组件可用性、地图版本与上装配套；数据全部取自后台主数据，不另造口径
+ *              面板排成卡片栅格（同类信息并排、标签—值多列），不再是 5 段纵向长条
+ * @param robot 目标机器人
+ */
+function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
+  const { s } = useStore();
+  const profile = profileOf(r.deviceType);
+  /** 适用该机型且已启用的上装主数据 */
+  const payloads = (s.robotPayloads || []).filter(
+    (p) =>
+      p.state === "启用" && (!p.models.length || p.models.includes(r.deviceType)),
+  );
+  /**
+   * 标签—值网格里的一格（多列自适应，见 styles.css › .cap-kv）
+   * @param wide 取值较长时独占一整行，不与短项挤在一排
+   */
+  const kv = (k: string, v: ReactNode, wide = false) => (
+    <div key={k} className={wide ? "wide" : undefined}>
+      <dt>{k}</dt>
+      <dd>{v}</dd>
+    </div>
+  );
+  return (
+    <div className="cap-grid">
+      {/* 机型与硬件：机型主数据（标签—值网格），通栏 */}
+      <Panel className="cap-span2" title="机型与硬件">
+        <Note>{profile.summary}</Note>
+        <dl className="cap-kv">
+          {kv("机型", r.deviceType)}
+          {kv("所属区域", r.region || "未分配区域")}
+          {kv("固件版本", r.firmware)}
+          {kv(
+            "机型约束",
+            `最低派单电量 ${r.constraints.minBattery}%` +
+              (r.constraints.railSectionId
+                ? ` · 所在区段 ${r.constraints.railSectionId}`
+                : "") +
+              (r.constraints.maxSpeed
+                ? ` · 限速 ${r.constraints.maxSpeed} m/s`
+                : ""),
+            true,
+          )}
+        </dl>
+      </Panel>
+      {/* 组件状态：机器人本体自检（组件 / 传感器健康），口径与能力表同源 */}
+      <Panel className="cap-span2" title="组件状态">
+        <div className="table-scroll">
+          <table className="comp-table">
+            <thead>
+              <tr>
+                <th>组件 / 传感器</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {componentStatuses(r).map((c) => (
+                <tr key={c.name}>
+                  <td>{c.name}</td>
+                  <td>
+                    <span
+                      className={`comp-status ${c.status === "正常" ? "ok" : "bad"}`}
+                    >
+                      {c.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+      <Panel title="能力、组件与业务影响">
+        <Table
+          heads={["能力 / 组件", "可用性", "配备上装", "业务影响"]}
+          rows={capabilityMatrix(s, r).map((c) => [
+            c.key,
+            <Badge key={c.key}>{c.availability}</Badge>,
+            c.payload || <span className="muted">—</span>,
+            c.impact,
+          ])}
+        />
+      </Panel>
+      <Panel title="地图与版本">
+        <dl className="cap-kv">
+          {kv(
+            "地图",
+            <ObjectLink type="maps" id={r.mapId} tab="detail">
+              {r.mapId}
+            </ObjectLink>,
+          )}
+          {kv("空间版本", `V${r.mapVersion}`)}
+          {kv(
+            "最近同步",
+            <Badge>
+              {s.syncs.find((x) => x.robotId === r.id)?.state || "初始激活副本"}
+            </Badge>,
+          )}
+        </dl>
+        <div className="actions">
+          <Btn onClick={() => go("map-detail", r.mapId, "sync")}>
+            版本同步工作台
+          </Btn>
+        </div>
+      </Panel>
+      <Panel title="上装与配套">
+        <Table
+          heads={["上装", "采集方式", "支持动作"]}
+          rows={payloads.map((p) => [
+            p.name,
+            p.abilities.map((a) => a.kind).join(" / "),
+            p.abilities.flatMap((a) => a.actions).join(" / "),
+          ])}
+        />
+        {!payloads.length && <Empty>该机型暂无适用上装。</Empty>}
+      </Panel>
+    </div>
   );
 }

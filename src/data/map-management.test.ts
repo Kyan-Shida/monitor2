@@ -46,7 +46,7 @@ test("标定数据区分来源：随标定文件带入的定位ID vs 平台新�
   assert.equal(added.externalId, undefined);
   assert.equal(added.state, "待确认");
   // 标定不改变地图空间版本与状态
-  assert.equal(s.maps[0].state, "已发布");
+  assert.equal(s.maps[0].syncState, "已同步");
 });
 
 test("轨迹采样点可按地图继续新增，序号按该地图递增", () => {
@@ -97,11 +97,11 @@ test("地图下发支持多选设备批量下发；区域不匹配则整批不�
 test("标定与地图版本解耦：标定不回未发布；修订后下发给所有旧版本机器才回已发布", () => {
   let s = seed();
   const mapId = "MAP-A03";
-  assert.equal(s.maps[0].state, "已发布");
+  assert.equal(s.maps[0].syncState, "已同步");
   const v0 = s.maps[0].version;
   // 标定（新增带定位ID的点）只推进标定数据版本，地图保持已发布
   s = run(s, { type: "ADD_TARGET", mapId, x: 50, y: 50, kind: "仪表" });
-  assert.equal(s.maps[0].state, "已发布");
+  assert.equal(s.maps[0].syncState, "已同步");
   assert.equal(s.maps[0].version, v0);
   // 地图内容修订（重新采集 / 换版）才推进空间版本并回未发布
   s = run(s, {
@@ -115,13 +115,13 @@ test("标定与地图版本解耦：标定不回未发布；修订后下发给�
   s = run(s, { type: "CHANGE_CONFIRM", id: cid });
   s = run(s, { type: "CHANGE_REVISION", id: cid, file: "MAP-A03-m4.map" });
   assert.equal(s.maps[0].version, v0 + 1);
-  assert.equal(s.maps[0].state, "未发布");
+  assert.equal(s.maps[0].syncState, "未同步");
   // 只发给一部分旧版本机器（R01）→ 仍有旧版本机器没收到，保持未发布
   s = run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R01"] });
-  assert.equal(s.maps[0].state, "未发布");
+  assert.equal(s.maps[0].syncState, "未同步");
   // 补齐剩下那台（R02）→ 当前版本已下发给所有旧版本机器 → 已发布
   s = run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R02"] });
-  assert.equal(s.maps[0].state, "已发布");
+  assert.equal(s.maps[0].syncState, "已同步");
   // 两次下发各登记一条"当前版本"记录（新增量，不数 seed 历史）
   assert.equal(
     s.syncs.filter((x) => x.mapId === mapId && x.mapVersion === v0 + 1).length,
@@ -145,7 +145,7 @@ test("标定与地图版本解耦：标定不回未发布；修订后下发给�
 test("地图状态派生口径：新图看「是否下发过」，更新图看「旧版本机器是否全部收到」", () => {
   let s = seed();
   /** 按 id 读当前地图状态（每次动作后重算，所以必须现读） */
-  const stateOf = (id: string) => s.maps.find((m) => m.id === id)!.state;
+  const stateOf = (id: string) => s.maps.find((m) => m.id === id)!.syncState;
 
   /* ── 新图：从未下发过 → 未发布；下发过 → 已发布 ── */
   s = run(s, {
@@ -158,7 +158,7 @@ test("地图状态派生口径：新图看「是否下发过」，更新图看�
   });
   const fresh = s.maps[0];
   assert.equal(fresh.version, 1);
-  assert.equal(fresh.state, "未发布");
+  assert.equal(fresh.syncState, "未同步");
   // 内容备齐（有底图 + 一个已标注点位）也不算发布：从没有机器收到过它
   s = run(s, { type: "ADD_TARGET", mapId: fresh.id, x: 30, y: 40, kind: "仪表" });
   const target = targetsOf(s, fresh.id).at(-1)!;
@@ -171,12 +171,12 @@ test("地图状态派生口径：新图看「是否下发过」，更新图看�
     objects: ["出口压力表"],
     requirement: "可见光拍摄压力表读数",
   });
-  assert.equal(stateOf(fresh.id), "未发布");
+  assert.equal(stateOf(fresh.id), "未同步");
   // 只要下发过 → 已发布（登记下发记录即算，不要求对方已回激活回执）
   s = run(s, { type: "SYNC_BATCH", mapId: fresh.id, robotIds: ["R02"] });
-  assert.equal(stateOf(fresh.id), "已发布");
+  assert.equal(stateOf(fresh.id), "已同步");
   // 逐图派生：新图的状态不牵连老图（老图机器都还在当前版本）
-  assert.equal(stateOf("MAP-A03"), "已发布");
+  assert.equal(stateOf("MAP-A03"), "已同步");
 
   /* ── 更新图：还有机器停在旧版本且没收到当前版本 → 未发布；全部收到 → 已发布 ── */
   const v0 = s.maps.find((m) => m.id === "MAP-A03")!.version;
@@ -186,13 +186,13 @@ test("地图状态派生口径：新图看「是否下发过」，更新图看�
   // 内容变更推进空间版本 → 两台机器都成了"停在旧版本" → 未发布
   s = run(s, { type: "TRACK_RECORD", mapId: "MAP-A03", x: 40, y: 30, kind: "转弯点" });
   assert.equal(s.maps.find((m) => m.id === "MAP-A03")!.version, v0 + 1);
-  assert.equal(stateOf("MAP-A03"), "未发布");
+  assert.equal(stateOf("MAP-A03"), "未同步");
   // 只补一台（R01）→ 还有 R02 没收到当前版本 → 仍未发布
   s = run(s, { type: "SYNC_BATCH", mapId: "MAP-A03", robotIds: ["R01"] });
-  assert.equal(stateOf("MAP-A03"), "未发布");
+  assert.equal(stateOf("MAP-A03"), "未同步");
   // 补齐最后一台（R02）→ 当前版本已发到所有停在旧版本的机器 → 已发布
   s = run(s, { type: "SYNC_BATCH", mapId: "MAP-A03", robotIds: ["R02"] });
-  assert.equal(stateOf("MAP-A03"), "已发布");
+  assert.equal(stateOf("MAP-A03"), "已同步");
 });
 
 test("MAP-02：标定文件解析定位ID → 导入绑定 → 地图重传后按ID重绑 → 支持暂存", () => {
@@ -379,7 +379,7 @@ test("数据包 → 构建地图 → 重命名 / 删除；路网可保存", () =
   assert.equal(s.mapPackets!.length, 0);
   assert.equal(s.maps.length, mapsBefore + 1);
   const built = s.maps[s.maps.length - 1];
-  assert.equal(built.state, "未发布");
+  assert.equal(built.syncState, "未同步");
   assert.equal(built.source, "机器人扫描构建");
   // 重命名地图
   s = run(s, { type: "RENAME_MAP", id: built.id, name: "罐区地图 V1" });

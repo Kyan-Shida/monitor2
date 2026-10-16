@@ -1,22 +1,22 @@
 /**
  * @file alarmKpi.ts
- * @description 告警记录 KPI 的三个划分维度：区域 / 属地 / 设备。
+ * @description 告警记录 KPI 的两个划分维度：区域 / 设备。
  *              口径与「分析与报表 › 指标中心」完全一致（报警准确率 = 已处理中非误报占比；
  *              告警处理率 = 已处理 / 总数），维度值从告警所属巡检点的设备上取：
- *              区域走 `areaNameOf`（区域主数据 / 安装位置前缀），属地走设备主数据的 `territory`。
- * @interaction metrics.ts（口径来源）、deviceMaster.ts（区域 / 属地的唯一口径）、
+ *              区域走 `areaNameOf`（区域主数据 / 安装位置前缀）。
+ * @interaction metrics.ts（口径来源）、deviceMaster.ts（区域的唯一口径）、
  *              pages/Results.tsx（告警记录 › KPI 维度明细表）
  */
-import { areaNameOf, territoryOfDevice } from "./deviceMaster";
+import { areaNameOf } from "./deviceMaster";
 import type { Alarm, DeviceAsset, State } from "./types";
 
 /** 告警 KPI 可切换的划分维度 */
-export const ALARM_KPI_DIMS = ["区域", "属地", "设备"] as const;
+export const ALARM_KPI_DIMS = ["区域", "设备"] as const;
 export type AlarmKpiDim = (typeof ALARM_KPI_DIMS)[number];
 
 /** 一个维度值上的一行 KPI */
 export interface AlarmKpiRow {
-  /** 维度值（区域名称 / 属地单位 / 设备名称） */
+  /** 维度值（区域名称 / 设备名称） */
   key: string;
   /** 告警总数 */
   total: number;
@@ -53,7 +53,7 @@ export function dimValueOfAlarm(s: State, a: Alarm, dim: AlarmKpiDim): string {
   const d = deviceOfAlarm(s, a);
   if (dim === "设备") return d?.name || "机器人本体";
   if (!d) return "未标注设备";
-  return (dim === "区域" ? areaNameOf(s, d) : territoryOfDevice(d)) || "未指定";
+  return areaNameOf(s, d) || "未指定";
 }
 
 /**

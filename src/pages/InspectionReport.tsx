@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { go, useViewState } from "../data/navigation";
+import { go, usePageSize, useViewState } from "../data/navigation";
 import { pointOf, fmtTime, judgeOf, isAbnormal } from "../data/selectors";
 import { Btn, Badge, Panel, Table, Field, Note, Empty, Modal } from "../components/UI";
+import { Pager } from "../components/Business";
 import type { Result } from "../data/types";
 /**
  * 巡检报表：分析与报表 › 巡检报表
@@ -16,11 +17,16 @@ export function InspectionReport() {
   const { s } = useStore();
   const [q, Q] = useViewState("report.q", ""),
     [taskF, TF] = useViewState("report.task", "全部"),
-    [statusF, SF] = useViewState("report.status", "完成");
+    [statusF, SF] = useViewState("report.status", "完成"),
+    [pn, PN] = useViewState("report.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [pageSize, SETPAGESIZE] = usePageSize("report.size");
   // 选中任务（用于导出）：支持单选（勾一个）与多选（勾多个）
   const [selected, SETSEL] = useState<string[]>([]);
   // 多选模式：默认关闭；点顶部「多选」按钮才进入，此时才显示 checkbox 列和全选条
   const [multi, SETMULTI] = useState(false);
+  // 筛选条件展开态：默认收起，点「筛选」才显示（与设备台账同款）
+  const [qOpen, QOPEN] = useState(false);
   // 导出 / 预览弹窗：导出为演示占位（点击提示），预览为只读查看任务全部巡检结果明细
   const [exportOpen, EXPORT] = useState(false);
   const [previewId, PREVIEW] = useState<string | null>(null);
@@ -55,6 +61,11 @@ export function InspectionReport() {
       return kb.localeCompare(ka);
     });
 
+  // 分页切片：筛选后页数可能变少，当前页一律 clamp 到有效范围
+  const pages = Math.max(1, Math.ceil(groups.length / pageSize));
+  const cur = Math.min(Math.max(1, pn), pages);
+  const pageRows = groups.slice((cur - 1) * pageSize, cur * pageSize);
+
   const ids = groups.map(([id]) => id);
   /** 任务可导出条件：有巡检结果即可导出（异常结果如实入报表） */
   const canExportOf = (list: Result[]) => list.length > 0;
@@ -83,9 +94,14 @@ export function InspectionReport() {
   return (
     <>
       <Panel
+        className="panel-filters-wrap"
         title="巡检结果报表"
         extra={
-          <>
+          <div className="actions">
+            {/* 筛选：条件默认收起，点「筛选」才展开（与设备台账同款） */}
+            <Btn onClick={() => QOPEN(!qOpen)}>
+              {qOpen ? "收起筛选" : "筛选"}
+            </Btn>
             <Btn
               onClick={() => {
                 SETMULTI((m) => !m);
@@ -99,35 +115,37 @@ export function InspectionReport() {
                 导出 PDF（{exportIds.length}）
               </Btn>
             )}
-          </>
+          </div>
         }
       >
-        <div className="filter-bar">
-          <Field label="关键词（任务 / 编号 / 机器人）">
-            <input
-              value={q}
-              onChange={(e) => Q(e.target.value)}
-              placeholder="输入关键词"
-            />
-          </Field>
-          <Field label="任务筛选">
-            <select value={taskF} onChange={(e) => TF(e.target.value)}>
-              <option value="全部">全部任务</option>
-              {taskOptions.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}（{t.id}）
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="任务状态">
-            <select value={statusF} onChange={(e) => SF(e.target.value)}>
-              {statuses.map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </Field>
-        </div>
+        {qOpen && (
+          <div className="filter-bar">
+            <Field label="关键词（任务 / 编号 / 机器人）">
+              <input
+                value={q}
+                onChange={(e) => Q(e.target.value)}
+                placeholder="输入关键词"
+              />
+            </Field>
+            <Field label="任务筛选">
+              <select value={taskF} onChange={(e) => TF(e.target.value)}>
+                <option value="全部">全部任务</option>
+                {taskOptions.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}（{t.id}）
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="任务状态">
+              <select value={statusF} onChange={(e) => SF(e.target.value)}>
+                {statuses.map((x) => (
+                  <option key={x}>{x}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
         {multi && (
           <div className="select-bar">
             <span>
@@ -152,7 +170,7 @@ export function InspectionReport() {
                 ? ["", "任务", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]
                 : ["任务", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]
             }
-            rows={groups.map(([taskId, list]) => {
+            rows={pageRows.map(([taskId, list]) => {
               const t = s.tasks.find((x) => x.id === taskId);
               const abn = list.filter(isAbnormal).length;
               const canExport = canExportOf(list);
@@ -182,6 +200,18 @@ export function InspectionReport() {
                   ]
                 : base;
             })}
+          />
+        )}
+        {!!groups.length && (
+          <Pager
+            page={cur}
+            count={groups.length}
+            size={pageSize}
+            onChange={PN}
+            onSize={(n) => {
+              SETPAGESIZE(n);
+              PN(1);
+            }}
           />
         )}
       </Panel>

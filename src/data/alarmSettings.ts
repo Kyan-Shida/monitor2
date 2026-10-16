@@ -3,9 +3,11 @@
  * @description 告警设置（告警管理 › 告警设置）与巡检目标台账「3、告警规则」的共用口径：
  *              · 一个台账只有一个告警设置（就是 `BusinessTarget.alarm`），两个入口读写同一份数据 = 天然同步；
  *              · 告警项字段与台账告警规则一致，**第一条（主告警项）与台账的判定口径同源**
- *                （judge / min / max / expected / level / 声光报警），改任一处另一处同步；
+ *                （judge / min / max / expected / level / 声光报警 / 告警分类 / 触发逻辑），改任一处另一处同步；
  *              · `enabled` 是平台唯一的「告警开关」：停用后该台账只记录结果、不做异常判定；
- *              · 告警类别的启用状态决定可选「告警类型」与告警记录的分类筛选项。
+ *              · 告警分类（引用「告警管理 › 告警类别」的启用分类）与触发逻辑都按告警项单独配，
+ *                台账级 `category / triggerMode / consecutive` 只是主项的镜像（页面无台账级入口）；
+ *              · 告警类别的启用状态决定告警项可选分类与告警记录的分类筛选项。
  * @interaction types.ts（AlarmClass / AlarmItem / BusinessAlarm）、alarmRules.ts（判定口径）、
  *              engine.ts（SAVE_ALARM_SETTING / SAVE_ALARM_CLASS / REMOVE_ALARM_CLASS）、
  *              pages/AlarmClasses.tsx、pages/AlarmSettings.tsx、pages/BusinessTargets.tsx、pages/Results.tsx
@@ -24,7 +26,7 @@ import {
   type Point,
   type State,
 } from "./types";
-import type { AlarmTrigger } from "./alarmTemplates";
+import type { AlarmTrigger } from "./alarmRules";
 
 /**
  * 告警设置所需的最小上下文
@@ -223,10 +225,8 @@ export function mainItemOf(
   const range = t.judge === "数值范围";
   return {
     id: "AI-" + t.id,
-    // 告警分类 = 告警项自己的两档枚举（与台账「告警类型」是两个字段）
+    // 告警分类 = 告警项自己的两档枚举（与台账「告警分类」是两个字段）
     category: itemKindOfTarget(t),
-    // 主项与台账判定口径同源：台账关联了模板就记在第一条上（表格里可换成别的模板或手填）
-    templateId: t.alarm?.templateId,
     envKind: t.alarm?.items?.[0]?.envKind ?? envKindOfTarget(t, detectKind),
     level: t.alarm?.level || "二级",
     judge: t.judge,
@@ -259,14 +259,23 @@ export function settingOf(
       ...it,
       // 告警分类按两档枚举归一化后回显（老缓存里存的是告警类别名称）
       category: itemKindOfItem(t, it),
-      // 主项 = 台账判定口径：老缓存里告警项没有模板引用时，按台账关联的模板回落
-      ...(i === 0 && !it.templateId && t.alarm?.templateId
-        ? { templateId: t.alarm.templateId }
-        : {}),
       // 主项缺单位 / 异常名称时按台账补齐（老缓存打开即空着，这里预填）
       ...(i === 0 && !it.unit && t.unit ? { unit: t.unit } : {}),
       ...(i === 0 && !it.abnormalName?.trim()
         ? { abnormalName: `${t.name || baseNameOf(s, t)} · 异常` }
+        : {}),
+      /**
+       * 主项缺告警分类 / 触发逻辑时按台账回落：这两项已下沉到告警项单独配，
+       * 台账级的 `category / triggerMode` 只是主项的镜像（老数据仍能原样回显）
+       */
+      ...(i === 0 && !it.alarmClass && t.alarm?.category
+        ? { alarmClass: t.alarm.category }
+        : {}),
+      ...(i === 0 && !it.triggerMode && t.alarm?.triggerMode
+        ? {
+            triggerMode: t.alarm.triggerMode,
+            consecutive: t.alarm.consecutive,
+          }
         : {}),
     })),
   };
@@ -314,32 +323,32 @@ export const withMainAlarmItem = (
 
 /**
  * 应用一条告警设置：写回台账的 alarm，并把台账判定口径同步为第一条告警项
- * @description 「台账 ↔ 告警设置」双向同步的落点：告警设置页与台账页保存时都走这里
+ * @description 「台账 ↔ 告警设置」双向同步的落点：告警设置页与台账页保存时都走这里。
+ *              告警分类与触发逻辑都下沉到告警项单独配，台账级字段只是**主项（第一条）的镜像**，
+ *              不单独维护（页面上不再有台账级入口）
  * @param t 巡检目标台账
- * @param set 告警设置（类型 / 开关 / 告警项）
+ * @param set 告警设置（开关 / 告警项）
  * @returns 更新后的台账（新对象）
  */
 export function applyAlarmSetting(
   t: BusinessTarget,
-  set: { category: string; enabled: boolean; items: AlarmItem[] },
+  set: { enabled: boolean; items: AlarmItem[]; main?: BusinessAlarm["main"] },
 ): BusinessTarget {
   const main = set.items[0];
   const range = main.judge === "数值范围";
-  const templateId = main.templateId;
   const alarm: BusinessAlarm = {
     ...(t.alarm || { level: main.level }),
+    // 告警大类：由告警设置弹窗选择；未传（如台账页保存）时保留原值
+    main: set.main ?? t.alarm?.main,
     level: main.level,
-    // 声光报警随主告警项同步（模板来源的规则在采集时按模板下发）
+    // 声光报警随主告警项同步（采集时按该值下发到执行端）
     alarmSeconds: main.alarmSeconds,
-    /**
-     * 台账的「告警规则来源」由主告警项决定：主项引用了模板 = 模板来源（引擎按模板判定），
-     * 否则为手填；每条的模板引用只影响该条自身，其余扩展项不参与台账判定
-     */
-    source: templateId ? "模板" : "手动",
-    templateId,
     // 告警名称已废弃（由台账名称派生）：写回时清掉残留值
     name: undefined,
-    category: set.category,
+    // 分类 / 触发逻辑取主项：主项没选时保留原值，不在保存时把已配好的值清掉
+    category: main.alarmClass || t.alarm?.category,
+    triggerMode: main.triggerMode || "识别即触发",
+    consecutive: Math.max(2, main.consecutive ?? 2),
     enabled: set.enabled,
     items: set.items,
   };
@@ -352,6 +361,23 @@ export function applyAlarmSetting(
     expected: range ? undefined : main.value || "开启",
     alarm,
   };
+}
+
+/**
+ * 新增或替换一条告警项（告警项弹窗保存时用）
+ * @param items 现有告警项清单
+ * @param index 目标下标；`null` = 追加到末尾
+ * @param item 保存后的整条告警项
+ * @returns 新的告警项清单（新数组）
+ */
+export function upsertAlarmItem(
+  items: AlarmItem[],
+  index: number | null,
+  item: AlarmItem,
+): AlarmItem[] {
+  return index === null
+    ? [...items, item]
+    : items.map((x, j) => (j === index ? item : x));
 }
 
 /**
@@ -398,33 +424,4 @@ export function newAlarmItem(
   };
 }
 
-/**
- * 用告警模板填充一条告警项（「告警模板」下拉选中即带出内容字段）
- * @description 只覆盖模板负责的字段（判断类型 / 阈值 / 单位 / 等级 / 声光报警）；
- *              告警分类 / 环境识别分类 / 异常名称 / ID 保持该行原值，选中后仍可手改
- * @param base 该告警项当前值
- * @param tpl 告警模板（触发条件 / 等级 / 声光报警）
- * @returns 填充后的告警项（新对象）；模板不适用时由调用方回落手填
- */
-export function itemFromTemplate(
-  base: AlarmItem,
-  tpl: {
-    id: string;
-    level: AlarmItem["level"];
-    trigger: AlarmTrigger;
-    alarmSeconds: number;
-  },
-): AlarmItem {
-  const range = tpl.trigger.type === "数值范围";
-  return {
-    ...base,
-    templateId: tpl.id,
-    level: tpl.level,
-    judge: tpl.trigger.type,
-    value: range ? undefined : tpl.trigger.expected,
-    from: range ? tpl.trigger.min : undefined,
-    to: range ? tpl.trigger.max : undefined,
-    unit: range ? tpl.trigger.unit || base.unit : undefined,
-    alarmSeconds: tpl.alarmSeconds,
-  };
-}
+

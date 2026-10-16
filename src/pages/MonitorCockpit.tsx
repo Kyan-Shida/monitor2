@@ -225,7 +225,7 @@ export function MonitorCockpit({
   /** 今日告警：总数 + 未处置 */
   const todayAlarms = sc.alarms.filter((a) => (a.time || "").slice(0, 10) === TODAY);
   const todayAlarmsOpen = todayAlarms.filter((a) => !a.handledAt);
-  const thisMonthTasks = sc.tasks.filter((t) => (t.time || "").startsWith(THIS_MONTH));
+  const thisMonthTasks = sc.tasks.filter((t) => (t.created || "").startsWith(THIS_MONTH));
 
   // ── 左·下：报警排行 TOP10（按点位聚合，横向条形图） ──
   const rank = useMemo(() => {

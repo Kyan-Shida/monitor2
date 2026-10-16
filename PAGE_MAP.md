@@ -39,12 +39,18 @@
 |---------|---------|---------|------|
 | `workbench` | `#/workbench` | `src/pages/Workbench.tsx` | 角色默认落地页（6 个待办 KPI，点击弹出该类明细弹窗；页面只读展示，复核等写操作跳转对应页面）。**快捷入口 4 项**（2026-09-30 调整）：新建任务 → `quick`（直达临时任务创建抽屉）· 任务调度 → `dispatch` · 结果查询 → `results`（原「结果复核」）· 告警记录 → `alarms` |
 
-### 🛠️ 巡检执行（一级中心）
+### 🛠️ 巡检执行（一级中心 · 2026-10-16 侧边栏已收起）
+
+> 菜单入口整体收起：`hiddenIds` 含 `execution` / `manual` / `replay`，组内已无可见页面 → 侧边栏按
+> 「组内无可见页面即整组不渲染」的既有规则整组消失。页面、路由、权限保留，仍可由工作台
+> 「执行中任务」、调度台「监控」、机器人详情等入口进入。
 
 | 页面 ID | 路由 URL | 组件文件 | 备注 |
 |---------|---------|---------|------|
 | `standards` | `#/resources/standards` | `src/pages/Supporting.tsx` 兜底，侧边栏已隐藏 | 巡检标准（占位） |
-| `templates` | `#/resources/templates` | `src/pages/Planning.tsx`（`page="templates"`） | 巡检模板 |
+| `templates` | `#/resources/templates` | `src/pages/Planning.tsx`（`page="templates"`） | **巡检路线（子线）**：行操作 = 导航 / 编辑 / 启用停用 / 删除（「导航」选机器人后进 `route-navigate` 内置页，归属不跳出「巡检路线」，同时是自定义路线的验证入口）；「新建 / 编辑」跳 `route-edit` 内置页 —— 路线方式二选一：跟随父线（沿路网自动寻路）/ 自定义（图上点选巡检点自绘线路，保存后为停用 + 待导航验证） |
+| `route-edit` | `#/resources/templates/edit/:id` | `src/pages/Planning.tsx`（`page="route-edit"`） | **巡检路线编辑内置页（父页面 `templates`，2026-10-16 由弹窗改为内置页）**：左栏 = 基础信息（名称 / 父线地图 / 路线方式 / 状态 / 结束动作）+ 选择巡检点；右栏 = **地图展示与画线（默认折叠，点标题栏「地图与线路」展开）**。选择巡检点用**三列级联选择器**（区域 → 设备 → 巡检点，第三列多选，勾选即入已选清单）+ 精简勾选表（只留「选择 / 巡检点名称」）+ 已选排序栏 |
+| `route-navigate` | `#/resources/templates/navigate/:id` | `src/pages/MapNavigate.tsx`（复用，`page="route-navigate"`） | **路线导航内置页（父页面 `templates`，2026-10-16 新增）**：复用地图导航页组件，但归属「巡检路线」——点路线行「导航」不再跳到「地图管理」目录；`?tab=` 带机器人 id，自定义路线在此完成导航验证（运行路线 → 验证通过） |
 | `plans` | `#/planning/plans` | `src/pages/Planning.tsx`（`page="plans"`） | 计划列表 |
 | `plan-edit` | `#/planning/plan-edit` | `src/pages/Planning.tsx`（`page="plan-edit"`） | 计划编辑，父页面 `plans` |
 | `tasks` | `#/planning/tasks` | `src/pages/Planning.tsx`（`page="tasks"`） | 任务列表 |
@@ -81,15 +87,16 @@
 
 | 页面 ID | 路由 URL | 组件文件 | 备注 |
 |---------|---------|---------|------|
-| `equipment` | `#/resources/equipment` | `src/pages/DeviceMaster.tsx` | **设备主数据**（阶段③）：Excel 清单导入（模板 = 设备身份 3 列 + 检测项 3 列，同编码多行 = 多检测项）→ 启停 → 详情抽屉内维护检测项；设备是"巡检什么"的唯一来源，禁止由点位反推 |
-| `points` | `#/resources/points` | `src/pages/BusinessTargets.tsx` | **巡检目标台账**：仪表（或区域 / 环境）+ 巡检要求 + 算法 + 告警规则；列表 + 两步抽屉（① 选检测目标 → ② 配业务逻辑与算法 = **左栏配置**：1 巡检要求 / 2 使用算法逻辑 / 3 告警规则，**右栏直接展示**配置结果）。第 3 段来源二选一：**手动输入**（本站定判定口径）或**选择现有模板**（口径由模板下发）。区域 / 环境类目标不关联设备台账，从**适用的巡检要求**进入（采集方式 / 判定 / 算法随要求带出，需填参照物锚点）。巡检项从这里选目标 |
+| `equipment` | `#/resources/equipment` | `src/pages/DeviceMaster.tsx` | **设备主数据**（阶段③）：Excel 清单导入（模板 = 设备身份 5 列 + 巡检项 1 列，同编码多行 = 多检测项）→ 启停 → 行内「巡检目标」进内置页维护检测项；列表列 = 编码 / 设备名称 / 设备形态 / **更新时间**；设备是"巡检什么"的唯一来源，禁止由点位反推 |
+| `device-targets` | `#/resources/equipment/targets/:id` | `src/pages/DeviceTargets.tsx` | **设备巡检目标**（内置页，父页面 `equipment`）：单台设备的检测项清单，列 = **检测项 ID / 检测目标名称 / 类型 / 分类** + 编辑 · 删除；新增 / 编辑弹窗三项必填（类型（实体 / 虚拟，落库仍是仪表 / 区域）/ 分类（下拉建议 + 允许手填）/ 检测目标名称），输入目标名自动推导类型与分类 |
+| `points` | `#/resources/points` | `src/pages/BusinessTargets.tsx` | **巡检目标台账**：仪表（或区域 / 环境）+ 巡检要求 + 算法 + 告警规则。列表筛选（`FilterPanel`：台账名称 / 算法 / 巡检目标 / 设备形态）+ 左树区域 · 设备；新增 / 编辑为**单页**（`business-target-edit`）：**第 1 段选巡检目标 = 带分组的下拉框**（`区域 › 设备` 分组列仪表，末组「区域 / 环境目标」列适用的巡检要求）→ **第 2 段配业务逻辑与算法 = 三个 Tab**（巡检要求 / 算法 / 告警设置，前两个以表格承载）。区域 / 环境类目标不关联设备台账，从**适用的巡检要求**进入（采集方式 / 判定 / 算法随要求带出，需填参照物锚点）。巡检项从这里选目标 |
 | ~~`points-space`~~ | `#/resources/points-space` | `src/pages/BusinessTargets.tsx`（`tab="space"`） | **空间与区域目标（菜单项已删除，路由保留）**：复用「巡检目标台账」页并预置「空间与区域」筛选（`isSpaceTarget` = 非仪表 / 不关联设备）。区域 / 环境类目标的新建入口收口到「巡检目标台账」：筛选「空间与区域」看非装置类台账，新建走抽屉第一步的「区域（环境）」页签 |
 | `annotation` | `#/resources/annotation` | `src/pages/InspectionPoints.tsx` | **巡检点管理**（原「点位标注与验证工作台」槽位）：已配置巡检点列表（地图/状态筛选 + 搜索 + 分页）+「**巡检点导入**」（`components/PointCalibration.tsx`，右侧抽屉：先选**数据来源机器人（机器狗）**，再「从机器人拉取数据」（接口未接入、不造假数据）/「上传表格文件」（CSV/TXT/JSON 解析 → 绑定地图或暂存））|
 | `point-edit` | `#/resources/points/edit` | `src/pages/PointEdit.tsx` | **添加 / 编辑巡检点内置页**（父页面 `annotation`）：巡检点名称 + 地图 + 标定点（**定位ID = 来源绑定键**）+ 多个巡检项（名称 + 业务目标 + 原子动作 / 云台参数），逐项保存 |
 | `point-annotate` | `#/resources/points/annotate` | `src/pages/Annotation.tsx` | **地图标注工作台内置页**（父页面 `annotation`）：候选目标 / 图面双击打点 / 试采与自主验证；仍被地图上线工作台第 1 步内嵌 |
 | `maps` | `#/robots/maps` | `src/pages/Maps.tsx` | **地图管理（第一个模块）**：地图列表（区域/状态筛选 + 搜索 + 分页）+ 卡片操作组（**导航 / 编辑 / 地图下发 / ⋯**，`small` 按钮单行排列）+ **绑定徽章行**（显示已绑定机器人设备与版本，落后标红；点击弹 `MapBindPicker` detail 模式）+「＋ 导入地图」（**只导入①点云地图文件**，不含定位ID与巡检点）；「⋯」更多操作用 `Modal slim` 窄版（含详情/重命名/启停/删除，**不含地图下发**）；旧深链 `?tab=workflow/survey/archive/changes` 仍可进入（已不在界面暴露） |
 | `map-detail` | `#/robots/maps/detail/:id` | `src/pages/MapDetail.tsx` | **地图详情内置页**（父页面 `maps`）：信息 / 空间版本 / 版本历史 / 纯点云底图预览 + **启用状态开关**（`TOGGLE_MAP_STATUS`）；顶栏**不再放「地图下发」按钮**（动作已收口到地图卡片，`?tab=sync` 深链仍可直达抽屉）。**本页不含任何定位ID / 标定点 / 巡检点**（`MapSpatialPreview` 只渲染纯点云底图；原「地图工作台」已下线，标定数据改由 `mapCalibration.ts` 独立存储） |
-| `map-navigate` | `#/robots/maps/navigate/:id` | `src/pages/MapNavigate.tsx` | **地图导航实时监控内置页（2026-10-15 新增，父页面 `maps`）**：从地图卡片「导航」→ 选机器人设备（`MapBindPicker` picker 模式）→ 进入本页，导航操作 + 实时监控二合一；`?tab=` 带所选机器人 id |
+| `map-navigate` | `#/robots/maps/navigate/:id` | `src/pages/MapNavigate.tsx` | **地图导航实时监控内置页（2026-10-15 新增，父页面 `maps`）**：从地图卡片「导航」→ 选机器人设备（`MapBindPicker` picker 模式）→ 进入本页，导航操作 + 实时监控二合一；`?tab=` 带所选机器人 id。2026-10-16 起兼作**自定义路线的导航验证入口**（待验证路线 id 随视图状态 `maps.navRoute` 带入）：图上铺出该路线 → 「运行路线」实跑 → 「验证通过」（`VERIFY_ROUTE`）后路线方可启用 |
 
 > 已删除：`objects`（设备 → 对象 → 检测项）独立页——能力已并入设备主数据；设备的检测项现由「设备清单」行内「详情」右侧抽屉承载；
 > `routes`（路线管理，含「路线与轨道」子分组）——2026-09-30 删除，路线随地图带入。
@@ -98,20 +105,19 @@
 
 | 页面 ID | 路由 URL | 组件文件 | 备注 |
 |---------|---------|---------|------|
-| `admin` | `#/admin` | `src/pages/Admin.tsx` | **工厂基础数据**：区域 / 设备 / 仪表三块维护（区域是设备树分组与地图「区域」下拉的唯一来源）；工具栏右侧留「算法模板管理 →」入口 |
-| `algo-templates` | `#/admin/algo-templates` | `src/pages/AlgoTemplates.tsx` | **算法模板管理**：平台 AI 能力（算法）清单的唯一维护入口 —— 算法编码 / 名称 / 部署位置 / 适配检测类型 / 关联台账 / 状态 + 新增·编辑·启停·删除；被巡检目标台账、快速新建台账、巡检点编辑按名称引用 |
+| `admin` | `#/admin` | `src/pages/Admin.tsx` | **工厂基础数据**：区域维护（区域是设备树分组与地图「区域」下拉的唯一来源）；设备 / 仪表改由「资源与地图 › 设备台账」维护 |
 | `alarm-templates` | `#/admin/alarm-templates` | `src/pages/AlarmTemplates.tsx` | **告警模板管理**：告警触发逻辑的唯一维护入口 —— 告警模板（模板名称 + 触发条件 + 触发逻辑 + 声光报警秒数 + 默认等级 + 处理流程）新增·修改·启停；检测类型含 压力 / 温度 / 气体浓度 / 阀门状态 / 位移 / 液位 / 声纹 / 不安全行为 / 外观（环境 / 区域类目标靠巡检要求的 `detectKind` 命中，同类型多模板按单位优先）；点位判定规则、巡检目标台账、告警处置页引用此处配置 |
-| `requirements` | `#/admin/requirements` | `src/pages/Requirements.tsx` | **巡检要求管理**（2026-10-10 新增）：平台「**看什么、怎么判**」标准表达（模板库）的唯一维护入口 —— 列表（名称 / 分类 / 适用目标类型 / 采集方式·检测类型 / 判定口径 / 采集复核 / 版本·更新时间 / 被引用处数）+ 新增·修改弹窗（要求分类 / 适用目标类型多选 / 默认采集方式 / 检测类型 / 说明 / 算法·AI 表达方式 / 判定方式（数值范围需单位+上下限、期望状态需期望状态）/ 采集与复核 / 周期）。台账按目标类型与采集方式匹配到对应要求；保存即新版本，已落库台账保留当时快照。缓存迁移改为**按 id 合并**（仅补 seed 缺失项），不再整表覆盖，避免误删用户在后台新建的条目 |
+| `requirements` | `#/admin/requirements` | `src/pages/Requirements.tsx` | **算法模板**（2026-10-15：原「算法模板管理」+「巡检要求管理」合并为本页）：平台维护「**看什么 / 怎么采 / 拿什么算 / 什么算异常**」的唯一入口 —— 列表（编码·名称 / 算法能力类型 / 默认采集方式 / 算法 / 判定方式 / 检测类型 / 部署位置 / 关联台账 / 状态 / 操作）+ 新增·修改弹窗（**1 基础信息**：编码必填唯一 / 名称必填 / 部署位置 / 模板说明；**2 能力与适配边界**：算法能力类型 / 默认采集方式 / 检测类型 / 适用目标类型多选；**3 算法调用与判定逻辑**：算法（下拉建议 + 可手填）/ 判定方式 / 单位 / 下限（含）/ 上限（含）/ 期望状态；**4 状态与采集要求**：状态启用停用 / 周期 / 采集与复核）+ 停用·启用。台账选一条模板即带出算法与判定口径；保存即新版本，已落库台账保留当时快照；缓存按 id 合并并补 `code / deploy / state` |
 | `payloads` | `#/admin/payloads` | `src/pages/RobotPayloads.tsx` | **机器人上装能力**（上装主数据）：上装编码 / 名称 / 采集方式 / 支持动作 / 适用机型 / 启停；机器人能力、任务指令集与派单校验按「上装 → 采集方式 → 原子动作」反查 |
 
 ### 🤖 机器人管理（一级中心）
 
 | 页面 ID | 路由 URL | 组件文件 | 备注 |
 |---------|---------|---------|------|
-| `robots` | `#/robots/monitor` | `src/pages/Operations.tsx`（`page="robots"`） | 机器台账（列表） |
-| `robot` | `#/robots/detail/:id` | `src/pages/Operations.tsx`（`page="robot"`） | 机器人运行监测，内部 3 个 tab（monitor/tasks/records） |
+| `robots` | `#/robots/monitor` | `src/pages/Operations.tsx`（`page="robots"`） | 机器台账（列表）：筛选复用通用 `FilterPanel`（机器人 / 区域 + 当前状态），**面板默认收起**，由 panel 头部的「筛选（N）」按钮展开；「＋ 新增机器人」同排收在 panel 右侧；行内只留「详情」（能力已并入详情标签页） |
+| `robot` | `#/robots/detail/:id` | `src/pages/Operations.tsx`（`page="robot"`） | **机器人详情**：内部 2 个 tab —— 历史任务（默认）/ 机器能力（机型与硬件 · 能力组件 · 软件与算法 · 地图与版本 · 能力参数）；原「运行监测」「运行记录」已下线，旧深链 `?tab=monitor/records` 回落历史任务 |
 | `robot-new` | `#/robots/new` | `src/pages/RobotNew.tsx` | **新增机器人**（表单页）：编码（唯一）/ 名称 / 机型 / 区域 / 地图 / 采集能力 / 机型约束 / 固件；引擎 action `ADD_ROBOT`（2026-09-30 新增） |
-| `health` | `#/robots/health` | `src/pages/Operations.tsx`（`page="health"`） | **机器人能力**（合并页）：页内 3 个 tab——能力与健康（`?tab=ability`，默认）/ 地图与版本（`?tab=map`）/ 机型专项（`?tab=device`）；顶部带机器人选择器 |
+| `health` | `#/robots/health` | `src/pages/Operations.tsx`（`page="health"`） | **机器人能力**（页面保留、无入口）：能力与健康（`?tab=ability`）/ 地图与版本（`?tab=map`）；2026-10-16 内容并入「机器人详情 › 机器能力」，台账行内「能力」按钮删除，侧边栏与页签均不出现 |
 | `robot-map` | `#/robots/map` | `src/pages/Operations.tsx`（`page="robot-map"`） | （已合并进 `health`）地图与版本；**侧边栏已隐藏**，旧链接仍可打开 |
 | `device` | `#/robots/device` | `src/pages/Operations.tsx`（`page="device"`） | （已合并进 `health`）机型专项；**侧边栏已隐藏**，旧链接仍可打开 |
 
@@ -186,9 +192,10 @@
 | `RobotNew.tsx` | `robot-new` | 新增机器人表单页（引擎 `ADD_ROBOT`） |
 | `OperationsLegacy.tsx` | `calendar`（其余分支为历史死代码） | 旧版运维页；现仅任务日历在用 |
 | `Maps.tsx` | — | 地图管理（内部 tab：list / detail / archive / sync / changes）+ 卡片操作组与 `MapBindPicker` / `MapDispatch` 弹窗编排 |
-| `MapNavigate.tsx` | — | 地图导航实时监控内置页（`map-navigate`，2026-10-15 新增） |
+| `MapNavigate.tsx` | — | 地图导航实时监控内置页（`map-navigate`，2026-10-15 新增）；内含**路线验证**面板（`maps.navRoute` 带入待验证路线，运行 → 验证通过） |
+| `RoutePreview.tsx` | — | 路线预览：底图 + 父线 + 子线（沿路网，箭头 + 序号）；2026-10-16 起支持**自定义路线模式**（传入 `path` / `onPathChange` 后可在图上点选巡检点自绘线路，绿线 + 锚点，带撤销 / 清空）+ **直线 / 曲线画线工具**（曲线段按中点垂直偏移生成控制点，逐段记在 `RouteNode.curve`）+ `height` 可调 |
 | `Annotation.tsx` | `point-annotate`（内置页） | 地图标注工作台（候选目标 / 试采 / 自主验证）；不再是菜单页 |
-| `Planning.tsx` | `plans` / `plan-edit` / `tasks` / `quick` / `templates` | 计划 + 任务 + 模板 |
+| `Planning.tsx` | `plans` / `plan-edit` / `tasks` / `quick` / `templates` / `route-edit` | 计划 + 任务 + 路线（`templates` 列表含「导航」入口；`route-edit` 为路线编辑内置页：左表单 + 巡检点选择、右地图画线） |
 | `DispatchDesk.tsx` / `Scheduling.tsx` | `dispatch` / `queue` | 调度中心（左资源列 + 右工作区）/ 旧三栏调度工作台（`Scheduling.tsx` 本版不可达） |
 | `ExecutionWorkbench.tsx` | `execution` / `execution-monitor`（内置页） | 实时执行监控总览（`Execution`）+ 单任务现场态势（`ExecutionMonitor`，内置页） |
 | `Execution.tsx` | — | 再导出 `Execution` / `ExecutionMonitor`；并导出 `ControlConsole`（人工接管与遥控控制台主体，内嵌于 `manual`） |
@@ -211,7 +218,7 @@
 | `ScreenTopBar.tsx` | 驾驶舱顶栏（品牌 / Tab / 各舱控件插槽 `extra`（厂区筛选 · 调度中心 · 全屏图标 · 紧急停止）/ 时间） |
 | `RoleMatrix.tsx` | 角色权限矩阵 |
 | `TaskPeekDrawer.tsx` | 调度中心「任务详情」右侧抽屉（决策速览：来源 / 类型 / 阶段 / 计划时间 / 排队位置 / 阻塞校验 / 点位快照，底部「打开完整任务详情」跳内置页） |
-| `TaskDetailPanel.tsx` | 任务详情内容（概要头 + 任务摘要 / 任务控制与版本约束 + 派单历史 + 检测项快照与结果）；`task-detail` 内置页与任务列表详情抽屉共用同一实现 |
+| `TaskDetailPanel.tsx` | 任务详情内容（概要头 + 任务摘要 / 任务控制与版本约束 + 派单历史 + 「点位与检测项」快照与结果）；`task-detail` 内置页与任务列表详情抽屉共用同一实现。2026-10-16：删除「动作序列」展示（原「到位动作与视角」列与 `viewSummary`），面板更名为「点位与检测项（快照与结果）」 |
 | `MapBindPicker.tsx` | 机器人设备选择器（2026-10-15 新增）：`picker` 模式（导航/编辑入口，单选已绑定设备）/ `detail` 模式（徽章下拉，只读展示绑定与版本状态 + 「前往地图下发」） |
 | `TenantSwitcher.tsx` | 顶栏租户切换器（2026-10-15 新增，纯图标 + tooltip）：演示级多租户，切换即整份换数据 |
 
@@ -694,3 +701,95 @@
 | **删除类收口** | `engine` 剔除定位点时同步清理父线引用（避免悬空节点）；`RoutePreview` 移除「父线不连通」提示；`DispatchDesk` 移除「＋临时任务 / 暂停任务 / 人工接管」按钮；`AlarmTemplates` 移除顶部规则说明 note；`Planning` 巡检路线表格移除小字点序描述与空状态提示 note |
 | **术语统一** | 界面可见文案的「机器狗」统一改为**机器人设备**（`MapBindPicker` 标题、卡片按钮 title、`MapNavigate` / `QuickTaskDrawer` 空态提示）；`deviceType: "机器狗"` 机型枚举与代码注释保留不动 |
 | **UI 基础件** | `Btn` 新增 `small`；`Modal` 新增 `slim` 窄版（轻量按钮弹窗，避免 880px 拉散）；样式清理（`.ts-label` / `.bell-dot` / `.calib-browse` 等无用类删除，新增 `.mbp-*` / `.rover-chip*` / `.calib-drawer` / `.map-marker-label` 等） |
+
+## 2026-10-15（第二轮）设备检测项字段 + 台账列表筛选与编辑单页化
+
+| 变更 | 说明 |
+|---|---|
+| **检测项：类型 / 分类 / 检测目标名称（三项必填）** | `DeviceTargets.tsx` 新增 · 编辑弹窗三项必填（红星）：**类型**（实体 / 虚拟，界面口径，落库仍按仪表 / 区域两档）+ **分类**（`types.itemCategories` 下拉建议 + 允许手填）+ **检测目标名称**；输入目标名自动推导类型与分类（`defaultTargetKindOfTarget` / `defaultCategoryOfTarget`）。列表新增「检测项 ID」「分类」列 |
+| **分类口径统一** | 新增 `deviceMaster.defaultCategoryOfTarget`（压力 / 温度 / 阀位 / 液位 / 流量 / 气体浓度 / 环境）：seed、`ADD_DEVICE_ITEM` / `UPDATE_DEVICE_ITEM`、`IMPORT_DEVICES`、老缓存回填共用同一份实现（seed 里的旧副本删除） |
+| **设备台账「更新时间」** | `DeviceAsset.updatedAt` 落到界面：列表新增「更新时间」列；`ADD_DEVICE` / `UPDATE_DEVICE` / `IMPORT_DEVICES` / 检测项增删改均刷新；seed 给一组演示时间，老缓存缺字段时回填固定演示值（`store.needDeviceMeta`） |
+| **台账列表筛选** | 工具栏临时搜索框删除，统一复用 `components/FilterPanel`：**台账名称 / 算法 / 巡检目标 / 设备形态**（生效值走 `bt.name` / `bt.algo` / `bt.targetKw` / `bt.kind`），「筛选」按钮带生效条件计数 |
+| **台账编辑改单页** | 原两步（选检测目标 → 配业务逻辑）合并为**一页**：第 1 段「巡检目标」改**带分组的下拉框**（按 `区域 › 设备` 分组列仪表，末组列区域 / 环境类巡检要求；编辑态只读）；台账名称 / 参照物锚点 / 台账 ID 同区展示；`Steps` 与「上一步 / 下一步」下线 |
+| **配业务逻辑改 Tab + 表格** | 原「左栏配置 + 右栏展示」改为三个 Tab：**巡检要求**（表格：要求 / 采集方式 / 单位 / 判定口径）、**算法**（表格：算法 / 来源）、**告警设置**（告警类型 + 告警项表格 + 触发逻辑 + 处置流程）；保存前预览弹窗保留 |
+| **验证** | `tsc` 0 错误 · 测试全绿（115 项）· `npm run build` 通过 |
+
+## 2026-10-15（第三轮）分页组件化 + 台账编辑页分区 + 算法模板合并
+
+| 变更 | 说明 |
+|---|---|
+| **分页组件（全站唯一）** | `Pager` 升级为完整分页条（`共 N 条 / N 页` + `每页 [5 / 10 / 20] 条` + `上一页 · 当前/总页 · 下一页`），**默认每页 5 条**；新增 `usePageSize(key)`（会话级，默认 5）。设备台账手写分页 → 组件；地图 / 巡检点 / 台账列表接上「每页」选择器；`Supporting / SpaceManage / Results / Planning / ObjectDetails / QuickTaskDrawer` 的每页条数统一为 5 |
+| **台账编辑页分区** | `bt-edit-page` 改为上下两块：`Panel「基础信息」`（巡检目标 / 台账名称 / 锚点 / 台账 ID 网格）+ `Panel「业务逻辑」`（Tab + 表格），对齐后台「新增台账」的分区感 |
+| **巡检目标下拉只取设备台账** | 台账编辑页第 1 段候选由 `instruments` 改为 `devices[].items`：选项名即设备台账里的「检测目标名称」（+ 采集方式 / 单位），台账里没有的目标不出现 |
+| **算法模板合并** | `Requirement`（原巡检要求）扩展 `code / deploy / state` 并升格为「算法模板」，页面合并进 `#/admin/requirements`（`AlgoTemplates.tsx` 删除，`algo-templates` 路由与菜单下线）；seed 10 条模板补齐编码 ALG-01~10；引擎 `SAVE_REQUIREMENT` 新增「编码必填 + 唯一」校验与停用状态；缓存按 id 合并并补三字段（编码顺延、不冲突） |
+| **台账不再单独配算法 / 巡检要求** | 台账编辑页 Tab 由 3 个减为 **2 个（算法模板 / 告警设置）**：「算法」独立 Tab 与「算法 / AI 表达方式」下拉整体删除（算法随模板带出），模板 Tab 表格列 = 模板 / 算法 / 采集方式 / 单位 / 判定口径；候选自动过滤停用模板 |
+| **文案口径统一** | `巡检要求 → 算法模板`：`PointEdit` / `BusinessTargetQuickAdd` / `InspectItemDrawer` / `businessTargetCrumb` / `engine`（错误提示与操作日志）；「算法 / AI 表达方式」下拉从巡检点编辑与快速新建台账中移除 |
+| **测试** | 页数断言 44 → 43；`算法模板` 用例补编码与编码占用断言；全绿 115 项 · `tsc` 0 错误 · `npm run build` 通过 |
+| **待补** | 仍无分页的列表页（告警设置 / 告警分级 / 告警模板 / 告警推送 / 机器人能力 / 机器人载荷 / Admin 用户角色租户 / 标注 / 调度台 / 执行工作台 / 指标 / 设备档案 / 地图标定 / 巡检报告 / 排程）下一轮统一接 `Pager` |
+
+## 2026-10-16 侧边栏收起「巡检执行」一级中心
+
+| 变更 | 说明 |
+|---|---|
+| **菜单收起** | `navigation.ts` 的 `hiddenIds` 增加 `execution`（`manual` / `replay` 早已在内）：该一级中心下已无可见页面，侧边栏整组消失；`groups` 中的组定义与页面声明保留，页数断言不变（42） |
+| **路由与入口不变** | 实时执行监控 `#/execution/live`、现场态势 `#/execution/monitor/:id`、人工操作与遥控 `#/execution/manual`、执行回溯 `#/execution/replay` 路由不变；`roles.centers` 保留「巡检执行」，`canSee` 守卫照旧放行 —— 工作台「执行中任务」、调度台「监控」、机器人详情等入口可正常进入 |
+| **中心序号连续** | `App.tsx` 一级中心序号由「按 `groups` 下标」改为「按当前角色可见中心连续编号」（`centerNos`），避免收起一个中心后出现 01 / 03 跳号 |
+| **页签行为** | 隐藏页面的页签不登记（`PageTabs.tabbable` 已按 `meta.hidden` 判定），执行监控页从工作台进入时不产生页签 —— 与「设备巡检档案」等既有隐藏页一致 |
+| **验证** | `tsc -b` 0 错误 · 测试全绿（105 项） |
+
+## 2026-10-16 机器人模块整改（任务详情去动作序列 / 详情与能力合并 / 台账筛选复用）
+
+| 变更 | 说明 |
+|---|---|
+| **任务详情去掉「动作序列」** | `TaskDetailPanel.tsx`：删除「到位动作与视角」列与 `viewSummary()`（连同 `Snapshot.actionPlan` 的展示口径），面板更名「点位与检测项（快照与结果）」；数据层的 `Point.actionPlan` / 动作编排能力不动，仍用于巡检点编辑与标注 |
+| **机器人详情与能力合并** | `Operations.tsx` 台账行内「能力」按钮删除（`go("health")` 入口消失）；能力内容整体搬进详情新标签页，`health` 页保留但已无入口 |
+| **详情标签页收敛（2 个）** | `page="robot"` 由 `monitor / tasks / records` 三 Tab 改为 **`tasks`（历史任务，默认）/ `ability`（机器能力）**；删除「运行监测」（实时位置 / 视频 / 执行上下文三栏）与「运行记录」（`EventTimeline`）；「任务」标签页只保留「历史任务」面板（原「当前任务与待执行队列」面板删除）。旧深链 `?tab=monitor` / `?tab=records` 由 `rTab` 兜底回落到历史任务 |
+| **新增「机器能力」标签页** | 同文件新增 `RobotCapabilityTab`：① 机型与硬件（机型 / 区域 / 固件 / 健康度 / 机型约束 + 机型专项差异 + 适用上装）；② 能力、组件与业务影响（`capabilityMatrix`，与计划绑定页同源）；③ 软件与算法（`algoConfigs` 中 `deploy="本体"` 的算法）；④ 地图与版本（含版本同步工作台入口）；⑤ 能力参数（`robotAbilities` 按能力类型 → 参数，按 `models` + 启停过滤） |
+| **台账筛选复用通用组件** | `robots` 列表的自绘 `filter-bar`（input + select）换成 `FilterPanel`（机器人 / 区域 + 当前状态 + 重置 / 查询），新增草稿态 `draft`（点「查询」才写回生效值）；工作台 / 总览 KPI 跳转时同步草稿，避免「面板条件」与「列表结果」不一致 |
+| **新增按钮归位** | 「＋ 新增机器人」由筛选栏右侧移入 `Panel` 的 `extra`（panel 头部右侧） |
+| **验证** | `tsc -b` 0 错误 · 测试全绿（105 项）；页数断言仍为 42（未增删页面） |
+
+## 2026-10-16（第二轮）台账筛选按钮 + 告警中心分标签页
+
+| 变更 | 说明 |
+|---|---|
+| **机器台账「筛选」按钮** | `Operations.tsx` 的 `robots`：筛选面板改为**默认收起**，「筛选」按钮放在 panel 头部（与「＋ 新增机器人」同排），按钮带生效条件计数（`筛选（1）`），文案在「筛选 / 收起筛选」间切换 —— 与设备台账、巡检目标台账同一交互（`toggleFilter` / `applyFilter` / `resetFilter`） |
+| **告警中心分标签页** | `AlarmCenter.tsx` 弹窗头部下方新增 `segmented` 标签页：**业务预警 / 机器人预警**，口径复用 `alarmSettings.mainOfAlarm()`（与「告警记录」页同一套）。切换只改**弹窗内的列表与头部摘要（条数 + 分级 chips）**；顶栏角标、最小化胶囊与**一级告警全局拦截**仍是全量口径，避免切到机器人预警时漏掉业务一级告警 |
+| **数据核对** | 种子未处理告警 15 条 = 业务预警 8 条（一级 2 / 二级 5 / 三级 1）+ 机器人预警 7 条（一级 2 / 二级 2 / 三级 3）；两页分级之和与头部 chips（一级 4 / 二级 7 / 三级 4）一致 |
+| **验证** | `tsc -b` 0 错误 · `npm run build` 通过（17.3s） |
+
+## 2026-10-16（第三轮）巡检路线：导航入口 + 自定义路线（画线 → 导航验证 → 启用）
+
+| 变更 | 说明 |
+|---|---|
+| **路线行加「导航」** | `Planning.tsx` 的 `templates`：行操作变为 **导航 / 编辑 / 启用停用 / 删除**，「导航」复用地图卡片那一套 —— `MapBindPicker`（picker 模式，父线地图）选机器人 → `go("map-navigate", mapId, robotId)`。未绑定地图的路线按钮置灰 |
+| **路线方式二选一** | 编辑弹窗新增「路线方式」：**跟随父线**（现状：沿父线路网自动寻路，`state` 可自由启停）/ **自定义**（在 `RoutePreview` 上点选巡检点自绘线路）。自定义模式下「状态」字段变为只读标签「停用 · 待导航验证」 |
+| **自定义路线怎么画** | `RoutePreview` 新增 `path` / `onPathChange`：传入即进入自绘模式（绿线 + 路径锚点，带撤销 / 清空 / 恢复跟随父线）。点画布落锚点，**只吸附「已选巡检点」的定位点**（4% 半径），不新建、不删除任何业务点位；锚点坐标为底图百分比，与标定工作台同源 |
+| **执行点 = 画线顺序** | 自定义路线保存时 `points` 取自路径上吸附到的巡检点（按画线顺序），`path` 存锚点序列 |
+| **数据模型** | `Template` 新增 `mode`（`RouteMode`：跟随父线 / 自定义）、`path`（`RouteNode[]`）、`verified`、`verifiedBy`、`verifiedAt`；`types.ts` 导出 `routeModes` / `RouteMode` / `RouteNode` |
+| **状态机（引擎把关）** | `SAVE_TEMPLATE`：自定义路线保存**一律落「停用」+ `verified=false`**（线路未变则保留既有验证结论）；`TOGGLE_TEMPLATE_STATE`：**自定义路线未验证不允许启用**（提示先做导航验证）；新增动作 `VERIFY_ROUTE`（记录验证机器人与时间）。跟随父线视为已验证（`verified=true`） |
+| **导航验证** | `MapNavigate` 读视图状态 `maps.navRoute` 得到待验证路线（限本图 + 自定义 + 未验证）：图上铺出该线路 + 顶部标签「路线验证 · TMPxx」+ 右侧「路线验证」面板（**运行路线** → 按自绘线路实跑 → 未跑过时「验证通过」不可用 → 通过后 `VERIFY_ROUTE` 落库、清空待验证标记） |
+| **列表状态** | 状态列对自定义路线追加小字：`待导航验证` / `已验证 · R01` |
+| **验证** | `tsc -b` 0 错误 · 测试全绿（105 项）· `npm run build` 通过（13.5s）；脚本端到端复算：保存 → 停用未验证 → 启用被拦 → 验证通过 → 启用成功 → 改线路 → 验证失效 |
+
+## 2026-10-16（第四轮）路线编辑改内置页（左右两栏）+ 曲线画线
+
+| 变更 | 说明 |
+|---|---|
+| **弹窗 → 内置页** | 新增内置页 `route-edit`（`#/resources/templates/edit/:id`，父页面 `templates`）：`navigation.ts` 补 `paths` / `parents` / `routeMeta`，`App.tsx` 分发进 `Planning`，页签图标沿用 `FileStack`。列表的「＋ 新建路线」→ `go("route-edit")`，行「编辑」→ `go("route-edit", 路线 id)`；原 `tplOpen` 弹窗整体删除（连带 `templateEdit` / `tplOpen` 两个 state） |
+| **左右两栏** | 左栏：**基础信息**（路线名称 / 父线地图 / 路线方式 / 状态 / 结束动作）+ **选择巡检点**（`PointPicker` 原三栏结构：目录树 + 勾选表 + 已选排序）；右栏：**地图展示与画线**（`RoutePreview`，高度 430）。栅格 `1.1fr / 0.9fr`，右栏 `sticky`（左栏巡检点列表滚动时地图不离场），≤1360px 自动堆叠为单列 |
+| **表单载入** | 进入页面时由 `useEffect` 按 `id` 载入（有 id → 回填路线；无 id → 新建默认值：父线取第一张有巡检点的图、方式跟随父线、状态启用），编辑过程中不再被 store 更新覆盖 |
+| **曲线画线** | `RoutePreview` 自定义模式工具区新增 **直线 / 曲线** 切换（`.segmented`）：落点按当前工具把 `curve` 记到锚点上，曲线段用 `path` + 二次贝塞尔绘制（控制点 = 中点沿垂直方向偏移段长 18%）—— 因为 SVG `d` 不支持百分比，曲线按绘制区像素换算，直线段仍用百分比 `line` |
+| **数据模型** | `RouteNode` 新增 `curve?: boolean`（该锚点与前一个锚点之间是否曲线，首个锚点无意义） |
+| **验证** | `tsc -b` 0 错误 · 测试全绿（105 项）· `npm run build` 通过（42.3s）；路由解析：`paths` 按长度降序匹配，`resources/templates/edit/xxx` 不会被 `resources/templates` 抢走 |
+
+## 2026-10-16（第五轮）路线导航内置页 / 地图可折叠 / 级联多选选择器 / 勾选表列精简
+
+| 变更 | 说明 |
+|---|---|
+| **导航不再跳「地图管理」** | 新增内置页 `route-navigate`（`#/resources/templates/navigate/:id`，父页面 `templates`）：复用 `MapNavigate` 组件，归属留在「巡检路线」；路线列表「导航」→ 选机器人 → 跳本页（`go("route-navigate", mapId, robotId)`）。`navigation.ts` 补 paths / parents / routeMeta，`App.tsx` 分发 + 页签图标 `MapPinned` |
+| **巡检点管理列改「ID 点」** | `InspectionPoints.tsx` 列表「操作内容」列改为「**ID 点**」，值 = 巡检点编码（`p.id`） |
+| **右栏地图可折叠** | `route-edit` 右栏**默认折叠**（栅格加 `.collapsed`，左栏独占整屏），标题栏按钮「地图与线路 / 收起地图」切换（`mapOpen`）；需要查看线路或画线时再展开 |
+| **选择巡检点改级联选择器** | `PointPicker` 新增 `cascade` 模式：目录树收进**三列级联浮层**（区域 → 设备 → 巡检点），第三列巡检点**多选**（勾选即入已选清单）；点区域 / 设备切换列、点空白处收起。容器由 `pick-3col` 改为 `pick-2col`（勾选表 + 已选清单占满） |
+| **勾选表列精简** | 级联模式下表格只保留「选择 / 巡检点名称」两列（原「地图·标定点 / 巡检项 / 机器操作内容 / 覆盖设备 / 版本·状态」不再展示）；列头与单元格由 `cascade` 参数决定，非级联场景（临时任务等）保持原七列 |
+| **验证** | `tsc -b` 0 错误 · 测试全绿（105 项）；路由核对：`#/resources/templates/navigate/MAP01?tab=R01` → `route-navigate` + id + tab，侧边栏高亮仍为「巡检路线」 |

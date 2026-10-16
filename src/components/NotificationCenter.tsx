@@ -4,10 +4,10 @@
  *              合并三类非告警通知——
  *                · 系统消息（机器人离线 / 故障 / 人工接管）
  *                · 任务通知（任务完成 / 失败 / 超期 / 已被接管）
- *                · 审批提醒（预留扩展，当前告警模板无审批 state）
+ *                · 审批提醒（预留扩展，当前无审批 state）
  *              入口按钮显示合并 badge，点击弹出可关闭的下拉面板，按 Tab 分组。
  * @interaction 由 App.tsx 顶栏 header-right 渲染；与 AlarmCenter 并列；
- *              数据源取自 data/store 的 robots / tasks / alarmTemplates
+ *              数据源取自 data/store 的 robots / tasks
  */
 import { useEffect, useRef, useState } from "react";
 import { Bell, CircleCheck, CircleAlert, ClipboardCheck, Layers, MonitorOff, X } from "lucide-react";
@@ -62,6 +62,9 @@ export function NotificationCenter() {
 
   // ── 数据源派生：三类通知 ──
 
+  /** 系统消息的"生成时刻"：Robot 无时间戳字段，按当前时刻占位 */
+  const NOW_ISO = new Date().toISOString();
+
   // 系统消息：关注状态的机器人
   const sysNotifies: NotifyItem[] = s.robots
     .filter((r) => SYSTEM_ROBOT_STATES.has(r.state))
@@ -72,8 +75,9 @@ export function NotificationCenter() {
       level: r.state === "故障" ? "danger" : r.state === "离线" ? "warn" : "info",
       title: `机器人「${r.name}」${r.state}`,
       desc: `当前电量 ${r.battery}% · ${r.region}`,
-      time: r.lastSeen || r.created || "",
-      timeShort: shortTime(r.lastSeen || r.created || ""),
+      // Robot 无时间戳字段：系统消息反映"当前状态"，时间即生成通知的此刻
+      time: NOW_ISO,
+      timeShort: "刚刚",
       read: read.has(`sys-r-${r.id}`),
     }));
 
@@ -95,7 +99,7 @@ export function NotificationCenter() {
         tab: "task",
         icon: isFail ? CircleAlert : CircleCheck,
         level: isFail ? "warn" : "success",
-        title: `任务「${t.objectName || t.name || t.id}」${t.state}`,
+        title: `任务「${t.name || t.id}」${t.state}`,
         desc: `机器人 ${t.robotId || "—"} · ${t.created ? shortTime(t.created) : ""}`,
         time: t.finishedAt || t.created || "",
         timeShort: shortTime(t.finishedAt || t.created || ""),
@@ -103,7 +107,7 @@ export function NotificationCenter() {
       };
     });
 
-  // 审批提醒：当前无审批 state 字段，占位空数组（将来接 alarmTemplates 审批流）
+  // 审批提醒：当前无审批 state 字段，占位空数组
   const approvalNotifies: NotifyItem[] = [];
 
   const all: NotifyItem[] = [...sysNotifies, ...taskNotifies, ...approvalNotifies].sort(
@@ -220,9 +224,7 @@ export function NotificationCenter() {
               })
             ) : (
               <div className="notify-empty">
-                {tab === "approval"
-                  ? "暂无审批提醒（告警模板审批流待接入）"
-                  : "暂无新通知"}
+                {tab === "approval" ? "暂无审批提醒" : "暂无新通知"}
               </div>
             )}
           </div>

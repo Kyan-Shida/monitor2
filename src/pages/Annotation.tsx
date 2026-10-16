@@ -193,7 +193,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
         <span>
           {mapVer(m.version)}
         </span>
-        <Badge>{m.state}</Badge>
+        <Badge>{m.syncState}</Badge>
         <Btn onClick={() => go("map-detail", m.id)}>地图详情 →</Btn>
       </div>
       }

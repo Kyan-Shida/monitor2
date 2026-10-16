@@ -1,30 +1,38 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "../data/store";
 import { optimizePointOrder } from "../data/pointOrder";
-import { go, useViewState } from "../data/navigation";
+import { go, usePageSize, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Field, Table, Note, Modal } from "../components/UI";
+import { FilterPanel } from "../components/FilterPanel";
 import { Pager } from "../components/Business";
 import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
 import { PlanRobotBinding } from "../components/PlanRobotBinding";
 import { TaskDetailPanel } from "../components/TaskDetailPanel";
 import { PointPicker } from "../components/PointPicker";
 import { RoutePreview } from "../components/RoutePreview";
+import { MapBindPicker } from "../components/MapBindPicker";
+import { useListDelete } from "../components/ListDelete";
 import { fmtTime } from "../data/selectors";
 import { actionsOfPoint, captureKindsOfPoint } from "../data/deviceMaster";
 import { targetsOf } from "../data/mapCalibration";
 import { constraints } from "../data/engine";
 import { planKindOf } from "../data/planSchedule";
-import { planKinds } from "../data/types";
-import type { PlanKind, Point, Task } from "../data/types";
+import { planKinds, routeModes } from "../data/types";
+import type {
+  MapAsset,
+  PlanKind,
+  Point,
+  RouteMode,
+  RouteNode,
+  Task,
+} from "../data/types";
 export function Planning({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const initial = s.plans.find((p) => p.id === id);
   const [templateId, TI] = useState(initial?.templateId || s.templates[0].id),
-    [templateEdit, TE] = useState<string>(),
     [name, N] = useState(initial?.name || ""),
     [selected, SE] = useState<string[]>(s.templates[0].points),
     [tstate, TS] = useState<"启用" | "停用">("启用"),
-    [tplOpen, setTplOpen] = useState(false),
     [pickQuery, PQ] = useState(""),
     [pickPage, PP] = useState(1),
     /** 执行方式：周期任务（按周期循环）/ 定时任务（指定日期执行一次） */
@@ -47,6 +55,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     [timeRange, TR] = useViewState<string>("planning.tasks.timeRange", "今日"),
     [srcPage, SP] = useState(1),
     [quickOpen, setQuickOpen] = useState(false),
+    /** 任务列表筛选面板展开态：条件默认收起，点「筛选」才显示 */
+    [taskFilterOpen, SETTASKFILTEROPEN] = useState(false),
     /** TASK-04：派单（未分配任务选机器人一键派单） */
     [dispatchTask, setDispatchTask] = useState<Task>(),
     [dispatchRobot, setDispatchRobot] = useState(""),
@@ -78,11 +88,85 @@ export function Planning({ page, id }: { page: string; id?: string }) {
    */
   const [routeMapId, RM] = useState("");
   /**
+   * 自定义线路锚点
+   * @description undefined = 跟随父线（沿父线路网自动寻路）；数组 = 自定义路线（自绘线路，
+   *              不走父线，保存后为停用状态，须经机器导航验证可行才允许启用）
+   */
+  const [routePath, RP] = useState<RouteNode[] | undefined>(undefined);
+  /** 路线行「导航」的目标：父线地图 + 路线 id（先选机器人，再进地图导航，兼作自定义路线的验证入口） */
+  const [navTarget, SETNAVTARGET] = useState<{
+    map: MapAsset;
+    id: string;
+  } | null>(null);
+  /** 待导航验证的路线 id（要跨到地图导航页，故随视图状态传递） */
+  const [navRoute, SETNAVROUTE] = useViewState<string>("maps.navRoute", "");
+  /** 任务列表每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20） */
+  const [taskPageSize, SETTASKSIZE] = usePageSize("planning.tasks.size");
+  /** 巡检路线列表：页码 + 每页条数（与全站列表口径一致） */
+  const [routePn, RPN] = useViewState("planning.routes.page", 1);
+  const [routeSize, SETROUTESIZE] = usePageSize("planning.routes.size");
+  /** 巡检计划列表：页码 + 每页条数（与全站列表口径一致） */
+  const [planPn, PPN] = useViewState("planning.plans.page", 1);
+  const [planSize, SETPLANSIZE] = usePageSize("planning.plans.size");
+  /**
+   * 巡检路线列表删除（通用组件）
+   * @description 与「巡检目标台账」「设备台账」同一套交互：勾选列常驻 + 表头右侧批量删除 + 二次确认。
+   *              被巡检计划引用的路线由引擎拦下（不删任何一条），避免出现"删一半"的中间态
+   */
+  const del = useListDelete({
+    onDelete: (ids) => {
+      const used = ids.find((id) => s.plans.some((p) => p.templateId === id));
+      if (used !== undefined) {
+        // 借引擎给出与单条删除一致的报错文案（弹窗不关闭，便于先去计划里解除引用）
+        act({ type: "DELETE_TEMPLATE", id: used });
+        return false;
+      }
+      ids.forEach((id) => act({ type: "DELETE_TEMPLATE", id }));
+      return true;
+    },
+    batch: {
+      pageIds: s.templates.map((t) => t.id),
+      title: (n) => `删除 ${n} 条巡检路线`,
+      nameOf: (id) => s.templates.find((t) => t.id === id)?.name || id,
+    },
+  });
+  /** 路线编辑内置页：左栏（表单 + 巡检点）展开态（默认展开，点地图左缘竖槽收起给地图腾宽度） */
+  const [sideOpen, SETSIDEOPEN] = useState(true);
+  /** 巡检计划列表分页切片（页面内多个分支 return，切片统一在顶层算好） */
+  const planPages = Math.max(1, Math.ceil(s.plans.length / planSize));
+  const planCur = Math.min(Math.max(1, planPn), planPages);
+  const planRows = s.plans.slice((planCur - 1) * planSize, planCur * planSize);
+  /**
    * 当前是否处于「巡检路线编辑」上下文（templates 页）
    * @description 中栏列表的渲染回调里有一个同名局部变量 `page`（分页页码，number），
    *              会遮蔽 props 的 page；这里先把它收成布尔，避免在回调内比较出错
    */
-  const routeLocked = page === "templates";
+  const routeLocked = page === "templates" || page === "route-edit";
+  /**
+   * 路线编辑内置页：进入时按目标路线载入表单（无 id 即新建，置默认值）
+   * @description 只随 `page` / `id` 重载，编辑过程中的 store 更新不再覆盖正在填的表单
+   */
+  useEffect(() => {
+    if (page !== "route-edit") return;
+    const t = s.templates.find((x) => x.id === id);
+    if (t) {
+      N(t.name);
+      SE(t.points);
+      TS(t.state);
+      RM(t.mapId || s.points.find((p) => p.id === t.points[0])?.mapId || "");
+      RP(t.mode === "自定义路线" ? t.path || [] : undefined);
+      return;
+    }
+    N("");
+    SE([]);
+    TS("启用");
+    RP(undefined);
+    RM(
+      s.maps.find((m) => s.points.some((p) => p.mapId === m.id))?.id ||
+        s.maps[0]?.id ||
+        "",
+    );
+  }, [page, id]);
   /** 重置计划表单为默认值（新建时调用） */
   const resetPlanForm = () => {
     N("");
@@ -132,13 +216,14 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       if (from === to || to < 0 || to >= prev.length) return prev;
       const next = [...prev];
       const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
+      next.splice(to, 0, moved)/*  */;
       return next;
     });
   /** 巡检点选择器的筛选与分页（模板弹窗与临时任务共用同一数据源与口径） */
   const [pickStateF, PSF] = useViewState<string>("planning.picker.state", "全部");
   const [pickMapF, PMF] = useViewState<string>("planning.picker.map", "全部");
-  const PICK_SIZE = 6;
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [pickSize, SETPICKSIZE] = usePageSize("planning.picker.size");
   /** 目录树之外的前置筛选（搜索 / 状态 / 地图）：目录树二级结构在此结果上再裁剪 */
   const pickCandidates = s.points.filter(
     (p) =>
@@ -152,10 +237,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
    * 已配置巡检点勾选表（数据源 s.points 来自「巡检点管理」页，平台预先配置好）
    * 模板/临时任务**以巡检点为最小单位**勾选（不选业务目标：业务目标是巡检项内部的事）
    */
-  const pickerTable = (
+  const pickerTable = (cascade = false) => (
     <PointPicker
       points={pickCandidates}
       selected={selected}
+      cascade={cascade}
       onToggle={toggle}
       onClear={() => SE([])}
       // 路线编辑需要顺序：机器狗按巡检点顺序跑子线
@@ -171,11 +257,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         // 目录树裁剪后重算页数：切节点 / 改筛选不会停在空页
         const page = Math.min(
           pickPage,
-          Math.max(1, Math.ceil(rows.length / PICK_SIZE)),
+          Math.max(1, Math.ceil(rows.length / pickSize)),
         );
         const pageRows = rows.slice(
-          (page - 1) * PICK_SIZE,
-          page * PICK_SIZE,
+          (page - 1) * pickSize,
+          page * pickSize,
         );
         return (
           <>
@@ -226,19 +312,24 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         </span>
       </div>
       <Table
-        heads={[
-          "选择",
-          "巡检点名称",
-          "地图 / 标定点",
-          "巡检项",
-          "机器操作内容",
-          "覆盖设备",
-          "版本 / 状态",
-        ]}
+        heads={
+          // 级联模式（内置页左栏）：只留「选择 + 巡检点名称」，其余信息在选择器里看
+          cascade
+            ? ["选择", "巡检点名称"]
+            : [
+                "选择",
+                "巡检点名称",
+                "地图 / 标定点",
+                "巡检项",
+                "机器操作内容",
+                "覆盖设备",
+                "版本 / 状态",
+              ]
+        }
         rows={pageRows.map((p) => {
           const mp = targetsOf(s, p.mapId).find((t) => t.id === p.targetId);
           const specs = p.inspectItems || [];
-          return [
+          const cells = [
             <input
               type="checkbox"
               checked={selected.includes(p.id)}
@@ -295,13 +386,18 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               <Badge>{p.state}</Badge>
             </>,
           ];
+          return cascade ? cells.slice(0, 2) : cells;
         })}
       />
       <Pager
         page={page}
         count={rows.length}
-        size={PICK_SIZE}
+        size={pickSize}
         onChange={PP}
+        onSize={(n) => {
+          SETPICKSIZE(n);
+          PP(1);
+        }}
       />
           </>
         );
@@ -315,46 +411,174 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         onCreated={(id) => go("dispatch", id)}
       />
     );
-  if (page === "templates") {
-    const editing = s.templates.find((x) => x.id === templateEdit);
-    /** 打开新建弹窗：清空表单为默认值 */
-    const openNew = () => {
-      TE(undefined);
-      N("");
-      SE([]);
-      TS("启用");
-      // 父线地图默认取第一张有巡检点的图（一张图一条父线，是最常见的用法）
-      RM(
-        s.maps.find((m) => s.points.some((p) => p.mapId === m.id))?.id ||
-          s.maps[0]?.id ||
-          "",
-      );
-      setTplOpen(true);
-    };
-    /** 打开编辑弹窗：载入路线当前值（父线取路线自身记录，老数据回落到首个点所属地图） */
-    const openEdit = (t: (typeof s.templates)[number]) => {
-      TE(t.id);
-      N(t.name);
-      SE(t.points);
-      TS(t.state);
-      RM(t.mapId || s.points.find((p) => p.id === t.points[0])?.mapId || "");
-      setTplOpen(true);
-    };
-    const closeTpl = () => setTplOpen(false);
-    const saveTemplate = () => {
+  if (page === "route-edit") {
+    const editing = s.templates.find((x) => x.id === id);
+    /** 是否自定义路线（`routePath` 为数组即自定义，undefined 为跟随父线） */
+    const customRoute = routePath !== undefined;
+    /** 自定义线路吸附到的巡检点数：至少 2 个才构成一段可执行路线 */
+    const pathStopCount = (routePath || []).filter((n) => n.pointId).length;
+    /**
+     * 保存路线
+     * @description 自定义路线的执行点 = 自绘线路上吸附到的巡检点（按画线顺序）；
+     *              跟随父线沿用勾选顺序。自定义路线由引擎落成「停用 + 待导航验证」
+     */
+    const saveRoute = () => {
+      const pathSeq = (routePath || [])
+        .map((n) => n.pointId)
+        .filter(Boolean) as string[];
       if (
         act({
           type: "SAVE_TEMPLATE",
-          id: templateEdit,
+          id,
           name,
-          points: selected,
+          points: customRoute ? pathSeq : selected,
           mapId: routeMapId,
           state: tstate,
+          mode: customRoute ? "自定义路线" : "固定路线",
+          path: customRoute ? routePath : undefined,
           end: "返航",
         })
       )
-        closeTpl();
+        go("templates");
     };
+    return (
+      <>
+        <div className="route-edit-head">
+          <b>
+            {editing
+              ? `编辑路线 · ${editing.id} · v${editing.version}`
+              : "新建巡检路线"}
+          </b>
+          <div className="actions">
+            <Btn onClick={() => go("templates")}>取消</Btn>
+            <Btn
+              primary
+              disabled={
+                !name.trim() ||
+                !routeMapId ||
+                (customRoute
+                  ? (routePath || []).length < 2 || pathStopCount < 2
+                  : !selected.length)
+              }
+              onClick={saveRoute}
+            >
+              保存路线
+            </Btn>
+          </div>
+        </div>
+        {/* 左：基础信息 + 选择巡检点；右：地图展示与画线（默认两栏，可把左栏收起给地图腾宽度） */}
+        <div className={"route-edit-grid" + (sideOpen ? "" : " collapsed")}>
+          {/* 左栏表单：点地图左缘的竖槽把手可整体收起，收起后只有地图一栏 */}
+          {sideOpen && (
+            <div className="route-edit-col">
+            <Panel title="基础信息">
+              <div className="form-grid">
+                <Field label="路线名称" required>
+                  <input
+                    value={name}
+                    onChange={(e) => N(e.target.value)}
+                    placeholder="输入路线名称"
+                  />
+                </Field>
+                <Field label="固定路线地图" required>
+                  <select
+                    value={routeMapId}
+                    onChange={(e) => {
+                      // 换父线 = 换子线基线：已选点整体作废，避免跨图选点
+                      RM(e.target.value);
+                      SE([]);
+                    }}
+                  >
+                    {s.maps.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} · 路网 {(m.roadnet?.paths || []).length} 段
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="路线方式" required>
+                  <select
+                    value={customRoute ? "自定义路线" : "固定路线"}
+                    onChange={(e) => {
+                      // 切到自定义路线 → 从空白线路开始画；切回固定路线 → 丢弃自绘线路
+                      RP(e.target.value === "自定义路线" ? [] : undefined);
+                    }}
+                  >
+                    {routeModes.map((m) => (
+                      <option key={m}>{m}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="状态" required>
+                  {customRoute ? (
+                    <span className="badge amber">停用 · 待导航验证</span>
+                  ) : (
+                    <select
+                      value={tstate}
+                      onChange={(e) => TS(e.target.value as "启用" | "停用")}
+                    >
+                      <option>启用</option>
+                      <option>停用</option>
+                    </select>
+                  )}
+                </Field>
+                <Field label="结束动作" required>
+                  <input readOnly value="返航" />
+                </Field>
+              </div>
+            </Panel>
+            <Panel title="选择巡检点">{pickerTable(true)}</Panel>
+            </div>
+          )}
+          {/*
+            右：地图展示与画线（始终渲染）
+            点地图左缘的竖槽把手 = 收起左侧表单，把整幅宽度让给地图（再点一次还原）；
+            地图不参与折叠，所以不存在「收起后点不到」的空态
+          */}
+          <div className="re-map">
+            <span
+              className="re-fold"
+              title={sideOpen ? "收起左侧表单，展开地图" : "展开左侧表单"}
+              onClick={() => SETSIDEOPEN(!sideOpen)}
+            />
+            <div className="route-edit-col">
+              <RoutePreview
+                map={s.maps.find((m) => m.id === routeMapId)}
+                stops={
+                  selected
+                    .map((pid) => s.points.find((p) => p.id === pid))
+                    .filter(Boolean) as Point[]
+                }
+                path={routePath}
+                onPathChange={(next) => RP(next)}
+                height={430}
+              />
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+  if (page === "templates") {
+    /** 新建路线：跳「路线编辑」内置页（表单 + 巡检点选择 + 画线一屏放不下，原弹窗已改内置页） */
+    const openNew = () => go("route-edit");
+    /** 编辑路线：跳内置页并带上路线 id */
+    const openEdit = (t: (typeof s.templates)[number]) =>
+      go("route-edit", t.id);
+    /** 打开「导航」选机器人：自定义路线同时登记为待验证（导航页跑完一遍即可置为已验证） */
+    const openNavigate = (t: (typeof s.templates)[number]) => {
+      const map = s.maps.find((m) => m.id === t.mapId);
+      if (!map) return;
+      SETNAVROUTE(t.mode === "自定义路线" && !t.verified ? t.id : "");
+      SETNAVTARGET({ map, id: t.id });
+    };
+    // 分页切片：当前页一律 clamp 到有效范围
+    const routePages = Math.max(1, Math.ceil(s.templates.length / routeSize));
+    const routeCur = Math.min(Math.max(1, routePn), routePages);
+    const routeRows = s.templates.slice(
+      (routeCur - 1) * routeSize,
+      routeCur * routeSize,
+    );
     return (
       <>
         <Panel
@@ -362,6 +586,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           extra={
             <>
               <div className="actions">
+                {/* 删除：复用列表删除组件，放在列表头右侧（勾选后批量删） */}
+                {del.bar}
                 <Btn primary onClick={openNew}>
                   ＋ 新建路线
                 </Btn>
@@ -371,32 +597,44 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         >
           <Table
             heads={[
-              "路线 / 编号",
-              "父线地图",
-              "巡检点（执行顺序）",
-              "版本",
+              del.head,
+              "编号",
+              "路线名称",
+              "路线分类",
+              "巡检点数",
+              "更新时间",
               "状态",
               "操作",
             ]}
-            rows={s.templates.map((t) => [
+            rows={routeRows.map((t) => [
+              del.cell(t.id, t.name),
+              <span className="cell-muted">{t.id}</span>,
+              <b>{t.name}</b>,
+              // 路线分类：固定路线（沿已标定的固定路网）/ 自定义路线（自绘线路）
+              t.mode || "固定路线",
+              `${t.points.length} 个`,
+              <span className="cell-muted">{t.updatedAt || "—"}</span>,
               <>
-                <b>{t.name}</b>
-                <small className="cell-muted">{t.id}</small>
+                <span className={"badge " + (t.state === "启用" ? "green" : "")}>
+                  {t.state}
+                </span>
+                {t.mode === "自定义路线" && (
+                  <small className="cell-muted">
+                    {t.verified
+                      ? `已验证${t.verifiedBy ? " · " + t.verifiedBy : ""}`
+                      : "待导航验证"}
+                  </small>
+                )}
               </>,
-              s.maps.find(
-                (m) =>
-                  m.id ===
-                  (t.mapId ||
-                    s.points.find((p) => p.id === t.points[0])?.mapId),
-              )?.name || "—",
-              <>
-                {t.points.length} 个
-              </>,
-              <span className="ver">v{t.version}</span>,
-              <span className={"badge " + (t.state === "启用" ? "green" : "")}>
-                {t.state}
-              </span>,
               <div className="actions">
+                {/* 导航：选机器人后进入地图导航（与地图卡片的「导航」同一套逻辑）；
+                    自定义路线同时是它的导航验证入口 —— 实跑可行后才允许启用 */}
+                <Btn
+                  disabled={!s.maps.some((m) => m.id === t.mapId)}
+                  onClick={() => openNavigate(t)}
+                >
+                  导航
+                </Btn>
                 <Btn onClick={() => openEdit(t)}>编辑</Btn>
                 <Btn
                   onClick={() =>
@@ -412,98 +650,34 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 >
                   {t.state === "启用" ? "停用" : "启用"}
                 </Btn>
-                <Btn
-                  danger
-                  onClick={() =>
-                    setConfirm({
-                      title: "删除路线",
-                      text: `确认删除路线「${t.name}」？删除后不可恢复。`,
-                      run: () => {
-                        if (
-                          act({ type: "DELETE_TEMPLATE", id: t.id }) &&
-                          templateEdit === t.id
-                        )
-                          closeTpl();
-                      },
-                    })
-                  }
-                >
-                  删除
-                </Btn>
               </div>,
             ])}
           />
+          <Pager
+            page={routeCur}
+            count={s.templates.length}
+            size={routeSize}
+            onChange={RPN}
+            onSize={(n) => {
+              SETROUTESIZE(n);
+              RPN(1);
+            }}
+          />
+          {del.modal}
         </Panel>
-        {tplOpen && (
-          <Modal
-            title={
-              editing
-                ? `编辑路线 · ${editing.id} · v${editing.version}`
-                : "新建巡检路线"
-            }
-            wide
-            onClose={closeTpl}
-            footer={
-              <>
-                <Btn onClick={closeTpl}>取消</Btn>
-                <Btn
-                  primary
-                  disabled={!name.trim() || !selected.length || !routeMapId}
-                  onClick={saveTemplate}
-                >
-                  保存路线
-                </Btn>
-              </>
-            }
-          >
-            <div className="form-grid">
-              <Field label="路线名称">
-                <input
-                  value={name}
-                  onChange={(e) => N(e.target.value)}
-                  placeholder="输入路线名称"
-                />
-              </Field>
-              <Field label="父线地图">
-                <select
-                  value={routeMapId}
-                  onChange={(e) => {
-                    // 换父线 = 换子线基线：已选点整体作废，避免跨图选点
-                    RM(e.target.value);
-                    SE([]);
-                  }}
-                >
-                  {s.maps.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} · 路网 {(m.roadnet?.paths || []).length} 段
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="状态">
-                <select
-                  value={tstate}
-                  onChange={(e) => TS(e.target.value as "启用" | "停用")}
-                >
-                  <option>启用</option>
-                  <option>停用</option>
-                </select>
-              </Field>
-              <Field label="结束动作">
-                <input readOnly value="返航" />
-              </Field>
-            </div>
-            {/* 子线预览：底图 + 父线 + 按顺序连成的子线（可单独只看子线） */}
-            <RoutePreview
-              map={s.maps.find((m) => m.id === routeMapId)}
-              stops={
-                selected
-                  .map((pid) => s.points.find((p) => p.id === pid))
-                  .filter(Boolean) as Point[]
-              }
-            />
-            {pickerTable}
-          </Modal>
+        {/* 路线编辑（原弹窗）已改为内置页 `route-edit`：表单 + 巡检点选择在左，地图画线在右 */}
+
+        {navTarget && (
+          <MapBindPicker
+            map={navTarget.map}
+            onClose={() => SETNAVTARGET(null)}
+            onAfter={(rid) => {
+              const target = navTarget;
+              SETNAVTARGET(null);
+              // 走「路线导航」内置页：归属仍是「巡检路线」，不切到地图管理目录
+              go("route-navigate", target.map.id, rid);
+            }}
+          />
         )}
         {confirm && (
           <Modal
@@ -552,6 +726,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           {/* PLAN-01：信息架构补「巡检规划（路线 / 频次）」一步；有效期须明确，避免"无限期"观感 */}
           <Table
             heads={[
+              "编号",
               "计划名称",
               "任务类型",
               "巡检路线",
@@ -561,9 +736,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               "版本 / 状态",
               "操作",
             ]}
-            rows={s.plans.map((p) => {
+            rows={planRows.map((p) => {
               const k = planKindOf(p);
               return [
+              // 编号 是任务 / 排程引用计划的主键，独立成列便于对账
+              <span className="cell-muted">{p.id}</span>,
               p.name,
               k,
               s.templates.find((t) => t.id === p.templateId)?.name,
@@ -626,6 +803,16 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               </div>,
               ];
             })}
+          />
+          <Pager
+            page={planCur}
+            count={s.plans.length}
+            size={planSize}
+            onChange={PPN}
+            onSize={(n) => {
+              SETPLANSIZE(n);
+              PPN(1);
+            }}
           />
         </Panel>
         {planOpen && (
@@ -690,10 +877,10 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           title={initial ? "编辑计划 · 新版本仅影响未来任务" : "新建巡检计划"}
         >
           <div className="form-grid">
-            <Field label="计划名称">
+            <Field label="计划名称" required>
               <input value={name} onChange={(e) => N(e.target.value)} />
             </Field>
-            <Field label="巡检路线">
+            <Field label="巡检路线" required>
               <select value={templateId} onChange={(e) => TI(e.target.value)}>
                 {s.templates.map((t) => (
                   <option key={t.id} value={t.id}>
@@ -702,7 +889,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 ))}
               </select>
             </Field>
-            <Field label="任务类型">
+            <PlanRobotBinding
+              value={boundRobot}
+              onChange={BR}
+              templateId={templateId}
+            />
+            <Field label="任务类型" required>
               <select
                 value={kind}
                 onChange={(e) => KD(e.target.value as PlanKind)}
@@ -713,7 +905,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               </select>
             </Field>
             {kind === "周期任务" ? (
-              <Field label="执行周期">
+              <Field label="执行周期" required>
                 <select value={cycle} onChange={(e) => CY(e.target.value)}>
                   <option>每天</option>
                   <option>每周</option>
@@ -721,7 +913,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 </select>
               </Field>
             ) : (
-              <Field label="执行日期">
+              <Field label="执行日期" required>
                 <input
                   type="date"
                   value={start}
@@ -729,7 +921,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 />
               </Field>
             )}
-            <Field label="执行时间">
+            <Field label="执行时间" required>
               <input
                 type="time"
                 value={time}
@@ -738,14 +930,14 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             </Field>
             {kind === "周期任务" && (
               <>
-                <Field label="有效期开始">
+                <Field label="有效期开始" required>
                   <input
                     type="date"
                     value={start}
                     onChange={(e) => ST(e.target.value)}
                   />
                 </Field>
-                <Field label="有效期结束">
+                <Field label="有效期结束" required>
                   <input
                     type="date"
                     value={end}
@@ -754,7 +946,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 </Field>
               </>
             )}
-            <Field label="提前生成 / 分钟">
+            <Field label="提前生成 / 分钟" required>
               <input
                 type="number"
                 min={1}
@@ -762,7 +954,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 onChange={(e) => AD(+e.target.value)}
               />
             </Field>
-            <Field label="执行超时 / 分钟">
+            <Field label="执行超时 / 分钟" required>
               <input
                 type="number"
                 min={1}
@@ -770,7 +962,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 onChange={(e) => TO(+e.target.value)}
               />
             </Field>
-            <Field label="允许等待 / 分钟">
+            <Field label="允许等待 / 分钟" required>
               <input
                 type="number"
                 min={1}
@@ -779,11 +971,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               />
             </Field>
           </div>
-          <PlanRobotBinding
-            value={boundRobot}
-            onChange={BR}
-            templateId={templateId}
-          />
           <Note>
             计划按北京时间自动生成、下发并执行；提前生成不提前启动。浏览器打开期间运行模拟时钟，异常进入调度中心。每周按有效期首日的星期执行；每班以所填时间为首班，每
             8 小时一次。<b>定时任务</b>只在「执行日期 + 执行时间」执行一次，错过不补跑。
@@ -820,7 +1007,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
   if (page === "quick")
     return (
       <>
-        {pickerTable}
+        {pickerTable()}
         <Btn
           primary
           onClick={() => {
@@ -839,8 +1026,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       </>
     );
   const t = s.tasks.find((t) => t.id === id);
-  /** 任务列表：搜索词 + 来源/状态/机器人三字段筛选 + 分页（每页 5 条） */
-  const TASK_PAGE_SIZE = 5;
+  /** 任务列表：搜索词 + 来源/状态/机器人三字段筛选 + 分页（每页条数走全站 usePageSize） */
   /** 从任务数据动态派生下拉选项，避免硬编码与种子数据不同步 */
   const sourceOpts = ["全部", ...new Set(s.tasks.map((x) => x.source))];
   /** 状态筛选：只留常用决策状态（完整状态仍由行内 Badge 表达，避免下拉过长） */
@@ -890,14 +1076,40 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     });
     return rows;
   })();
-  const pageMax = Math.max(1, Math.ceil(allFiltered.length / TASK_PAGE_SIZE));
+  const pageMax = Math.max(1, Math.ceil(allFiltered.length / taskPageSize));
   const curPage = Math.min(srcPage, pageMax);
   const pageRows = allFiltered.slice(
-    (curPage - 1) * TASK_PAGE_SIZE,
-    curPage * TASK_PAGE_SIZE,
+    (curPage - 1) * taskPageSize,
+    curPage * taskPageSize,
   );
   /** 筛选器统一切换回第一页 */
   const resetPage = () => SP(1);
+  /** 任务列表筛选：复用全站 FilterPanel（草稿条件，点「查询」才生效） */
+  const [taskDraft, SETTASKDRAFT] = useState<Record<string, string>>({
+    src: srcFilter,
+    state: statusFilter,
+    robot: robotFilter,
+    range: timeRange,
+    kw: query,
+  });
+  const applyTaskFilter = () => {
+    SF(taskDraft.src);
+    STF(taskDraft.state);
+    RF(taskDraft.robot);
+    TR(taskDraft.range);
+    Q(taskDraft.kw);
+    SP(1);
+  };
+  const resetTaskFilter = () => {
+    const d = { src: "全部", state: "全部", robot: "全部", range: "今日", kw: "" };
+    SETTASKDRAFT(d);
+    SF(d.src);
+    STF(d.state);
+    RF(d.robot);
+    TR(d.range);
+    Q(d.kw);
+    SP(1);
+  };
   return (
     <>
       <Panel
@@ -905,71 +1117,10 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         title="任务列表"
         extra={
           <div className="actions">
-            <label className="inline-filter">
-              <span>来源：</span>
-              <select
-                value={srcFilter}
-                onChange={(e) => {
-                  SF(e.target.value);
-                  resetPage();
-                }}
-              >
-                {sourceOpts.map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-filter">
-              <span>状态：</span>
-              <select
-                value={statusFilter}
-                onChange={(e) => {
-                  STF(e.target.value);
-                  resetPage();
-                }}
-              >
-                {statusOpts.map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-filter">
-              <span>机器人：</span>
-              <select
-                value={robotFilter}
-                onChange={(e) => {
-                  RF(e.target.value);
-                  resetPage();
-                }}
-              >
-                {robotOpts.map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-filter">
-              <span>时间范围：</span>
-              <select
-                value={timeRange}
-                onChange={(e) => {
-                  TR(e.target.value);
-                  resetPage();
-                }}
-                title="默认当天；最大可选近 30 天"
-              >
-                {["今日", "近 7 天", "近 30 天"].map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-            <input
-              placeholder="搜索任务名称 / 编号"
-              value={query}
-              onChange={(e) => {
-                Q(e.target.value);
-                resetPage();
-              }}
-            />
+            {/* 筛选：条件收进「筛选」按钮，展开后复用全站 FilterPanel（草稿条件，点「查询」才生效） */}
+            <Btn onClick={() => SETTASKFILTEROPEN(!taskFilterOpen)}>
+              {taskFilterOpen ? "收起筛选" : "筛选"}
+            </Btn>
             <Btn primary onClick={() => setQuickOpen(true)}>
               ＋ 临时巡检任务
             </Btn>
@@ -1000,6 +1151,22 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         }
       >
         {/* TASK-01：任务生成规则说明；DSP-01：计划任务直接绑定机器人、临时任务走调度 */}
+        {/* 筛选：条件收进「筛选」按钮，展开后复用全站 FilterPanel（草稿条件，点「查询」才生效） */}
+        {taskFilterOpen && (
+          <FilterPanel
+            fields={[
+              { key: "src", label: "来源", options: sourceOpts },
+              { key: "state", label: "状态", options: statusOpts },
+              { key: "robot", label: "机器人", options: robotOpts },
+              { key: "range", label: "时间范围", options: ["今日", "近 7 天", "近 30 天"] },
+              { key: "kw", label: "搜索任务", placeholder: "任务名称 / 编号" },
+            ]}
+            value={taskDraft}
+            onChange={(n) => SETTASKDRAFT((p) => ({ ...p, ...n }))}
+            onSearch={applyTaskFilter}
+            onReset={resetTaskFilter}
+          />
+        )}
         <Table
           heads={[
             // 选择态下才渲染复选框列（含表头全选）
@@ -1029,11 +1196,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                   />,
                 ]
               : []),
-            "任务 / 来源",
+            "编号",
+            "任务名称",
+            "任务来源",
             "状态",
             "机器人",
-            "完成",
-            "时间（生成 / 结束）",
+            "时间",
             "操作",
           ]}
           rows={pageRows.map((t) => [
@@ -1054,15 +1222,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                   />,
                 ]
               : []),
-            <b>
-              {t.name}
-              <small>
-                {t.id} · {t.source}
-              </small>
-            </b>,
+            // 编号 是结果 / 告警 / 快照引用的主键，独立成列便于对账
+            <span className="cell-muted">{t.id}</span>,
+            <b>{t.name}</b>,
+            t.source,
             <Badge>{t.state}</Badge>,
             t.robotId || "未分配",
-            `${t.done.length}/${t.items.length}`,
             <>
               <span>{fmtTime(t.created)}</span>
               <small className="cell-muted">
@@ -1104,8 +1269,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         <Pager
           page={curPage}
           count={allFiltered.length}
-          size={TASK_PAGE_SIZE}
+          size={taskPageSize}
           onChange={(n) => SP(n)}
+          onSize={(n) => {
+            SETTASKSIZE(n);
+            SP(1);
+          }}
         />
       </Panel>
       {t && (
@@ -1332,16 +1501,11 @@ function PlanModal({
         </>
       }
     >
-      <PlanRobotBinding
-        value={boundRobot}
-        onChange={setBoundRobot}
-        templateId={templateId}
-      />
       <div className="form-grid">
-        <Field label="计划名称">
+        <Field label="计划名称" required>
           <input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="巡检路线">
+        <Field label="巡检路线" required>
           <select
             value={templateId}
             onChange={(e) => setTemplateId(e.target.value)}
@@ -1353,7 +1517,12 @@ function PlanModal({
             ))}
           </select>
         </Field>
-        <Field label="任务类型">
+        <PlanRobotBinding
+          value={boundRobot}
+          onChange={setBoundRobot}
+          templateId={templateId}
+        />
+        <Field label="任务类型" required>
           <select
             value={kind}
             onChange={(e) => setKind(e.target.value as PlanKind)}
@@ -1364,7 +1533,7 @@ function PlanModal({
           </select>
         </Field>
         {kind === "周期任务" ? (
-          <Field label="执行周期">
+          <Field label="执行周期" required>
             <select value={cycle} onChange={(e) => setCycle(e.target.value)}>
               <option>每天</option>
               <option>每周</option>
@@ -1372,7 +1541,7 @@ function PlanModal({
             </select>
           </Field>
         ) : (
-          <Field label="执行日期">
+          <Field label="执行日期" required>
             <input
               type="date"
               value={start}
@@ -1380,7 +1549,7 @@ function PlanModal({
             />
           </Field>
         )}
-        <Field label="执行时间">
+        <Field label="执行时间" required>
           <input
             type="time"
             value={time}
@@ -1389,14 +1558,14 @@ function PlanModal({
         </Field>
         {kind === "周期任务" && (
           <>
-            <Field label="有效期开始">
+            <Field label="有效期开始" required>
               <input
                 type="date"
                 value={start}
                 onChange={(e) => setStart(e.target.value)}
               />
             </Field>
-            <Field label="有效期结束">
+            <Field label="有效期结束" required>
               <input
                 type="date"
                 value={end}
@@ -1405,7 +1574,7 @@ function PlanModal({
             </Field>
           </>
         )}
-        <Field label="提前生成 / 分钟">
+        <Field label="提前生成 / 分钟" required>
           <input
             type="number"
             min={1}
@@ -1413,7 +1582,7 @@ function PlanModal({
             onChange={(e) => setAdvance(+e.target.value)}
           />
         </Field>
-        <Field label="执行超时 / 分钟">
+        <Field label="执行超时 / 分钟" required>
           <input
             type="number"
             min={1}
@@ -1421,7 +1590,7 @@ function PlanModal({
             onChange={(e) => setTimeout(+e.target.value)}
           />
         </Field>
-        <Field label="允许等待 / 分钟">
+        <Field label="允许等待 / 分钟" required>
           <input
             type="number"
             min={1}

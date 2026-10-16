@@ -98,3 +98,48 @@ export function capabilityMatrix(s: State, r: Robot): CapabilityItem[] {
     },
   ];
 }
+
+/** 组件自检状态：正常 / 未接入 / 低电量 */
+export type ComponentStatusValue = "正常" | "未接入" | "低电量";
+
+/** 组件状态项：机器人本体自检的一个组件 / 传感器 */
+export interface ComponentStatus {
+  name: string;
+  status: ComponentStatusValue;
+}
+
+/**
+ * 机器人本体组件自检状态（组件状态面板口径）
+ * @description 口径与能力表一致，不另造判断：采集类组件按机器人 `capabilities` 判定
+ *              （未装即「未接入」），电量按 25% 阈值判定；其余为本体系统组件（自检项），默认正常。
+ *              返回顺序按 3 列栅格的**行优先**排布，直接喂给组件状态网格即可得到设计稿布局。
+ * @param r 机器人
+ * @returns 组件状态列表
+ */
+export function componentStatuses(r: Robot): ComponentStatus[] {
+  /** 机器人是否具备某采集能力 */
+  const has = (k: CaptureKind) => r.capabilities.includes(k);
+  /** 系统组件（自检项）：恒正常 */
+  const ok = (name: string): ComponentStatus => ({ name, status: "正常" });
+  /** 采集类组件：按能力判定 */
+  const byCap = (name: string, k: CaptureKind): ComponentStatus => ({
+    name,
+    status: has(k) ? "正常" : "未接入",
+  });
+  return [
+    ok("温度"),
+    byCap("热红外", "红外"),
+    ok("电流"),
+    ok("电压"),
+    ok("路由器信息"),
+    ok("湿度"),
+    ok("导航信息"),
+    { name: "电量", status: r.battery < 25 ? "低电量" : "正常" },
+    ok("扬声器"),
+    ok("VCU信息"),
+    byCap("高清摄像头", "可见光"),
+    byCap("气体传感器", "气体"),
+    ok("软件自检信息"),
+    byCap("拾音器", "声音"),
+  ];
+}

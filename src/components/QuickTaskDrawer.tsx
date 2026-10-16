@@ -13,9 +13,7 @@ import { useStore } from "../data/store";
 import { optimizePointOrder } from "../data/pointOrder";
 import { taskTypeOfActions, type AtomicAction } from "../data/types";
 import { actionsOfPoint } from "../data/deviceMaster";
-import { targetsOf } from "../data/mapCalibration";
-import { Modal, Field, Btn, Badge, Note } from "./UI";
-import { Pager } from "./Business";
+import { Modal, Field, Btn, Note } from "./UI";
 import { PointPicker } from "./PointPicker";
 import { RoutePreview } from "./RoutePreview";
 
@@ -31,7 +29,13 @@ export function QuickTaskDrawer({
   robotId?: string;
   /** 预选巡检点（如从执行监控当前点位直接下发） */
   pointIds?: string[];
+  /** 关闭（取消 / 未接 onCreated 时的收尾） */
   onClose: () => void;
+  /**
+   * 创建成功后的处理（拿到新任务 id）
+   * @description 传了就由调用方决定去向（跳调度页 / 就地提示）并自行收起抽屉，
+   *              组件不再调用 onClose，避免两次跳转互相覆盖；不传则按普通关闭收尾
+   */
   onCreated?: (id: string) => void;
 }) {
   const { s, act } = useStore();
@@ -47,10 +51,9 @@ export function QuickTaskDrawer({
     ),
     [routeId, RID] = useState(routes[0]?.id || ""),
     /** 自选模式下的区域地图（显式选择优先，其次机器人所属地图） */
-    [pickMap, PMAP] = useState("");
-  /** 巡检点列表：搜索 / 分页 */
-  const [q, Q] = useState(""),
-    [pn, PN] = useState(1);
+    [pickMap, PMAP] = useState(""),
+    /** 左栏（表单 + 巡检点）展开态（默认展开，点地图左缘竖槽收起给地图腾宽度） */
+    [sideOpen, SETSIDEOPEN] = useState(true);
   /** 生效的地图：显式选择 → 机器人地图 → 第一张有启用巡检点的图 */
   const fallbackMap =
     s.maps.find((m) =>
@@ -87,10 +90,6 @@ export function QuickTaskDrawer({
   const available = s.points.filter(
     (p) => p.state === "已启用" && p.mapId === activeMap,
   );
-  const SIZE = 6;
-  const filtered = available.filter((p) =>
-    (p.id + p.name + p.device).includes(q.trim()),
-  );
   /**
    * 单点勾选 / 取消
    * @description 必须用函数式更新：目录树上的「整组全选」会连续调用本函数多次，
@@ -123,147 +122,119 @@ export function QuickTaskDrawer({
   const type = taskTypeOfActions(actions);
   return (
     <Modal title="新建临时任务" wide onClose={onClose}>
-      <div className="form-grid">
-        <Field label="任务名称">
-          <input value={name} onChange={(e) => N(e.target.value)} />
-        </Field>
-        <Field label="路线来源">
-          <select
-            value={source}
-            onChange={(e) => {
-              const v = e.target.value as RouteSource;
-              SRC(v);
-              // 换来源即换基线：清空已选，避免把上一种来源的点带过来
-              P([]);
-              if (v === "route" && routes[0]) {
-                RID(routes[0].id);
-                applyRoute(routes[0].id);
-              } else {
-                PMAP(robot?.mapId || fallbackMap);
-              }
-            }}
-          >
-            <option value="route" disabled={!routes.length}>
-              {routes.length ? "使用现有巡检路线" : "使用现有巡检路线（暂无可用）"}
-            </option>
-            <option value="manual">自选巡检点</option>
-          </select>
-        </Field>
-        {source === "route" ? (
-          <Field label="选择路线">
-            <select
-              value={routeId}
-              onChange={(e) => {
-                RID(e.target.value);
-                applyRoute(e.target.value);
-              }}
-            >
-              {routes.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} · {r.points.length} 个巡检点
+      {/*
+        两栏：左 = 表单 + 巡检点选择，右 = 临时路线图整列
+        与「巡检路线」编辑内置页同一形态（`route-edit-grid` / `re-map` / `re-fold` 直接复用），
+        地图不再在下方堆叠，画线看线时表单与已选清单同屏可见
+      */}
+      <div className={"route-edit-grid" + (sideOpen ? "" : " collapsed")}>
+        {/* 左栏表单：点地图左缘的竖槽把手可整体收起，收起后只有地图一栏 */}
+        {sideOpen && (
+        <div className="route-edit-col">
+          <div className="form-grid">
+            <Field label="任务名称" required>
+              <input value={name} onChange={(e) => N(e.target.value)} />
+            </Field>
+            <Field label="路线来源" required>
+              <select
+                value={source}
+                onChange={(e) => {
+                  const v = e.target.value as RouteSource;
+                  SRC(v);
+                  // 换来源即换基线：清空已选，避免把上一种来源的点带过来
+                  P([]);
+                  if (v === "route" && routes[0]) {
+                    RID(routes[0].id);
+                    applyRoute(routes[0].id);
+                  } else {
+                    PMAP(robot?.mapId || fallbackMap);
+                  }
+                }}
+              >
+                <option value="route" disabled={!routes.length}>
+                  {routes.length
+                    ? "使用现有巡检路线"
+                    : "使用现有巡检路线（暂无可用）"}
                 </option>
-              ))}
-            </select>
-          </Field>
-        ) : (
-          <Field label="区域地图">
-            {/* 换图**不清空**已选：允许跨图挑选，由下方跨图提示 + 提交拦截兜底 */}
-            <select value={activeMap} onChange={(e) => PMAP(e.target.value)}>
-              {s.maps.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}（{m.region}）
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-      </div>
-      <h4>巡检点</h4>
-      <PointPicker
-        points={filtered}
-        selected={points}
-        onToggle={togglePoint}
-        onClear={() => P([])}
-        // 顺序即执行顺序：箭头 / 拖拽都落到这里
-        onReorder={reorder}
-        // 最优排序：按父线（路网）节点次序重排，避免走回头路
-        onOptimize={() => P(optimizePointOrder(s, points))}
-      >
-        {(treeRows) => {
-          // 目录树裁剪后重算页数，避免停在空页
-          const page = Math.min(
-            pn,
-            Math.max(1, Math.ceil(treeRows.length / SIZE)),
-          );
-          return (
-            <>
-              <div className="filter-bar">
-                <input
-                  aria-label="巡检点搜索"
-                  placeholder="搜索巡检点 / 编码 / 设备"
-                  value={q}
+                <option value="manual">自选巡检点</option>
+              </select>
+            </Field>
+            {source === "route" ? (
+              <Field label="选择路线" required>
+                <select
+                  value={routeId}
                   onChange={(e) => {
-                    Q(e.target.value);
-                    PN(1);
+                    RID(e.target.value);
+                    applyRoute(e.target.value);
                   }}
-                />
-                <span>
-                  {s.maps.find((m) => m.id === activeMap)?.name || "未选地图"} · 共{" "}
-                  {treeRows.length} 个 · 已选 {points.length} 个
-                </span>
-              </div>
-              <div className="quick-point-list">
-                {treeRows.slice((page - 1) * SIZE, page * SIZE).map((p) => {
-                  const mp = targetsOf(s, p.mapId).find(
-                    (t) => t.id === p.targetId,
-                  );
-                  const specs = p.inspectItems || [];
-                  return (
-                    <label key={p.id}>
-                      <input
-                        type="checkbox"
-                        checked={points.includes(p.id)}
-                        onChange={() => togglePoint(p.id)}
-                      />
-                      <b>{p.name}</b>
-                      <span>
-                        {mp?.externalId ? `定位ID ${mp.externalId} · ` : ""}
-                        {specs.length
-                          ? `${specs.length} 个巡检项 · ${specs
-                              .map((x) => x.name)
-                              .join(" / ")}`
-                          : `${p.item} · ${p.unit}`}
-                      </span>
-                      <Badge>{p.state}</Badge>
-                    </label>
-                  );
-                })}
-              </div>
-              <Pager
-                page={page}
-                count={treeRows.length}
-                size={SIZE}
-                onChange={PN}
-              />
-            </>
-          );
-        }}
-      </PointPicker>
-      {crossMap && (
-        <Note>
-          已选巡检点跨越了 {pickedMaps.length} 张地图（
-          {pickedMaps
-            .map((id) => s.maps.find((m) => m.id === id)?.name || id)
-            .join(" / ")}
-          ）。一台机器人设备一次只跑一张地图，请只保留同一张地图上的巡检点；
-          <b>跨区域巡检能力将在后续版本开放</b>。
-        </Note>
-      )}
-      {/* 临时路线图：与巡检路线同一套预览（底图 + 父线 + 有序子线） */}
-      <RoutePreview
-        map={s.maps.find((m) => m.id === (pickedMaps[0] || activeMap))}
-        stops={picked}
-      />
+                >
+                  {routes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} · {r.points.length} 个巡检点
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : (
+              <Field label="区域地图">
+                {/* 换图**不清空**已选：允许跨图挑选，由下方跨图提示 + 提交拦截兜底 */}
+                <select value={activeMap} onChange={(e) => PMAP(e.target.value)}>
+                  {s.maps.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}（{m.region}）
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+          </div>
+          <h4>巡检点</h4>
+          {/*
+            巡检点选择：级联选择器（区域 › 设备 › 巡检点）+ 已选清单，
+            与「巡检路线」编辑页同一形态，不再平铺目录树 + 勾选表 + 分页
+          */}
+          <PointPicker
+            cascade
+            points={available}
+            selected={points}
+            onToggle={togglePoint}
+            onClear={() => P([])}
+            // 顺序即执行顺序：箭头 / 拖拽都落到这里
+            onReorder={reorder}
+            // 最优排序：按父线（路网）节点次序重排，避免走回头路
+            onOptimize={() => P(optimizePointOrder(s, points))}
+          >
+            {() => null}
+          </PointPicker>
+          {crossMap && (
+            <Note>
+              已选巡检点跨越了 {pickedMaps.length} 张地图（
+              {pickedMaps
+                .map((id) => s.maps.find((m) => m.id === id)?.name || id)
+                .join(" / ")}
+              ）。一台机器人设备一次只跑一张地图，请只保留同一张地图上的巡检点；
+              <b>跨区域巡检能力将在后续版本开放</b>。
+            </Note>
+          )}
+        </div>
+        )}
+        {/* 右：临时路线图（与巡检路线同一套预览：底图 + 父线 + 有序子线）；
+            把手贴在地图左缘，点它收起左侧表单、把整幅宽度让给地图 */}
+        <div className="re-map">
+          <span
+            className="re-fold"
+            title={sideOpen ? "收起左侧表单，展开地图" : "展开左侧表单"}
+            onClick={() => SETSIDEOPEN(!sideOpen)}
+          />
+          <div className="route-edit-col">
+            <RoutePreview
+              map={s.maps.find((m) => m.id === (pickedMaps[0] || activeMap))}
+              stops={picked}
+              height={380}
+            />
+          </div>
+        </div>
+      </div>
       <div className="modal-actions">
         <Btn onClick={onClose}>取消</Btn>
         <Btn
@@ -281,8 +252,10 @@ export function QuickTaskDrawer({
                 robotId: rid,
               },
               (n) => {
-                onCreated?.(n.tasks[0].id);
-                onClose();
+                // 创建成功后的去向**只由调用方决定**：这里不再顺手 onClose ——
+                // 否则「关闭 = 回任务列表」这类入口会用后一次跳转把前一次顶掉（表现为留在列表、没进调度页）
+                if (onCreated) onCreated(n.tasks[0].id);
+                else onClose();
               },
             )
           }

@@ -1,17 +1,20 @@
 /**
  * @file DeviceMaster.tsx
  * @description 设备主数据后台（阶段③）：左侧设备树 + 右侧设备台账；
- *              设备可在此就地建档 / 删除，检测项按设备进入详情抽屉，并支持就地新增 / 编辑 / 删除。
+ *              设备可在此就地建档 / 删除，检测项维护在「设备巡检目标」内置页。
  * @interaction 路由沿用 `equipment`（/resources/equipment），不新增菜单项；
  *              清单导入**只接受 Excel 文件**（.xlsx / .xls，先解析预览再落库）；
- *              引擎 action：IMPORT_DEVICES / ADD_DEVICE / DELETE_DEVICE /
- *              SET_DEVICE_STATE / ADD_DEVICE_ITEM / UPDATE_DEVICE_ITEM / DELETE_DEVICE_ITEM
+ *              引擎 action：IMPORT_DEVICES / ADD_DEVICE / DELETE_DEVICES（多选批量删除）
  */
 import { useState, useEffect, useMemo } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
-import { Btn, Badge, Panel, Table, Field, Note, Modal } from "../components/UI";
+import { Btn, Panel, Table, Field, Note, Modal } from "../components/UI";
+import { FilterPanel } from "../components/FilterPanel";
+import { useListDelete } from "../components/ListDelete";
+import { Pager } from "../components/Business";
 import { DeviceTree } from "../components/DeviceTree";
+import { MapImageCanvas, type ImageMarker } from "../components/MapImageCanvas";
 import {
   deviceStats,
   deviceKindOf,
@@ -20,103 +23,91 @@ import {
   areaOptions,
   defaultTargetKindOfTarget,
   defaultDeviceKindOfType,
-  defaultUnitOfCapture,
   parseDeviceKind,
-  territoryOfDevice,
 } from "../data/deviceMaster";
 import { readSheetRows, downloadXlsx } from "../data/excel";
-import { captureKinds, deviceKinds } from "../data/types";
-import type {
-  CaptureKind,
-  DeviceAsset,
-  DeviceKind,
-  InspectItem,
-} from "../data/types";
+import { deviceKinds } from "../data/types";
+import type { DeviceAsset, DeviceKind } from "../data/types";
 
 /**
- * 导入模板表头与示例：**设备字段 + 检测项字段**
- * 前 4 列是设备身份与形态（设备形态可留空，按设备类型自动判定），后 3 列是检测项；
- * 同一设备编码可占多行，每行一个检测项。
- * 与 IMPORT_DEVICES 口径一致：数值类检测目标必须带单位。
+ * 导入模板表头与示例：**一行为一台设备**（编码 / 名称 / 形态 / 区域 / 位置 / 巡检项）
+ * @description 巡检项一列可用「、」「,」「;」「/」分隔多个检测目标；
+ *              采集方式与单位不再由导入填写（检测项页同样不填），落库取默认值。
  */
 const CSV_HEADS = [
   "设备编码",
   "设备名称",
-  "设备类型",
   "设备形态",
-  "检测目标",
-  "采集方式",
-  "单位",
+  "所属区域",
+  "安装位置",
+  "巡检项",
 ];
-const CSV_SAMPLE = `设备编码,设备名称,设备类型,设备形态,检测目标,采集方式,单位
-V010,V010 新增储罐,储罐,实体设备,液位计,可见光,m
-V010,V010 新增储罐,储罐,实体设备,罐壁温度,红外,℃
-V011,V011 在线分析仪,分析仪,实体设备,出口压力表,可见光,MPa`;
-/** 导入行：Excel 解析共用的字段口径（一行 = 一台设备的一个检测项） */
+const CSV_SAMPLE = `设备编码,设备名称,设备形态,所属区域,安装位置,巡检项
+V010,V010 新增储罐,实体设备,一期罐区,一期罐区东侧,液位计、罐壁温度
+V011,V011 在线分析仪,实体设备,装置区,装置区 A 段管廊,出口压力表`;
+/** 导入行：Excel 解析共用的字段口径（一行 = 一台设备） */
 type ImportRow = {
   id: string;
   name: string;
-  type: string;
   /** 设备形态（可留空 → 按设备类型自动判定） */
   deviceKind: string;
-  target: string;
-  kind: string;
-  unit: string;
+  /** 所属区域（落到设备主数据的显式区域字段） */
+  region: string;
+  location: string;
+  /** 巡检项原文（多个检测目标以顿号 / 逗号 / 分号 / 斜杠分隔） */
+  targets: string;
 };
+/** 巡检项列 → 检测目标数组（去空、去重） */
+const splitTargets = (raw: string) =>
+  [...new Set(raw.split(/[、,，;；/]/).map((x) => x.trim()).filter(Boolean))];
 
 export function DeviceMaster() {
   const { s, act } = useStore();
   const [q, Q] = useViewState("device-master.q", "");
-  const [stateF, STF] = useViewState("device-master.state", "全部");
   /** 设备形态筛选：全部 / 实体设备 / 虚拟设备 */
   const [kindF, KF] = useViewState("device-master.kind", "全部");
   /** 筛选面板展开态 + 草稿条件（点「查询」才写回生效值） */
   const [filterOpen, SETFILTEROPEN] = useState(false);
-  const [draft, DRAFT] = useState({ state: stateF, kind: kindF });
-  /** 待二次确认的停用设备 */
-  const [stopping, STOPSET] = useState<DeviceAsset | null>(null);
+  const [draft, DRAFT] = useState({ q, kind: kindF });
   /** 左侧设备树选中：""=全部，"r:区域"=区域，"d:设备ID"=单台 */
   const [treeSel, TREE] = useViewState("device-master.tree", "");
-  /** 详情抽屉：当前查看的设备（存 id，随 store 实时派生，检测项增删改后即时刷新） */
-  const [detailId, SETDETAIL] = useState<string | null>(null);
   /** 导入抽屉：仅支持 Excel 文件导入 */
   const [auditOpen, SETAUDITOPEN] = useState(false);
   const [impName, IMPNAME] = useState("");
   const [impRows, IMPROWS] = useState<ImportRow[]>([]);
   const [impErr, IMPERR] = useState("");
-  /** 检测项表单：null=关闭；无 id=新增，有 id=编辑 */
-  const [itemForm, ITEMFORM] = useState<{
-    id?: string;
-    target: string;
-    /** 检测项分类（仪表 / 区域） */
-    targetKind: "仪表" | "区域";
-    /** 用户是否手动改过分类：改过之后不再被「检测目标」的输入自动覆盖 */
-    kindLocked?: boolean;
-    kind: CaptureKind;
-    unit: string;
-  } | null>(null);
-  /** 待删除的检测项（二次确认） */
-  const [delItem, DELITEM] = useState<InspectItem | null>(null);
-  /** 新增设备表单：就地建档，字段与「后台管理 › 设备配置」同口径 */
+  /** 设备表单：就地建档（设备主数据由「设备台账」独家维护） */
   const [devForm, DEVFORM] = useState<{
     id: string;
     name: string;
-    type: string;
     /** 设备形态（实体设备 / 虚拟设备） */
     deviceKind: DeviceKind;
+    /** 所属区域（必填） */
     region: string;
-    locationDesc: string;
-    /** 属地单位（告警 KPI 的「属地」维度口径） */
-    territory: string;
+    /** 安装位置：全厂区 2D 底图上打点得到的厂区坐标（底图百分比口径） */
+    x?: number;
+    y?: number;
   } | null>(null);
-  /** 待删除的设备（二次确认） */
-  const [delDev, DELDEV] = useState<DeviceAsset | null>(null);
+  /** 安装位置底图：全厂区 2D 地图（各分区地图当前共用同一张厂区底图） */
+  const plantMapImage = (s.maps || []).find((m) => m.image)?.image;
+  /** 打点后的厂区坐标文本：自动代入「安装位置」，未打点为空 */
+  const coordText =
+    devForm?.x != null && devForm?.y != null ? `${devForm.x}, ${devForm.y}` : "";
+  /** 安装位置选点标记：仅当已打点时显示 */
+  const pickMarkers: ImageMarker[] =
+    devForm && devForm.x != null && devForm.y != null
+      ? [
+          {
+            id: "pick",
+            x: devForm.x,
+            y: devForm.y,
+            label: devForm.name || "新设备",
+          },
+        ]
+      : [];
 
   const stat = deviceStats(s);
   const all = s.devices || [];
-  /** 详情抽屉当前设备：按 id 从 store 实时派生，检测项增删改后立即反映 */
-  const detail = detailId ? all.find((d) => d.id === detailId) : undefined;
-  const pointsOf = (d: DeviceAsset) => s.points.filter((p) => p.device === d.name);
   const kw = q.trim();
 
   /**
@@ -129,22 +120,22 @@ export function DeviceMaster() {
   const [page, PAGE] = useState(1);
   const [pageSize, PAGE_SIZE] = useState(5);
   /** 已生效的筛选条件数（用于「筛选」按钮上的计数） */
-  const filterCount = (stateF !== "全部" ? 1 : 0) + (kindF !== "全部" ? 1 : 0);
+  const filterCount = (kindF !== "全部" ? 1 : 0) + (kw ? 1 : 0);
   /** 展开筛选面板：用当前生效值填充草稿 */
   function toggleFilter() {
-    if (!filterOpen) DRAFT({ state: stateF, kind: kindF });
+    if (!filterOpen) DRAFT({ q, kind: kindF });
     SETFILTEROPEN(!filterOpen);
   }
   /** 查询：草稿写回生效值并收起面板 */
   function applyFilter() {
-    STF(draft.state);
+    Q(draft.q);
     KF(draft.kind);
     SETFILTEROPEN(false);
   }
   /** 重置：清空草稿并立即生效 */
   function resetFilter() {
-    DRAFT({ state: "全部", kind: "全部" });
-    STF("全部");
+    DRAFT({ q: "", kind: "全部" });
+    Q("");
     KF("全部");
   }
   const listed = useMemo(() => {
@@ -155,22 +146,38 @@ export function DeviceMaster() {
       }
       if (kw && !(d.name + d.id + d.type).includes(kw)) return false;
       if (kindF !== "全部" && deviceKindOf(d) !== kindF) return false;
-      if (stateF === "全部") return true;
-      return d.state === stateF;
+      return true;
     });
-  }, [all, treeSel, stateF, kindF, kw]);
-  useEffect(() => PAGE(1), [treeSel, stateF, kindF, kw]);
+  }, [all, treeSel, kindF, kw]);
+  useEffect(() => PAGE(1), [treeSel, kindF, kw]);
   const total = listed.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   useEffect(() => {
     if (page > totalPages) PAGE(totalPages);
   }, [page, totalPages]);
   const pageList = listed.slice((page - 1) * pageSize, page * pageSize);
+  /** 多选删除：勾选集合跨页保留；「全选」只作用于当前页 */
+  const pageIds = pageList.map((d) => d.id);
+  /** 列表删除（通用组件）：多选批量删除 + 二次确认 */
+  const del = useListDelete({
+    onDelete: (ids) => act({ type: "DELETE_DEVICES", ids }),
+    batch: {
+      pageIds,
+      title: (n) => `删除 ${n} 台设备`,
+      nameOf: (id) => all.find((d) => d.id === id)?.name || id,
+    },
+  });
+  /**
+   * 是否处于多选态（表头勾选列与行勾选列必须同时出现）
+   * @description 行内的 `del.cell(...)` 未进多选时返回 null —— 若照旧铺进 rows，
+   *              就比 heads 多出一个空单元格，整行数据左移一列（「编码」列空白、编码跑到「设备名称」列）
+   */
+  const multi = del.sel !== null;
 
   /**
-   * 导入行 → 设备对象（按设备编码聚合）
-   * @description 模板一行 = 一个检测项，同一设备编码占多行即该设备有多个检测项，
-   *   这里按编码合并成一台设备，检测项编码按出现顺序编号 II-{编码}-{序号}。
+   * 导入行 → 设备对象（一行一台设备）
+   * @description 巡检项列内的多个检测目标拆分后落为该设备的检测项（编号 II-{设备编码}-{序号}）；
+   *   采集方式与单位不再由导入填写，检测项统一落默认值（可见光 / 无单位）。
    * @param rows 解析出的导入行
    * @returns 可直接交给 IMPORT_DEVICES 的设备数组
    */
@@ -179,39 +186,28 @@ export function DeviceMaster() {
     rows.forEach((r) => {
       const code = r.id.trim();
       if (!code) return;
-      if (!map.has(code)) {
-        const type = r.type.trim() || "未分类";
-        map.set(code, {
-          id: code,
-          name: r.name.trim(),
-          type,
-          // 设备形态：导入列优先（简写也认），识别不出按设备类型推导
-          deviceKind:
-            parseDeviceKind(r.deviceKind) || defaultDeviceKindOfType(type),
-          regionCode: "R-A03",
-          locationDesc: "",
-          items: [],
-        });
-      }
-      const dev = map.get(code)!;
-      // 设备身份取首个非空值，检测项逐行追加
-      if (!dev.name.trim()) dev.name = r.name.trim();
-      const target = r.target.trim();
-      if (!target) return;
-      // 同检测目标去重：模板里同设备同目标重复行不再追加
-      if (dev.items.some((it) => it.target === target)) return;
-      dev.items.push({
-        id: `II-${code}-${dev.items.length + 1}`,
-        target,
-        targetKind: defaultTargetKindOfTarget(target),
-        kind: captureKinds.includes(r.kind as CaptureKind)
-          ? (r.kind as CaptureKind)
-          : "可见光",
-        unit: r.unit.trim(),
-        // 「是否巡检」「巡检周期」「优先级」已从界面下线，导入统一落默认值
-        inspect: true,
-        cycle: "每日",
-        priority: "普通",
+      const type = "未分类";
+      map.set(code, {
+        id: code,
+        name: r.name.trim(),
+        type,
+        // 设备形态：导入列优先（简写也认），识别不出按设备类型推导
+        deviceKind:
+          parseDeviceKind(r.deviceKind) || defaultDeviceKindOfType(type),
+        regionCode: "",
+        region: r.region.trim() || undefined,
+        locationDesc: r.location.trim(),
+        items: splitTargets(r.targets).map((target, i) => ({
+          id: `II-${code}-${i + 1}`,
+          target,
+          targetKind: defaultTargetKindOfTarget(target),
+          kind: "可见光",
+          unit: "",
+          // 「是否巡检」「巡检周期」「优先级」已从界面下线，导入统一落默认值
+          inspect: true,
+          cycle: "每日",
+          priority: "普通",
+        })),
       });
     });
     return [...map.values()];
@@ -226,14 +222,13 @@ export function DeviceMaster() {
       const parsed = rows
         .filter((r) => r.some((c) => c))
         .filter((r) => !CSV_HEADS.some((h) => (r[0] || "").startsWith(h)))
-        .map(([id, name, type, dkind, target, kind, unit]) => ({
+        .map(([id, name, dkind, region, location, targets]) => ({
           id: id || "",
           name: name || "",
-          type: type || "",
           deviceKind: dkind || "",
-          target: target || "",
-          kind: kind || "",
-          unit: unit || "",
+          region: region || "",
+          location: location || "",
+          targets: targets || "",
         }))
         .filter((r) => r.id.trim() || r.name.trim());
       if (!parsed.length) {
@@ -274,14 +269,6 @@ export function DeviceMaster() {
           <strong>{stat.total}</strong>
         </div>
         <div>
-          <span>在用</span>
-          <strong>{stat.inUse}</strong>
-        </div>
-        <div>
-          <span>停用</span>
-          <strong>{stat.stopped}</strong>
-        </div>
-        <div>
           <span>巡检项</span>
           <strong>{stat.itemTotal}</strong>
         </div>
@@ -296,27 +283,22 @@ export function DeviceMaster() {
             title="设备台账"
             extra={
               <div className="actions">
-                <input
-                  placeholder="搜索编码 / 名称 / 类型"
-                  value={q}
-                  onChange={(e) => Q(e.target.value)}
-                />
+                {/* 关键词搜索收进「筛选」面板，工具栏只留动作按钮 */}
                 <Btn onClick={toggleFilter}>
                   {filterOpen ? "收起筛选" : "筛选"}
                   {filterCount ? `（${filterCount}）` : ""}
                 </Btn>
+                {/* 删除入口：点一次进入多选模式，勾选后回到此按钮批量删除（通用组件） */}
+                {del.bar}
                 <Btn
                   onClick={() =>
                     DEVFORM({
                       id: "",
                       name: "",
-                      type: "",
                       // 缺省实体设备（大多数装置有形；区域 / 空间类目标由用户改选虚拟设备）
                       deviceKind: "实体设备",
-                      territory: "",
                       // 已按区域筛选时预填该区域，减少一次重复选择
                       region: treeSel.startsWith("r:") ? treeSel.slice(2) : "",
-                      locationDesc: "",
                     })
                   }
                 >
@@ -337,116 +319,65 @@ export function DeviceMaster() {
             }
           >
             {filterOpen && (
-              <div className="filter-grid">
-                <label className="inline-filter">
-                  <span>状态：</span>
-                  <select
-                    value={draft.state}
-                    onChange={(e) => DRAFT({ ...draft, state: e.target.value })}
-                  >
-                    {["全部", "在用", "停用"].map((x) => (
-                      <option key={x}>{x}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="inline-filter">
-                  <span>设备形态：</span>
-                  <select
-                    value={draft.kind}
-                    onChange={(e) => DRAFT({ ...draft, kind: e.target.value })}
-                  >
-                    {["全部", ...deviceKinds].map((x) => (
-                      <option key={x}>{x}</option>
-                    ))}
-                  </select>
-                </label>
-                <div className="filter-actions">
-                  <Btn onClick={resetFilter}>重置</Btn>
-                  <Btn primary onClick={applyFilter}>
-                    查询
-                  </Btn>
-                </div>
-              </div>
+              <FilterPanel
+                fields={[
+                  {
+                    key: "q",
+                    label: "关键词",
+                    placeholder: "编码 / 名称 / 类型",
+                  },
+                  {
+                    key: "kind",
+                    label: "设备形态",
+                    options: ["全部", ...deviceKinds],
+                  },
+                ]}
+                value={draft}
+                onChange={(next) => DRAFT({ ...draft, ...next })}
+                onSearch={applyFilter}
+                onReset={resetFilter}
+              />
             )}
             <Table
+              className={del.tableClass}
               heads={[
+                ...(multi ? [del.head] : []),
                 "编码",
                 "设备名称",
-                "类型",
                 "设备形态",
-                "属地单位",
-                "检测目标",
-                "状态",
+                "更新时间",
                 "操作",
               ]}
-              rows={pageList.map((d) => {
-                return [
-                  d.id,
-                  <span>{d.name}</span>,
-                  d.type,
-                  deviceKindOf(d),
-                  territoryOfDevice(d) || "未指定",
-                  d.items.map((it) => it.target).join(" / ") || "—",
-                  <Badge>{d.state || "在用"}</Badge>,
-                  <div className="actions">
-                    <Btn onClick={() => SETDETAIL(d.id)}>详情</Btn>
-                    {/* EQ-01：设备档案入口移入设备台账详情（以设备为主线看全生命周期） */}
-                    <Btn onClick={() => go("archive", archiveIdOf(s, d.name))}>
-                      设备档案
-                    </Btn>
-                    <Btn
-                      onClick={() =>
-                        d.state === "停用"
-                          ? act({ type: "SET_DEVICE_STATE", deviceId: d.id, state: "在用" })
-                          : STOPSET(d)
-                      }
-                    >
-                      {d.state === "停用" ? "启用" : "停用"}
-                    </Btn>
-                    <Btn onClick={() => DELDEV(d)}>删除</Btn>
-                  </div>,
-                ];
-              })}
+              rows={pageList.map((d) => [
+                // 多选模式：首列勾选框（删除入口收在工具栏，行内只留查看类操作）
+                ...(multi ? [del.cell(d.id, d.name)] : []),
+                d.id,
+                <span>{d.name}</span>,
+                deviceKindOf(d),
+                d.updatedAt || "—",
+                <div className="actions">
+                  {/* EQ-01：设备档案入口移入设备台账详情（以设备为主线看全生命周期） */}
+                  <Btn onClick={() => go("archive", archiveIdOf(s, d.name))}>
+                    设备档案
+                  </Btn>
+                  {/* 检测项维护改为内置页（与「设备档案」同为整页入口） */}
+                  <Btn onClick={() => go("device-targets", d.id)}>
+                    巡检目标
+                  </Btn>
+                </div>,
+              ])}
             />
-            <div className="pagination">
-              <span>
-                共 {total} 条 / {totalPages} 页
-              </span>
-              <label className="inline-filter">
-                <span>每页</span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => {
-                    PAGE_SIZE(Number(e.target.value));
-                    PAGE(1);
-                  }}
-                >
-                  {[5, 10, 20].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-                <span>条</span>
-              </label>
-              <div className="page-btns">
-                <Btn
-                  onClick={() => PAGE(Math.max(1, page - 1))}
-                  disabled={page === 1}
-                >
-                  上一页
-                </Btn>
-                <span className="page-info">
-                  {page} / {totalPages}
-                </span>
-                <Btn
-                  onClick={() => PAGE(Math.min(totalPages, page + 1))}
-                  disabled={page === totalPages}
-                >
-                  下一页
-                </Btn>
-              </div>
-            </div>
+            {/* 分页统一走全站 Pager 组件（默认每页 5 条，可切 10 / 20） */}
+            <Pager
+              page={page}
+              count={total}
+              size={pageSize}
+              onChange={PAGE}
+              onSize={(n) => {
+                PAGE_SIZE(n);
+                PAGE(1);
+              }}
+            />
           </Panel>
         </div>
       </div>
@@ -478,10 +409,9 @@ export function DeviceMaster() {
             />
           </Field>
           <Note>
-            表头：{CSV_HEADS.join(" / ")}。前 4 列为设备身份与形态（设备形态可留空，
-            按设备类型自动判定：管廊 / 区域类 → 虚拟设备，其余 → 实体设备），后 3 列为检测项；
-            <b>同一设备编码可占多行</b>，每行一个检测项；数值类检测目标必须带单位。
-            导入只读取 Excel，不支持手工填写；编码重复时按编码更新已有设备。
+            表头：{CSV_HEADS.join(" / ")}。<b>一行为一台设备</b>
+            ，巡检项可用「、」分隔多个检测目标（采集方式与单位不再填写）；
+            设备形态留空时按设备类型自动判定；编码重复时按编码更新已有设备。
           </Note>
           <div className="actions" style={{ marginTop: 10 }}>
             <Btn onClick={downloadTemplate}>下载 Excel 模板</Btn>
@@ -504,13 +434,9 @@ export function DeviceMaster() {
                 <table className="import-table">
                   <thead>
                     <tr>
-                      <th>设备编码</th>
-                      <th>设备名称</th>
-                      <th>设备类型</th>
-                      <th>设备形态</th>
-                      <th>检测目标</th>
-                      <th>采集方式</th>
-                      <th>单位</th>
+                      {CSV_HEADS.map((h) => (
+                        <th key={h}>{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -518,11 +444,10 @@ export function DeviceMaster() {
                       <tr key={i}>
                         <td>{r.id}</td>
                         <td>{r.name}</td>
-                        <td>{r.type}</td>
                         <td>{r.deviceKind || "自动"}</td>
-                        <td>{r.target || "—"}</td>
-                        <td>{r.kind || "可见光"}</td>
-                        <td>{r.unit || "—"}</td>
+                        <td>{r.region || "—"}</td>
+                        <td>{r.location || "—"}</td>
+                        <td>{r.targets || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -533,28 +458,30 @@ export function DeviceMaster() {
         </Modal>
       )}
 
-      {/* 新增设备：就地建档，身份字段与「后台管理 › 设备配置」同口径 */}
+      {/* 新增设备：就地建档（设备主数据由「设备台账」独家维护） */}
       {devForm && (
         <Modal
           title="新增设备"
+          wide
           onClose={() => DEVFORM(null)}
           footer={
             <>
               <Btn onClick={() => DEVFORM(null)}>取消</Btn>
               <Btn
                 primary
-                disabled={!devForm.id.trim() || !devForm.name.trim()}
+                disabled={
+                  !devForm.id.trim() || !devForm.name.trim() || !devForm.region
+                }
                 onClick={() => {
                   const ok = act({
                     type: "ADD_DEVICE",
                     id: devForm.id.trim(),
                     name: devForm.name.trim(),
-                    // 设备类型用独立字段，避免与动作名 Action.type 冲突
-                    deviceType: devForm.type.trim(),
                     deviceKind: devForm.deviceKind,
                     region: devForm.region,
-                    locationDesc: devForm.locationDesc.trim(),
-                    territory: devForm.territory,
+                    // 安装位置：地图打点 → 厂区坐标（未打点则留空）
+                    coord: coordText || undefined,
+                    coordSys: coordText ? "厂区局部坐标" : undefined,
                   });
                   if (ok) DEVFORM(null);
                 }}
@@ -564,379 +491,73 @@ export function DeviceMaster() {
             </>
           }
         >
-          <Field label="设备编码">
-            <input
-              value={devForm.id}
-              placeholder="例如 V012"
-              onChange={(e) => DEVFORM({ ...devForm, id: e.target.value })}
-            />
-          </Field>
-          <Field label="设备名称">
-            <input
-              value={devForm.name}
-              placeholder="例如 V012 新增储罐"
-              onChange={(e) => DEVFORM({ ...devForm, name: e.target.value })}
-            />
-          </Field>
-          <Field label="设备类型">
-            <input
-              value={devForm.type}
-              placeholder="例如 储罐"
-              onChange={(e) => DEVFORM({ ...devForm, type: e.target.value })}
-            />
-          </Field>
-          <Field label="设备形态">
-            <select
-              value={devForm.deviceKind}
-              onChange={(e) =>
-                DEVFORM({
-                  ...devForm,
-                  deviceKind: e.target.value as DeviceKind,
-                })
-              }
-            >
-              {deviceKinds.map((k) => (
-                <option key={k}>{k}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="所属区域">
-            <select
-              value={devForm.region}
-              onChange={(e) => DEVFORM({ ...devForm, region: e.target.value })}
-            >
-              <option value="">（未指定）</option>
-              {areaOptions(s).map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="安装位置">
-            <input
-              value={devForm.locationDesc}
-              placeholder="例如 二期罐区北侧"
-              onChange={(e) =>
-                DEVFORM({ ...devForm, locationDesc: e.target.value })
-              }
-            />
-          </Field>
-          <Field label="属地单位">
-            <select
-              value={devForm.territory}
-              onChange={(e) =>
-                DEVFORM({ ...devForm, territory: e.target.value })
-              }
-            >
-              <option value="">（未指定）</option>
-              {(s.territories || []).map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </Field>
-        </Modal>
-      )}
-
-      {/* 删除设备：二次确认；已关联巡检点位的设备由引擎拦截并提示 */}
-      {delDev && (
-        <Modal
-          title={`删除设备「${delDev.name}」`}
-          onClose={() => DELDEV(null)}
-          footer={
-            <>
-              <Btn onClick={() => DELDEV(null)}>取消</Btn>
-              <Btn
-                danger
-                onClick={() => {
-                  act({ type: "DELETE_DEVICE", id: delDev.id });
-                  DELDEV(null);
-                }}
-              >
-                确认删除
-              </Btn>
-            </>
-          }
-        >
-          <p>
-            检测项 {delDev.items.length} 个
-            {delDev.items.length
-              ? `（${delDev.items.map((it) => it.target).join("、")}）`
-              : ""}
-          </p>
-        </Modal>
-      )}
-
-      {stopping && (
-        <Modal
-          title={`停用 ${stopping.name}`}
-          onClose={() => STOPSET(null)}
-          footer={
-            <>
-              <Btn onClick={() => STOPSET(null)}>取消</Btn>
-              <Btn
-                primary
-                onClick={() => {
-                  act({
-                    type: "SET_DEVICE_STATE",
-                    deviceId: stopping.id,
-                    state: "停用",
-                    confirmed: true,
-                  });
-                  STOPSET(null);
-                }}
-              >
-                确认停用
-              </Btn>
-            </>
-          }
-        >
-          <Note>
-            停用后，包含该设备点位的任务将被拦截（新建 / 派单都会提示「所属设备已停用」）。
-            已在执行或已排队的任务不会自动回收，请在调度页人工处置。
-          </Note>
-          <p>
-            涉及点位：{pointsOf(stopping).length} 个
-            {pointsOf(stopping).length
-              ? `（${pointsOf(stopping).map((p) => p.name).join("、")}）`
-              : ""}
-          </p>
-        </Modal>
-      )}
-
-      {detail && (
-        <Modal
-          title={`${detail.name} · 设备详情`}
-          wide
-          onClose={() => SETDETAIL(null)}
-        >
-          <div className="detail-grid">
+          <div className="device-form-split">
             <div>
-              <span>设备编码</span>
-              <strong>{detail.id}</strong>
-            </div>
-            <div>
-              <span>设备类型</span>
-              <strong>{detail.type}</strong>
-            </div>
-            <div>
-              <span>设备形态</span>
-              <strong>{deviceKindOf(detail)}</strong>
-            </div>
-            <div>
-              <span>安装位置</span>
-              <strong>{detail.locationDesc || "—"}</strong>
-            </div>
-            <div>
-              <span>运行状态</span>
-              <strong>{detail.state || "在用"}</strong>
-            </div>
-            <div>
-              <span>关联点位</span>
-              <strong>
-                {pointsOf(detail).length ? `${pointsOf(detail).length} 个` : "未落位"}
-              </strong>
-            </div>
-            <div>
-              <span>巡检项</span>
-              <strong>{detail.items.length} 项</strong>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginTop: 14,
-            }}
-          >
-            <h4 className="drawer-sub" style={{ margin: 0 }}>
-              检测项（本设备）
-            </h4>
-            <Btn
-              primary
-              onClick={() =>
-                ITEMFORM({
-                  target: "",
-                  targetKind: "仪表",
-                  kind: "可见光",
-                  unit: "",
-                })
-              }
-            >
-              ＋ 新增检测项
-            </Btn>
-          </div>
-          <p className="muted">检测项支持新增 / 编辑 / 删除。</p>
-          <Table
-            heads={["检测目标", "分类", "采集方式", "单位", "操作"]}
-            rows={detail.items.map((it) => [
-              it.target,
-              it.targetKind || "仪表",
-              it.kind,
-              it.unit || "—",
-              <div className="actions">
-                <Btn
-                  onClick={() =>
-                    ITEMFORM({
-                      id: it.id,
-                      target: it.target,
-                      targetKind: it.targetKind || "仪表",
-                      kindLocked: true,
-                      kind: it.kind,
-                      unit: it.unit,
+              <Field label="设备编码" required>
+                <input
+                  value={devForm.id}
+                  placeholder="例如 V012"
+                  onChange={(e) => DEVFORM({ ...devForm, id: e.target.value })}
+                />
+              </Field>
+              <Field label="设备名称" required>
+                <input
+                  value={devForm.name}
+                  placeholder="例如 V012 新增储罐"
+                  onChange={(e) => DEVFORM({ ...devForm, name: e.target.value })}
+                />
+              </Field>
+              <Field label="设备形态" required>
+                <select
+                  value={devForm.deviceKind}
+                  onChange={(e) =>
+                    DEVFORM({
+                      ...devForm,
+                      deviceKind: e.target.value as DeviceKind,
                     })
                   }
                 >
-                  编辑
-                </Btn>
-                <Btn danger onClick={() => DELITEM(it)}>
-                  删除
-                </Btn>
-              </div>,
-            ])}
-          />
+                  {deviceKinds.map((k) => (
+                    <option key={k}>{k}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="所属区域" required>
+                <select
+                  value={devForm.region}
+                  onChange={(e) => DEVFORM({ ...devForm, region: e.target.value })}
+                >
+                  <option value="">（未指定）</option>
+                  {areaOptions(s).map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <div className="device-form-map">
+              <Field label="安装位置">
+                <input
+                  value={coordText}
+                  placeholder="点击下方地图自动代入厂区坐标"
+                  readOnly
+                />
+              </Field>
+              <MapImageCanvas
+                image={plantMapImage}
+                markers={pickMarkers}
+                selected="pick"
+                onAdd={(x, y) => DEVFORM({ ...devForm, x, y })}
+                height={360}
+              />
+            </div>
+          </div>
         </Modal>
       )}
 
-      {detail && itemForm && (
-        <Modal
-          title={itemForm.id ? "编辑检测项" : "新增检测项"}
-          onClose={() => ITEMFORM(null)}
-          footer={
-            <>
-              <Btn onClick={() => ITEMFORM(null)}>取消</Btn>
-              <Btn
-                primary
-                onClick={() => {
-                  const payload = {
-                    deviceId: detail.id,
-                    target: itemForm.target,
-                    targetKind: itemForm.targetKind,
-                    kind: itemForm.kind,
-                    unit: itemForm.unit,
-                  };
-                  const ok = itemForm.id
-                    ? act({
-                        type: "UPDATE_DEVICE_ITEM",
-                        itemId: itemForm.id,
-                        ...payload,
-                      })
-                    : act({ type: "ADD_DEVICE_ITEM", ...payload });
-                  if (ok) ITEMFORM(null);
-                }}
-              >
-                保存
-              </Btn>
-            </>
-          }
-        >
-          <Field label="分类">
-            <select
-              value={itemForm.targetKind}
-              onChange={(e) =>
-                ITEMFORM((f) =>
-                  f
-                    ? {
-                        ...f,
-                        targetKind: e.target.value as "仪表" | "区域",
-                        kindLocked: true,
-                      }
-                    : f,
-                )
-              }
-            >
-              {(["仪表", "区域"] as const).map((k) => (
-                <option key={k}>{k}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="检测目标">
-            <input
-              value={itemForm.target}
-              placeholder="如 出口压力表"
-              onChange={(e) => {
-                const target = e.target.value;
-                ITEMFORM((f) =>
-                  f
-                    ? {
-                        ...f,
-                        target,
-                        // 未手动改过分类时随检测目标推导（罐壁 / 管廊 → 区域）
-                        targetKind: f.kindLocked
-                          ? f.targetKind
-                          : defaultTargetKindOfTarget(target),
-                      }
-                    : f,
-                );
-              }}
-            />
-          </Field>
-          <Field label="采集方式">
-            <select
-              value={itemForm.kind}
-              onChange={(e) => {
-                const kind = e.target.value as CaptureKind;
-                ITEMFORM((f) =>
-                  f
-                    ? {
-                        ...f,
-                        kind,
-                        // 单位随采集方式自动匹配；人工填过的（非空且非默认值）保留
-                        unit:
-                          !f.unit ||
-                          Object.values(defaultUnitOfCapture).includes(f.unit)
-                            ? defaultUnitOfCapture[kind]
-                            : f.unit,
-                      }
-                    : f,
-                );
-              }}
-            >
-              {captureKinds.map((k) => (
-                <option key={k}>{k}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="单位（数值类必填，如 MPa / ℃）">
-            <input
-              value={itemForm.unit}
-              onChange={(e) =>
-                ITEMFORM((f) => (f ? { ...f, unit: e.target.value } : f))
-              }
-            />
-          </Field>
-        </Modal>
-      )}
+      {/* 批量删除设备：二次确认（通用组件）；已关联巡检点位的设备由引擎拦截并提示 */}
+      {del.modal}
 
-      {detail && delItem && (
-        <Modal
-          title={`删除检测项「${delItem.target}」`}
-          onClose={() => DELITEM(null)}
-          footer={
-            <>
-              <Btn onClick={() => DELITEM(null)}>取消</Btn>
-              <Btn
-                danger
-                onClick={() => {
-                  act({
-                    type: "DELETE_DEVICE_ITEM",
-                    deviceId: detail.id,
-                    itemId: delItem.id,
-                  });
-                  DELITEM(null);
-                }}
-              >
-                确认删除
-              </Btn>
-            </>
-          }
-        >
-          <Note>
-            删除后该检测目标将从设备清单移除，并同步解绑对应的仪表、巡检目标台账与逻辑点引用；
-            此操作不可撤销。
-          </Note>
-        </Modal>
-      )}
     </>
   );
 }

@@ -23,14 +23,11 @@ import type {
   AlarmClass,
   AlarmItem,
 } from "./types";
-import { TERRITORY_UNITS } from "./types";
 import { defaultRangeOfUnit } from "./alarmRules";
 import {
-  kindOfUnit,
-  type AlarmTemplate,
-  type ApplyKind,
-} from "./alarmTemplates";
-import { defaultRequirementOfInstrument, territoryOfDevice } from "./deviceMaster";
+  defaultRequirementOfInstrument,
+  defaultCategoryOfTarget,
+} from "./deviceMaster";
 import { captureAction } from "./types";
 import { SAMPLE_MAP_IMAGE } from "./sampleMap";
 import { withAlarmSetting, type AlarmSettingHost } from "./alarmSettings";
@@ -285,7 +282,7 @@ const task = (
   /** 演示数据统一按「相对当前时间」生成，避免多日后打开时今日 / 本月统计为空 */
   created: dueIn(-75),
 });
-// ── 告警模板与平台标准规则库（告警管理 › 告警模板管理）──────────────────
+// ── 平台标准规则与告警类别（告警管理）──────────────────
 /**
  * 演示用告警类别（告警管理 › 告警类别）：二级口径 = 分类名称 + 告警大类 + 是否启用
  * @description 启用的分类是「告警设置 › 告警类型」下拉与「告警记录 › 分类筛选」的数据源；
@@ -301,7 +298,7 @@ const ALARM_CLASSES: AlarmClass[] = [
 ];
 /**
  * 演示用告警推送人员（告警管理 › 告警推送）
- * @description 三条演示各绑定一个维度：等级留空 = 全部等级；区域 / 属地 / 设备留空 = 不限该维度，
+ * @description 三条演示各绑定一个维度：等级留空 = 全部等级；区域 / 设备留空 = 不限该维度，
  *              维度之间同时成立（见 alarmPush.pushStaffOfAlarm）
  */
 const ALARM_PUSH_STAFF: AlarmPushStaff[] = [
@@ -325,8 +322,8 @@ const ALARM_PUSH_STAFF: AlarmPushStaff[] = [
     login: "zhoumin",
     dept: "设备管理部",
     levels: ["一级", "二级"],
-    // 按属地绑定：装置一部 / 二部的设备告警
-    territories: ["装置一部", "装置二部"],
+    // 按区域绑定：装置区的设备告警
+    areas: ["装置区"],
     sms: true,
     updatedBy: "王姐",
     updatedAt: "2026-10-14 09:12:30",
@@ -345,280 +342,6 @@ const ALARM_PUSH_STAFF: AlarmPushStaff[] = [
     updatedAt: "2026-10-14 09:12:30",
   },
 ];
-/**
- * 演示用告警模板（名称 + 触发条件 + 处理流程）
- * @description 模板按检测类型匹配（由点位单位换算，见 alarmTemplates.kindOfUnit）。
- *              四个启用模板的量程与 `alarmRules.DEFAULT_RANGE` 完全一致，
- *              因此接入模板不给现有判定结果带来任何变化；
- *              末尾「连续确认」模板默认**停用**，用于演示触发逻辑（连续 N 次）怎么配。
- */
-const ALARM_TEMPLATES: AlarmTemplate[] = [
-  {
-    id: "TPL-01",
-    name: "压力超限告警",
-    kinds: ["压力"],
-    trigger: {
-      type: "数值范围",
-      unit: "MPa",
-      min: 0.2,
-      max: 0.8,
-      expected: "",
-      mode: "单次即触发",
-      consecutive: 1,
-    },
-    level: "二级",
-    flow: [
-      "核对压力表读数与外部 AI 识别值是否一致",
-      "对照工艺卡片确认当前工况允许的压力区间",
-      "压力持续超限：通知值班长，转现场处置",
-      "复测确认后在处置页填写处理结果（受理 / 忽略 + 是否误报）",
-    ],
-    alarmSeconds: 10,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-2880),
-  },
-  {
-    id: "TPL-02",
-    name: "温度超限告警",
-    kinds: ["温度", "液位"],
-    trigger: {
-      type: "数值范围",
-      unit: "℃",
-      min: 0,
-      max: 60,
-      expected: "",
-      mode: "单次即触发",
-      consecutive: 1,
-    },
-    level: "二级",
-    flow: [
-      "确认测温部位（罐壁 / 管道）与热像画面是否对准",
-      "排除阳光、反光等外部热源干扰后复测",
-      "持续超限：通知工艺确认介质温度，必要时降温",
-      "在处置页记录处理结果与依据",
-    ],
-    alarmSeconds: 5,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-4320),
-  },
-  {
-    id: "TPL-03",
-    name: "气体浓度超限告警",
-    kinds: ["气体浓度"],
-    trigger: {
-      type: "数值范围",
-      unit: "%LEL",
-      min: 0,
-      max: 20,
-      expected: "",
-      mode: "单次即触发",
-      consecutive: 1,
-    },
-    level: "二级",
-    flow: [
-      "立即通知值班长与现场班组，确认周边作业情况",
-      "核查气体检测仪标定有效期与采样口是否堵塞",
-      "浓度持续上升：按应急预案撤离并通风置换",
-      "复测合格后在处置页记录处理结果",
-    ],
-    alarmSeconds: 15,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-5760),
-  },
-  {
-    id: "TPL-04",
-    name: "阀门状态异常告警",
-    kinds: ["阀门状态"],
-    trigger: {
-      type: "期望状态",
-      unit: "",
-      min: 0,
-      max: 0,
-      expected: "开启",
-      mode: "单次即触发",
-      consecutive: 1,
-    },
-    level: "二级",
-    flow: [
-      "核对阀位指示与工艺要求的开 / 关状态",
-      "确认是否处于检修隔离状态（隔离期间不判定）",
-      "状态不符：通知现场复位并复测",
-      "在处置页记录处理结果与依据",
-    ],
-    alarmSeconds: 10,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-7200),
-  },
-  {
-    id: "TPL-05",
-    name: "压力波动确认告警（连续 2 次）",
-    kinds: ["压力"],
-    // 演示「触发逻辑」：连续 2 次超限才触发，用于抑制工况波动造成的抖动误报；
-    // 默认停用 —— 启用并停用 TPL-01 后，压力点将改按连续确认触发
-    trigger: {
-      type: "数值范围",
-      unit: "MPa",
-      min: 0.2,
-      max: 0.8,
-      expected: "",
-      mode: "连续确认",
-      consecutive: 2,
-    },
-    level: "二级",
-    flow: [
-      "第 1 次超限只记录结果，不派工单",
-      "连续第 2 次仍超限 → 生成告警，通知值班长",
-      "现场核验压力表与工艺工况",
-    ],
-    alarmSeconds: 8,
-    enabled: false,
-    version: 1,
-    updatedAt: dueIn(-1440),
-  },
-  {
-    // 环境 / 区域类：区域气体泵吸 ppm 口径（与探头 %LEL 的 TPL-03 按单位区分）
-    id: "TPL-06",
-    name: "区域可燃气体浓度超限告警",
-    kinds: ["气体浓度"],
-    trigger: {
-      type: "数值范围",
-      unit: "ppm",
-      min: 0,
-      max: 50,
-      expected: "",
-      mode: "单次即触发",
-      consecutive: 1,
-    },
-    level: "一级",
-    flow: [
-      "立即通知值班长与现场班组，确认周边作业与人员",
-      "核查泵吸采样管路是否通畅、标定是否在有效期",
-      "浓度持续上升：按应急预案撤离并通风置换",
-      "复测合格后在处置页记录处理结果（受理 / 忽略 + 是否误报）",
-    ],
-    alarmSeconds: 30,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-2160),
-  },
-  {
-    // 区域红外：℃ 0–120（探头测温 TPL-02 是 0–60，两者按阈值 / 关联关系区分）
-    id: "TPL-07",
-    name: "区域高温告警",
-    kinds: ["温度"],
-    trigger: {
-      type: "数值范围",
-      unit: "℃",
-      min: 0,
-      max: 120,
-      expected: "",
-      mode: "单次即触发",
-      consecutive: 1,
-    },
-    level: "二级",
-    flow: [
-      "确认热像扫描范围与锚点是否一致，排除阳光 / 反光干扰",
-      "定位最高温点并对照工艺允许温度",
-      "持续超限：通知工艺确认介质温度，必要时降温",
-    ],
-    alarmSeconds: 15,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-3600),
-  },
-  {
-    // 环境 / 区域类：声纹没有量纲，检测类型由巡检要求声明（REQ-SOUND › 声纹）
-    id: "TPL-08",
-    name: "声纹异常告警",
-    kinds: ["声纹"],
-    trigger: {
-      type: "期望状态",
-      unit: "",
-      min: 0,
-      max: 0,
-      expected: "无异常噪声",
-      mode: "连续确认",
-      consecutive: 2,
-    },
-    level: "二级",
-    flow: [
-      "回放录音确认异响类型（摩擦 / 撞击 / 啸叫）",
-      "对可疑部位停机检查（轴承、联轴器、阀门）",
-      "在处置页记录处理结果与依据",
-    ],
-    alarmSeconds: 10,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-2880),
-  },
-  {
-    id: "TPL-09",
-    name: "AI 不安全行为告警",
-    kinds: ["不安全行为"],
-    trigger: {
-      type: "期望状态",
-      unit: "",
-      min: 0,
-      max: 0,
-      expected: "无不安全行为",
-      mode: "单次即触发",
-      consecutive: 1,
-    },
-    level: "一级",
-    flow: [
-      "立即通知现场负责人制止并纠正行为",
-      "复核画面确认是否为误识别（遮挡 / 远处人员）",
-      "在处置页记录处理结果与依据",
-    ],
-    alarmSeconds: 30,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-1440),
-  },
-  {
-    id: "TPL-10",
-    name: "外观异常告警",
-    kinds: ["外观"],
-    trigger: {
-      type: "期望状态",
-      unit: "",
-      min: 0,
-      max: 0,
-      expected: "无异常",
-      mode: "单次即触发",
-      consecutive: 1,
-    },
-    level: "三级",
-    flow: [
-      "与基准图逐项比对，确认差异是否真实（积水 / 杂物 / 破损）",
-      "需要现场处理的转现场班组；属于环境变化的更新基准图",
-    ],
-    alarmSeconds: 5,
-    enabled: true,
-    version: 1,
-    updatedAt: dueIn(-2160),
-  },
-];
-/**
- * 取某检测类型的启用模板（种子数据专用，避免初始化顺序问题）
- * @description 口径与 `alarmTemplates.templateFor` 一致：检测类型优先由巡检要求声明
- *              （环境 / 区域类常常没有量纲），同类型多模板时按单位优先
- * @param unit 点位 / 台账单位
- * @param detectKind 巡检要求的检测类型（可选）
- * @returns 命中的模板；无命中时返回 undefined
- */
-const seedTemplateOf = (unit: string, detectKind?: ApplyKind) => {
-  const kind = detectKind || kindOfUnit(unit);
-  const same = ALARM_TEMPLATES.filter((t) => t.enabled && t.kinds.includes(kind));
-  return (
-    (unit && same.find((t) => t.trigger.unit && t.trigger.unit === unit)) ||
-    same[0]
-  );
-};
 /**
  * 生成一条巡检检测结果（演示种子数据）
  * @description 原始采集值即外部 AI 识别输入，识别值默认等于原始值；
@@ -656,28 +379,21 @@ const result = (
    * 不用当前规则倒推历史判定
    */
   ruleSnapshot: (() => {
-    // 与引擎同源：先按检测类型匹配后台管理的启用模板，取模板的触发条件 / 等级 / 触发逻辑
-    const tpl = seedTemplateOf(point.unit);
-    const range = defaultRangeOfUnit(tpl ? tpl.trigger.unit : point.unit);
+    // 与引擎 alarmRules.rulesOf 的兜底分支同源：按"检测项单位"给量程
+    const range = defaultRangeOfUnit(point.unit);
     return {
       id: "RULE-" + point.id,
       name: point.name + "标准",
       pointId: point.id,
-      type: tpl
-        ? tpl.trigger.type
-        : range
-          ? ("数值范围" as const)
-          : ("期望状态" as const),
-      unit: tpl ? tpl.trigger.unit || point.unit : point.unit,
-      min: tpl ? tpl.trigger.min : (range?.min ?? 0),
-      max: tpl ? tpl.trigger.max : (range?.max ?? 0),
-      expected: tpl?.trigger.expected || "开启",
-      level: tpl?.level || "二级",
+      type: range ? ("数值范围" as const) : ("期望状态" as const),
+      unit: point.unit,
+      min: range?.min ?? 0,
+      max: range?.max ?? 0,
+      expected: "开启",
+      level: "二级" as const,
       enabled: ["P001", "P002", "P003"].includes(point.id),
-      // 引用后台管理的告警模板：模板 ID 与触发逻辑随快照带出，告警处置页据此展示处理流程
-      templateId: tpl?.id,
-      triggerMode: tpl?.trigger.mode ?? "单次即触发",
-      consecutive: tpl?.trigger.consecutive ?? 1,
+      triggerMode: "识别即触发" as const,
+      consecutive: 1,
       version: 1,
     };
   })(),
@@ -1233,6 +949,27 @@ const devices: DeviceAsset[] = [
   },
 ];
 /**
+ * 设备「更新时间」与检测项「分类」（Mock）
+ * @description 真实项目里更新时间由建档 / 编辑 / 清单导入 / 检测项增删改刷新；
+ *              种子按设备给一组演示时间，检测项分类按检测目标名推导（口径见 deviceMaster.defaultCategoryOfTarget）
+ */
+const deviceUpdatedAt: Record<string, string> = {
+  "DEV-V001": "2026-10-14 09:12:00",
+  "DEV-V002": "2026-10-13 16:40:00",
+  "DEV-V003": "2026-10-15 08:05:00",
+  "DEV-V004": "2026-10-11 14:22:00",
+  "DEV-PLA": "2026-10-10 10:31:00",
+  "DEV-PLB": "2026-10-09 17:08:00",
+  "DEV-V009": "2026-09-28 11:47:00",
+};
+devices.forEach((d) => {
+  if (!d.updatedAt) d.updatedAt = deviceUpdatedAt[d.id] || "2026-10-01 09:00:00";
+  d.items.forEach((it) => {
+    // 分类缺省按检测目标名推导（与新增 / 编辑检测项、老缓存回填同口径）
+    if (!it.category) it.category = defaultCategoryOfTarget(it.target);
+  });
+});
+/**
  * 地图自带的**空闲定位ID点**（Mock）：随地图文件导入、尚未绑定巡检点
  * @description 「添加 / 编辑巡检点」的「选择地图中带有定位ID的点」从这里选。
  *              真实项目里这些 ID 由现场建图/踩点带上来；此处 Mock 出一批，
@@ -1296,6 +1033,9 @@ const deriveLogicalPoints = (pts: Point[]): LogicalPoint[] =>
 const requirements: Requirement[] = [
   {
     id: "REQ-LEAK",
+    code: "ALG-01",
+    deploy: "云端",
+    state: "启用",
     name: "看滴漏",
     kind: "可见异常",
     description: "识别泵体 / 法兰 / 阀门根部的渗漏痕迹（液滴、油渍、结晶）",
@@ -1310,6 +1050,9 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-HOT",
+    code: "ALG-02",
+    deploy: "本体",
+    state: "启用",
     name: "看高温",
     kind: "读数识别",
     description: "以热像定位设备表面 / 区域最高温，超过上限判异常",
@@ -1326,6 +1069,9 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-READ",
+    code: "ALG-03",
+    deploy: "云端",
+    state: "启用",
     name: "看仪表读数",
     kind: "读数识别",
     description: "识别机械 / 数显表读数并与量程比对",
@@ -1339,6 +1085,9 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-APPEAR",
+    code: "ALG-04",
+    deploy: "云端",
+    state: "启用",
     name: "看外观破损",
     kind: "可见异常",
     description: "锈蚀、变形、破损、被遮挡、指示缺失",
@@ -1352,6 +1101,9 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-GAS",
+    code: "ALG-05",
+    deploy: "云端",
+    state: "启用",
     name: "看气体浓度",
     kind: "读数识别",
     description: "读取可燃气体探头数值，超过上限判异常",
@@ -1368,6 +1120,9 @@ const requirements: Requirement[] = [
   {
     // TGT-01 环境 / 区域类：沿锚点泵吸采样，量与探头不同（ppm），单独一套要求与模板
     id: "REQ-GAS-AREA",
+    code: "ALG-06",
+    deploy: "本体",
+    state: "启用",
     name: "看区域气体浓度",
     kind: "读数识别",
     description: "沿参照物锚点泵吸采样，读取区域可燃气体浓度，超过上限判异常",
@@ -1383,6 +1138,9 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-STATE",
+    code: "ALG-07",
+    deploy: "云端",
+    state: "启用",
     name: "看阀位状态",
     kind: "状态判别",
     description: "判别阀门开 / 关并期望状态比对",
@@ -1397,6 +1155,9 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-SOUND",
+    code: "ALG-08",
+    deploy: "本体",
+    state: "启用",
     name: "听异响（声纹）",
     kind: "声音判别",
     description: "录音判别异常噪声（摩擦、撞击、啸叫），仪表异响与区域声纹共用本要求",
@@ -1410,6 +1171,9 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-AI",
+    code: "ALG-09",
+    deploy: "本体",
+    state: "启用",
     name: "看 AI 不安全行为",
     kind: "可见异常",
     description: "识别区域内未戴安全帽、越界、违规作业等不安全行为",
@@ -1423,6 +1187,9 @@ const requirements: Requirement[] = [
   },
   {
     id: "REQ-ENV-VIS",
+    code: "ALG-10",
+    deploy: "云端",
+    state: "启用",
     name: "环境拍照比对",
     kind: "可见异常",
     description: "按锚点固定视角拍照并与基准图比对（积水、杂物、破损、指示缺失）",
@@ -1510,19 +1277,11 @@ const deriveBusinessTargets = (
       // 业务目标与业务要求（说明性口径，列表与任务详情据此解释"这条目标是干什么的"）
       goal: `确认${x.name}${req.judge === "期望状态" ? "状态符合要求" : "读数在正常范围内"}`,
       require: req.description,
-      // 告警设置：**平台唯一的告警配置入口**（阈值即上面的 min/max/expected）
+      // 告警设置：**平台唯一的告警配置入口**（阈值即上面的 min/max/expected，告警项全部手填）
       alarm: {
-        // 平台没有「告警开关」：判定异常即告警；来源统一走模板（可在台账里改成手动输入）
-        source: "模板",
         level: item?.priority === "紧急" ? "一级" : "二级",
         trigger: "单次异常即告警",
         notify: ["设备岗"],
-        /**
-         * 关联的告警模板（告警管理 › 告警模板管理）：
-         * 演示数据按**巡检要求的检测类型 + 单位**带出默认关联，可在台账里改成别的模板；
-         * 规则判定 / 处置流程 / 声光报警都按关联模板走（一处维护、多点引用）
-         */
-        templateId: seedTemplateOf(x.unit, req.detectKind)?.id,
       },
       createdAt: "2026-09-20 09:10",
     };
@@ -1587,8 +1346,6 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
   const devs = structuredClone(devices).map((d) => ({
     region: d.locationDesc.startsWith("装置区") ? "装置区" : "一期罐区",
     ...d,
-    // 属地单位：告警 KPI 的「属地」维度口径（罐区归储运部、装置区按 A / B 段分属一 / 二部）
-    territory: territoryOfDevice(d),
   }));
   /**
    * 工厂树与巡检目标台账：仪表 ← 设备清单的检测目标；业务目标 ← 仪表 + 巡检要求。
@@ -1613,10 +1370,8 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
       min: 0,
       max: 50,
       criteria: "取泵吸稳定后 10 秒均值，超过 50 ppm 判异常",
-      // 区域类也走同一套主数据链路：巡检要求（区域气体）→ 算法 → 告警模板（ppm 口径）
+      // 区域类也走同一套主数据链路：巡检要求（区域气体）→ 算法 → 告警项（ppm 口径）
       alarm: {
-        source: "模板",
-        templateId: "TPL-06",
         level: "一级",
         trigger: "单次异常即告警",
         notify: ["设备岗", "值班长"],
@@ -1641,10 +1396,8 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
       min: 0,
       max: 120,
       criteria: "以区域最高温为准，超过 120 ℃ 判异常",
-      // 区域红外：关联区域高温模板（℃ 0–120 口径，与探头测温的 TPL-02 区分开）
+      // 区域红外：℃ 0–120 口径，与探头测温的量程区分开
       alarm: {
-        source: "模板",
-        templateId: "TPL-07",
         level: "二级",
         trigger: "单次异常即告警",
         notify: ["设备岗"],
@@ -1723,7 +1476,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         name: "一期罐区巡检地图",
         region: "一期罐区",
         version: 3,
-        state: "已发布",
+        syncState: "已同步",
         status: "启用",
         source: "机器人首次走行",
         batch: "B001",
@@ -1809,7 +1562,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         name: "装置区巡检地图",
         region: "装置区",
         version: 1,
-        state: "已发布",
+        syncState: "已同步",
         status: "启用",
         source: "机器人首次走行",
         batch: "B002",
@@ -1995,6 +1748,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         end: "返航",
         state: "启用",
         version: 1,
+        updatedAt: "2026/09/22 10:00:00",
       },
       {
         id: "TMP02",
@@ -2004,6 +1758,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         end: "返航",
         state: "启用",
         version: 1,
+        updatedAt: "2026/10/15 16:20:00",
       },
     ],
     plans: [
@@ -2413,25 +2168,6 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         handleResult: "受理",
         handleNote: "现场复位阀位后复测正常",
         falsePositive: false,
-        // 反馈（复检）：受理后按处置流程回填（引用模板 TPL-04 的 4 步流程，已完成 2 步）
-        verify: {
-          startedAt: dueIn(-762),
-          steps: [
-            {
-              text: "核对阀位指示与工艺要求的开 / 关状态",
-              done: true,
-              at: dueIn(-735),
-            },
-            {
-              text: "确认是否处于检修隔离状态（隔离期间不判定）",
-              done: true,
-              at: dueIn(-700),
-            },
-            { text: "状态不符：通知现场复位并复测", done: false },
-            { text: "在处置页记录处理结果与依据", done: false },
-          ],
-          state: "待反馈",
-        },
         time: dueIn(-795),
       },
       {
@@ -2507,31 +2243,6 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         handleResult: "受理",
         handleNote: "已排查罐壁保温层，复测恢复",
         falsePositive: false,
-        // 反馈（复检）：处置流程 4 步全部回馈完成 → 有效闭环
-        verify: {
-          startedAt: dueIn(-11000),
-          steps: [
-            {
-              text: "确认测温部位（罐壁 / 管道）与热像画面是否对准",
-              done: true,
-              at: dueIn(-10950),
-            },
-            {
-              text: "排除阳光、反光等外部热源干扰后复测",
-              done: true,
-              at: dueIn(-10900),
-            },
-            {
-              text: "持续超限：通知工艺确认介质温度，必要时降温",
-              done: true,
-              at: dueIn(-10850),
-            },
-            { text: "在处置页记录处理结果与依据", done: true, at: dueIn(-10700) },
-          ],
-          state: "有效闭环",
-          closedAt: dueIn(-10700),
-          note: "保温层排查完成，复测罐壁温度回到 42 ℃，判定有效闭环",
-        },
         time: dueIn(-11045),
       },
       {
@@ -2543,33 +2254,11 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         level: "二级",
         category: "业务",
         state: "处理中",
-        notes: [
-          "处理：受理",
-          "处理说明：现场已复位，等待复检回馈",
-          "进入反馈（复检）流程：4 步处置流程（引用模板 TPL-01）；受理后超过 30 天未闭环自动判定为无效闭环",
-        ],
+        notes: ["处理：受理", "处理说明：现场已复位，复测恢复正常"],
         handledAt: dueIn(-47520),
         handleResult: "受理",
-        handleNote: "现场已复位，等待复检回馈",
+        handleNote: "现场已复位，复测恢复正常",
         falsePositive: false,
-        // 反馈（复检）：受理已超过 30 天仍未闭环 → 展示为「无效闭环（超 30 天自动判定）」（派生值，不回写数据）
-        verify: {
-          startedAt: dueIn(-47520),
-          steps: [
-            {
-              text: "核对压力表读数与外部 AI 识别值是否一致",
-              done: true,
-              at: dueIn(-47400),
-            },
-            { text: "对照工艺卡片确认当前工况允许的压力区间", done: false },
-            { text: "压力持续超限：通知值班长，转现场处置", done: false },
-            {
-              text: "复测确认后在处置页填写处理结果（受理 / 忽略 + 是否误报）",
-              done: false,
-            },
-          ],
-          state: "待反馈",
-        },
         time: dueIn(-15045),
       },
       {
@@ -2673,8 +2362,6 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         time: dueIn(-300),
       },
     ],
-    /** 告警模板（告警管理 › 告警模板管理）：名称 + 触发条件 + 处理流程 */
-    alarmTemplates: ALARM_TEMPLATES,
     /**
      * 地图下发记录（**最新在前**）：每个「空间版本 V{n}」下发给哪台机器、结果如何。
      * @description 与机器人当前激活版本互为印证：
@@ -2684,7 +2371,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
      */
     syncs: [
       {
-        // 当前版本已下发给 R02，但对方尚未回激活回执：地图"下发到位"=已发布，机器仍停在旧版本
+        // 当前版本已下发给 R02，但对方尚未回激活回执：地图"下发到位"=已同步，机器仍停在旧版本
         id: "SYNC-A03-05",
         mapId: "MAP-A03",
         robotId: "R02",
@@ -3244,20 +2931,16 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
     /** 算法（AI 能力）清单：目标台账按名称引用，列表显示「关联台账」条数 */
     algoConfigs,
     /**
-     * 区域（工厂树第一层：区域 → 设备 → 仪表）。
+     * 区域（工厂树：固定根「全厂区」AREA-ROOT → 一级区域 → 子区域）。
      * 区域在此作为**可维护的主数据**（后台管理里可新增 / 改名 / 删除），
-     * 设备按安装位置前缀归属到区域；地图 / 机器人的"区域"下拉也取自这里。
+     * 但根节点「全厂区」内置不可删；设备按安装位置前缀归属到区域；
+     * 地图 / 机器人的"区域"下拉也取自这里。
      */
     areas: [
-      { id: "AREA-01", name: "一期罐区" },
-      { id: "AREA-02", name: "装置区" },
+      { id: "AREA-ROOT", name: "全厂区" },
+      { id: "AREA-01", name: "一期罐区", parentId: "AREA-ROOT" },
+      { id: "AREA-02", name: "装置区", parentId: "AREA-ROOT" },
     ],
-    /**
-     * 属地单位（设备「属地」字段的候选口径）。
-     * 与区域一样是**可维护的主数据**（后台管理 › 工厂基础数据 › 属地配置），
-     * 设备台账下拉、告警 KPI 属地维度、告警推送范围都取这一份。
-     */
-    territories: [...TERRITORY_UNITS],
     /** 仪表：设备清单里的检测目标，只是资产、**不能直接巡检** */
     instruments: ins,
     /** 巡检要求模板库（看滴漏 / 看高温 / 看仪表读数 / 看外观破损 / 看气体浓度 / 看阀位 / 听异响） */

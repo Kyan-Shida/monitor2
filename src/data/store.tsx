@@ -6,7 +6,10 @@ import { SAMPLE_MAP_IMAGE } from "./sampleMap";
 import { publishStateOf, transition, type Action } from "./engine";
 import { roleOf } from "./roles";
 import { algoDeploys, algoKinds } from "./types";
-import { defaultDeviceKindOfType, territoryOfDevice } from "./deviceMaster";
+import {
+  defaultDeviceKindOfType,
+  defaultCategoryOfTarget,
+} from "./deviceMaster";
 import { targetsOf } from "./mapCalibration";
 import { withAlarmSetting } from "./alarmSettings";
 import type {
@@ -15,7 +18,56 @@ import type {
   AlgoKind,
   RobotPayloadAbility,
   BusinessTarget,
+  Area,
 } from "./types";
+import { ROOT_AREA_ID, ROOT_AREA_NAME } from "./types";
+
+/**
+ * 区域树固定根规整（幂等）：保证存在且仅存在一个「全厂区」根（AREA-ROOT）
+ * @description 兼容三类历史数据：
+ *  1) 新 seed：已含 AREA-ROOT，原样返回；
+ *  2) 用户手建过名为「全厂区」的根区域：归一化为 AREA-ROOT，其下级 parentId 同步改指；
+ *  3) 早期扁平区域（都没 parentId）：补 AREA-ROOT，并把无父级区域挂到根下；
+ *  另外兜底：parentId 悬空（指向已删除区域）的节点也挂回根下。
+ * @param list 载入的区域集合
+ * @returns 规整后的区域集合
+ */
+function ensureRootArea(list: Area[] | undefined): Area[] {
+  const areas = Array.isArray(list) ? list.map((a) => ({ ...a })) : [];
+  const root = areas.find((a) => a.id === ROOT_AREA_ID);
+  // 同名历史根（用户在手填父级时代自动建出来的「全厂区」）
+  const legacy = areas.find(
+    (a) => a.id !== ROOT_AREA_ID && a.name === ROOT_AREA_NAME && !a.parentId,
+  );
+  if (!root && !legacy) {
+    // 情况 3：补根，原有无父级区域全部挂到根下
+    areas.forEach((a) => {
+      if (!a.parentId) a.parentId = ROOT_AREA_ID;
+    });
+    areas.unshift({ id: ROOT_AREA_ID, name: ROOT_AREA_NAME });
+  } else if (!root && legacy) {
+    // 情况 2：把历史根的 id 归一化，子级引用一并改指
+    const oldId = legacy.id;
+    legacy.id = ROOT_AREA_ID;
+    areas.forEach((a) => {
+      if (a.parentId === oldId) a.parentId = ROOT_AREA_ID;
+    });
+  } else if (root && legacy) {
+    // 根与历史根并存：历史根的子级改挂正式根，再移除历史根
+    const oldId = legacy.id;
+    areas.forEach((a) => {
+      if (a.parentId === oldId) a.parentId = ROOT_AREA_ID;
+    });
+    return ensureRootArea(areas.filter((a) => a.id !== oldId));
+  }
+  // 兜底：悬空父链（父级被删过）挂回根
+  const ids = new Set(areas.map((a) => a.id));
+  areas.forEach((a) => {
+    if (a.parentId && a.parentId !== ROOT_AREA_ID && !ids.has(a.parentId))
+      a.parentId = ROOT_AREA_ID;
+  });
+  return areas;
+}
 const BASE_KEY = "inspection-v14-prototype";
 const DEFAULT_TENANT = "T-DEFAULT";
 /** 当前租户：存独立键，切租户即整份换数据 */
@@ -147,6 +199,13 @@ function withSeedDefaults(s: State): State {
   /** 设备形态（实体设备 / 虚拟设备）：老缓存设备缺该字段，按设备类型回填，只补缺、不覆盖 */
   const needDeviceKind = !!s.devices?.some((d) => !d.deviceKind);
   /**
+   * 设备「更新时间」与检测项「分类」：老缓存缺这两项时补缺。
+   * 更新时间落固定的演示时间（不用"当前时间"，避免每次打开都变）；分类按检测目标名推导
+   */
+  const needDeviceMeta = !!s.devices?.some(
+    (d) => !d.updatedAt || (d.items || []).some((it) => !it.category),
+  );
+  /**
    * 巡检点状态收敛（只有 已启用 / 停用）：老缓存里的「待标注 / 待验证 / 待重新验证」
    * 属已下线的过渡态，统一归为「停用」
    */
@@ -182,8 +241,8 @@ function withSeedDefaults(s: State): State {
       p.pointIds.some((id) => !ids.has(id)),
     );
   });
-  // 地图状态是派生值（口径见 engine.publishStateOf）：老缓存存的是旧口径，载入时按机器 / 下发记录校正
-  const needMapState = s.maps?.some((m) => m.state !== publishStateOf(s, m));
+  // 地图同步状态是派生值（口径见 engine.publishStateOf）：老缓存存的是旧口径，载入时按机器 / 下发记录校正
+  const needMapState = s.maps?.some((m) => m.syncState !== publishStateOf(s, m));
   // 地图逻辑启停：新加字段，老缓存缺 status 时默认「启用」
   const needMapStatus = s.maps?.some((m) => !m.status);
   /** 告警被清空过的老缓存：回填示例，否则工作台与「告警事件」是空表（只为演示可读性） */
@@ -200,9 +259,6 @@ function withSeedDefaults(s: State): State {
   );
   // 算法（AI 能力）清单：老缓存没有该主数据，缺失时从 seed 回填，否则「算法模板管理」页是空表
   const needAlgos = !s.algoConfigs?.length;
-  // 告警模板（告警管理 › 告警模板管理）：老缓存没有该集合时从 seed 回填，
-  // 否则后台配置页是空表，且点位规则会失去模板引用（原「规则库」已并入模板集合）
-  const needAlarmTemplates = !s.alarmTemplates?.length;
   // 算法口径收敛（部署位置 / 适配类型）：老缓存里的「边缘 / 本地」与旧巡检要求分类统一归一
   const needAlgoNorm = !!s.algoConfigs?.some(
     (a) =>
@@ -223,17 +279,16 @@ function withSeedDefaults(s: State): State {
    */
   const areasStale =
     !s.areas?.length || s.areas.every((a) => a.name === "未分区");
-  /** 属地主数据：老缓存没有该集合时从 seed 回填（设备下拉 / 告警 KPI / 推送范围都取它） */
-  const needTerritories = !s.territories?.length;
   /**
    * 巡检要求（模板库）：老缓存缺新增条目（如区域类 REQ-GAS-AREA）时按 id 补回 seed，
    * 不覆盖用户在「巡检要求管理」后台页新建 / 修改的条目（该页已暴露编辑入口）
    */
   const needReqMaster =
     !s.requirements?.length ||
-    !s.requirements?.some((r) => r.id === "REQ-GAS-AREA");
+    !s.requirements?.some((r) => r.id === "REQ-GAS-AREA") ||
+    // 合并为「算法模板」后新增了编码 / 部署位置 / 状态：老缓存缺任一项也要迁移
+    !s.requirements?.every((r) => r.code && r.deploy && r.state);
   const needAlgoMaster = !s.algoConfigs?.some((a) => a.id === "ALG-10");
-  const needTplMaster = !s.alarmTemplates?.some((t) => t.id === "TPL-06");
   // 告警类别（告警管理 › 告警类别）：老缓存没有该集合时从 seed 回填，否则告警设置的可选类型与筛选为空
   const needAlarmClasses = !s.alarmClasses?.length;
   // 告警类别口径切换（扁平 6 类 → 二级口径）：命中旧分类名时整体切到 seed 的新口径
@@ -242,9 +297,9 @@ function withSeedDefaults(s: State): State {
   );
   // 告警推送人员（告警管理 › 告警推送）：老缓存没有该集合时从 seed 回填
   const needAlarmPush = !s.alarmPushStaff?.length;
-  // 推送范围（区域 / 属地 / 设备）：老缓存没有该绑定，按 id 从 seed 回填演示范围，只补缺
+  // 推送范围（区域 / 设备）：老缓存没有该绑定，按 id 从 seed 回填演示范围，只补缺
   const needPushScope = !!s.alarmPushStaff?.some(
-    (p) => !p.areas && !p.territories && !p.devices,
+    (p) => !p.areas && !p.devices,
   );
   /**
    * 台账告警设置（类型 / 开关 / 告警项）：schema 7 的老缓存缺这些字段，
@@ -257,6 +312,12 @@ function withSeedDefaults(s: State): State {
       b.alarm?.name !== undefined ||
       !b.alarm?.category ||
       b.alarm?.enabled === undefined,
+  );
+  /** 路线方式老口径（跟随父线 / 自定义）→ 新口径（固定路线 / 自定义路线），只改这一处，不重算路线内容 */
+  const needRouteModeNorm = !!s.templates?.some(
+    (t) =>
+      (t.mode as string | undefined) === "跟随父线" ||
+      (t.mode as string | undefined) === "自定义",
   );
   /** 环境 / 区域类示例台账的旧口径：改接新的区域巡检要求与区域模板 */
   const needEnvNorm = !!s.businessTargets?.some(
@@ -277,10 +338,8 @@ function withSeedDefaults(s: State): State {
     !needPayloadMigrate &&
     !needAlgos &&
     !needAlgoNorm &&
-    !needAlarmTemplates &&
     !needReqMaster &&
     !needAlgoMaster &&
-    !needTplMaster &&
     !needAlarmClasses &&
     !needAlarmClassNorm &&
     !needAlarmPush &&
@@ -288,19 +347,32 @@ function withSeedDefaults(s: State): State {
     !needAlarmSettings &&
     !needEnvNorm &&
     !areasStale &&
-    !needTerritories &&
     !needHistoryNorm &&
     !needRobotVersions &&
     !needWorld &&
     !needDeviceKind &&
+    !needDeviceMeta &&
     !needPointState &&
     !needZoneFix &&
     !needMaps &&
-    !needRoadnetFix
+    !needRoadnetFix &&
+    !needRouteModeNorm
   )
     return s;
   const base = seed();
-  /** 补齐台账告警设置所需的上下文（告警类别 + 仪表名 + 巡检要求名兜底） */
+  /** 算法模板编码补缺：老缓存条目没有编码时，按已用编码顺延一个不冲突的（ALG-xx） */
+  const reqUsedCodes = new Set(
+    (s.requirements || []).map((r) => r.code).filter(Boolean) as string[],
+  );
+  let reqSeq = 0;
+  const nextReqCode = () => {
+    do reqSeq += 1;
+    while (reqUsedCodes.has(`ALG-${String(reqSeq).padStart(2, "0")}`));
+    const code = `ALG-${String(reqSeq).padStart(2, "0")}`;
+    reqUsedCodes.add(code);
+    return code;
+  };
+  /** 补齐台账告警设置所需的上下文（告警类别 + 仪表名 + 算法模板名兜底） */
   const alarmHost = {
     alarmClasses: needAlarmClasses ? base.alarmClasses : s.alarmClasses,
     instruments: needDevices ? base.instruments : s.instruments,
@@ -381,34 +453,66 @@ function withSeedDefaults(s: State): State {
           };
         })
       : s.robots,
+    // 路线方式口径切换：老缓存的模板逐条改写成新口径（内容 / 状态不动）
+    templates: needRouteModeNorm
+      ? (s.templates || []).map((t) => ({
+          ...t,
+          mode:
+            (t.mode as string) === "跟随父线"
+              ? ("固定路线" as const)
+              : (t.mode as string) === "自定义"
+                ? ("自定义路线" as const)
+                : t.mode,
+        }))
+      : s.templates,
     devices: (needDevices ? base.devices : s.devices).map((d) => ({
       ...d,
       // 设备形态：老缓存缺该字段时按设备类型回填，只补缺、不覆盖已有值
       deviceKind: d.deviceKind || defaultDeviceKindOfType(d.type),
-      // 属地单位（告警 KPI 的「属地」维度）：老缓存缺该字段时按安装位置回填，只补缺
-      territory: d.territory || territoryOfDevice(d),
+      // 更新时间 / 检测项分类：老缓存缺这两项时补缺（内容不变时不重建数组，避免引用漂移）
+      ...(needDeviceMeta && !d.updatedAt
+        ? { updatedAt: "2026-10-01 09:00:00" }
+        : {}),
+      ...(needDeviceMeta
+        ? {
+            items: (d.items || []).map((it) => ({
+              ...it,
+              category: it.category || defaultCategoryOfTarget(it.target),
+            })),
+          }
+        : {}),
       // 装置区归属修正：安装位置在装置区的设备，厂区列改为「装置区」
       ...(needZoneFix && d.locationDesc.startsWith("装置区")
         ? { region: "装置区" }
         : {}),
     })),
     logicalPoints: needDevices ? base.logicalPoints : s.logicalPoints,
-    areas: needDevices || areasStale ? base.areas : s.areas,
-    territories:
-      needDevices || needTerritories ? base.territories : s.territories,
+    areas: ensureRootArea(
+      needDevices || areasStale ? base.areas : s.areas,
+    ),
     instruments: needDevices ? base.instruments : s.instruments,
-    // 巡检要求：设备主数据重建时整体用 seed 覆盖；否则按 id 合并——
-    // 保留用户在「巡检要求管理」后台页新建 / 修改的条目，只补 seed 里缺失的新增项
-    requirements: needDevices
-      ? base.requirements
-      : [
-          ...(s.requirements || []),
-          ...(needReqMaster
-            ? base.requirements.filter(
-                (r) => !(s.requirements || []).some((x) => x.id === r.id),
-              )
-            : []),
-        ],
+    /**
+     * 算法模板（原「巡检要求」）：设备主数据重建时整体用 seed 覆盖；否则按 id 合并——
+     * 保留用户在「算法模板」后台页新建 / 修改的条目，只补 seed 里缺失的新增项；
+     * 合并后新增的编码 / 部署位置 / 状态三项按序补缺（不覆盖已有值）
+     */
+    requirements: (
+      needDevices
+        ? base.requirements
+        : [
+            ...(s.requirements || []),
+            ...(needReqMaster
+              ? base.requirements.filter(
+                  (r) => !(s.requirements || []).some((x) => x.id === r.id),
+                )
+              : []),
+          ]
+    ).map((r) => ({
+      ...r,
+      code: r.code || nextReqCode(),
+      deploy: r.deploy || "云端",
+      state: r.state || "启用",
+    })),
     businessTargets: (
       needDevices
         ? base.businessTargets
@@ -427,20 +531,17 @@ function withSeedDefaults(s: State): State {
                   }
                 : b;
             /**
-             * 环境 / 区域类示例台账的旧口径迁移：改接区域巡检要求 + 区域模板，
-             * 否则这两条演示台账没有处置流程（手动来源、模板引用为空）
+             * 环境 / 区域类示例台账的旧口径迁移：改接区域巡检要求（区域气体按面积采样），
+             * 否则这条演示台账还挂在旧的「装置区气体」要求上
              */
-            if (b2.id === "BT-ENV-GAS" || (b2.targetKind === "区域" && b2.requirementId === "REQ-GAS"))
+            if (
+              b2.id === "BT-ENV-GAS" ||
+              (b2.targetKind === "区域" && b2.requirementId === "REQ-GAS")
+            )
               return {
                 ...b2,
                 requirementId: "REQ-GAS-AREA",
                 algorithm: "区域气体浓度判读 v1.0",
-                alarm: { ...b2.alarm, source: "模板" as const, templateId: "TPL-06" },
-              };
-            if (b2.id === "BT-ENV-IR")
-              return {
-                ...b2,
-                alarm: { ...b2.alarm, source: "模板" as const, templateId: "TPL-07" },
               };
             return b2;
           })
@@ -456,7 +557,6 @@ function withSeedDefaults(s: State): State {
           return {
             ...p,
             areas: p.areas ?? d?.areas,
-            territories: p.territories ?? d?.territories,
             devices: p.devices ?? d?.devices,
           };
         }),
@@ -489,17 +589,6 @@ function withSeedDefaults(s: State): State {
           ...(needAlgoMaster
             ? base.algoConfigs.filter(
                 (a) => !(s.algoConfigs || []).some((x) => x.id === a.id),
-              )
-            : []),
-        ],
-    alarmTemplates: needAlarmTemplates
-      ? base.alarmTemplates
-      : [
-          ...(s.alarmTemplates || []),
-          // 同理：只补新增的告警模板（如区域气体 / 声纹 / 不安全行为 / 外观）
-          ...(needTplMaster
-            ? base.alarmTemplates.filter(
-                (t) => !(s.alarmTemplates || []).some((x) => x.id === t.id),
               )
             : []),
         ],

@@ -500,7 +500,11 @@ function LiveTaskMonitor({ id }: { id: string }) {
           robotId={t.robotId}
           pointIds={p ? [p.id] : []}
           onClose={() => setQuickOpen(false)}
-          onCreated={setSubmittedTask}
+          // 就地提示（不跳页）：拿到 id 后自己收起抽屉
+          onCreated={(id) => {
+            setSubmittedTask(id);
+            setQuickOpen(false);
+          }}
         />
       )}
     </>

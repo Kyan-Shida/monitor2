@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import { Badge, Btn, Field, Panel } from "../components/UI";
+import { Badge, Btn, Panel } from "../components/UI";
 import { deviceTypes, profileOf } from "../data/deviceProfile";
 import { areaOptions } from "../data/deviceMaster";
 import { captureKinds } from "../data/types";
@@ -72,136 +72,198 @@ export function RobotNew() {
           <Btn primary disabled={!valid} onClick={save}>
             确认新增
           </Btn>
-          <Btn onClick={() => go("robots")}>返回机器台账</Btn>
         </div>
       </div>
 
-      <div className="grid template-layout">
-        <Panel title="① 基础身份" extra={<Badge>{deviceType}</Badge>}>
-          <Field label="机器人编码（唯一）">
-            <input
-              value={rid}
-              placeholder="例如 R04"
-              onChange={(e) => RID(e.target.value)}
-            />
-          </Field>
-          {idTaken && (
-            <p role="alert" className="reference-upload-error">
-              编码 {rid} 已存在，请更换。
-            </p>
-          )}
-          <Field label="机器人名称">
-            <input
-              value={name}
-              placeholder="例如 罐区巡检四号"
-              onChange={(e) => NAME(e.target.value)}
-            />
-          </Field>
-          <Field label="所属区域">
-            <select value={region} onChange={(e) => REGION(e.target.value)}>
-              <option value="">未指定</option>
-              {areaOptions(s).map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="机型">
-            <select
-              value={deviceType}
-              onChange={(e) => {
-                const t = e.target.value as DeviceType;
-                DT(t);
-                // 切换机型：约束给出机型默认值
-                MINB(profileOf(t).constraints.minBattery);
-                CHARGE(profileOf(t).constraints.needChargingPlan);
-              }}
-            >
-              {deviceTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="固件版本（选填）">
-            <input
-              value={firmware}
-              placeholder="例如 AGV-2.0.0"
-              onChange={(e) => FW(e.target.value)}
-            />
-          </Field>
-        </Panel>
-
-        <Panel title="② 能力与约束">
-          <Field label="采集能力（决定可执行的任务类型）">
-            <div className="actions">
-              {capOptions.map((c) => (
-                <label key={c} className="inline-filter">
+      {/* 整页一张大表：左列字段名、右列录入控件，分区行做小标题 */}
+      <Panel
+        className="robot-form"
+        title="机器人信息"
+        extra={<Badge>{deviceType}</Badge>}
+      >
+        <div className="table-scroll">
+          <table className="form-table">
+            <tbody>
+              <tr className="form-sec">
+                <th colSpan={2}>① 基础身份</th>
+              </tr>
+              <tr>
+                <th>
+                  机器人编码（唯一）<em className="req">*</em>
+                </th>
+                <td>
                   <input
-                    type="checkbox"
-                    checked={caps.includes(c)}
-                    onChange={(e) =>
-                      CAPS(
-                        e.target.checked
-                          ? [...caps, c]
-                          : caps.filter((x) => x !== c),
-                      )
-                    }
+                    value={rid}
+                    placeholder="例如 R04"
+                    onChange={(e) => RID(e.target.value)}
                   />
-                  <span>{c}</span>
-                </label>
-              ))}
-            </div>
-          </Field>
-          <Field label="最低可派电量（%）">
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={minBattery}
-              onChange={(e) => MINB(Number(e.target.value))}
-            />
-          </Field>
-          <Field label="是否参与充电排队规划">
-            <label className="inline-filter">
-              <input
-                type="checkbox"
-                checked={needCharging}
-                onChange={(e) => CHARGE(e.target.checked)}
-              />
-              <span>{needCharging ? "参与" : "不参与"}</span>
-            </label>
-          </Field>
-          {deviceType === "四轮车" && (
-            <Field label="限速（m/s）">
-              <input
-                type="number"
-                step="0.1"
-                min={0}
-                value={maxSpeed}
-                onChange={(e) => MAXS(Number(e.target.value))}
-              />
-            </Field>
-          )}
-          {deviceType === "挂轨" && (
-            <Field label="当前所在轨道区段">
-              <select
-                value={railSection}
-                onChange={(e) => RAIL(e.target.value)}
-              >
-                <option value="">未指定</option>
-                {(s.railSections || []).map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.id} · {r.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          )}
-        </Panel>
-      </div>
+                  {idTaken && (
+                    <p role="alert" className="reference-upload-error">
+                      编码 {rid} 已存在，请更换。
+                    </p>
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <th>
+                  机器人名称<em className="req">*</em>
+                </th>
+                <td>
+                  <input
+                    value={name}
+                    placeholder="例如 罐区巡检四号"
+                    onChange={(e) => NAME(e.target.value)}
+                  />
+                </td>
+              </tr>
+
+              <tr className="form-sec">
+                <th colSpan={2}>② 机型与硬件</th>
+              </tr>
+              <tr>
+                <th>机型</th>
+                <td>
+                  <select
+                    value={deviceType}
+                    onChange={(e) => {
+                      const t = e.target.value as DeviceType;
+                      DT(t);
+                      // 切换机型：约束给出机型默认值
+                      MINB(profileOf(t).constraints.minBattery);
+                      CHARGE(profileOf(t).constraints.needChargingPlan);
+                    }}
+                  >
+                    {deviceTypes.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+              <tr>
+                <th>所属区域</th>
+                <td>
+                  <select
+                    value={region}
+                    onChange={(e) => REGION(e.target.value)}
+                  >
+                    <option value="">未指定</option>
+                    {areaOptions(s).map((x) => (
+                      <option key={x} value={x}>
+                        {x}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+              <tr>
+                <th>固件版本（选填）</th>
+                <td>
+                  <input
+                    value={firmware}
+                    placeholder="例如 AGV-2.0.0"
+                    onChange={(e) => FW(e.target.value)}
+                  />
+                </td>
+              </tr>
+
+              <tr className="form-sec">
+                <th colSpan={2}>③ 机型约束</th>
+              </tr>
+              <tr>
+                <th>最低派单电量（%）</th>
+                <td>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={minBattery}
+                    onChange={(e) => MINB(Number(e.target.value))}
+                  />
+                </td>
+              </tr>
+              <tr>
+                <th>是否参与充电排队规划</th>
+                <td>
+                  <label className="inline-filter">
+                    <input
+                      type="checkbox"
+                      checked={needCharging}
+                      onChange={(e) => CHARGE(e.target.checked)}
+                    />
+                    <span>{needCharging ? "参与" : "不参与"}</span>
+                  </label>
+                </td>
+              </tr>
+              {deviceType === "四轮车" && (
+                <tr>
+                  <th>限速（m/s）</th>
+                  <td>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      value={maxSpeed}
+                      onChange={(e) => MAXS(Number(e.target.value))}
+                    />
+                  </td>
+                </tr>
+              )}
+              {deviceType === "挂轨" && (
+                <tr>
+                  <th>当前所在轨道区段</th>
+                  <td>
+                    <select
+                      value={railSection}
+                      onChange={(e) => RAIL(e.target.value)}
+                    >
+                      <option value="">未指定</option>
+                      {(s.railSections || []).map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.id} · {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              )}
+
+              <tr className="form-sec">
+                <th colSpan={2}>④ 采集能力</th>
+              </tr>
+              <tr>
+                <th>
+                  采集能力<em className="req">*</em>
+                </th>
+                <td>
+                  <div className="actions">
+                    {capOptions.map((c) => (
+                      <label key={c} className="inline-filter">
+                        <input
+                          type="checkbox"
+                          checked={caps.includes(c)}
+                          onChange={(e) =>
+                            CAPS(
+                              e.target.checked
+                                ? [...caps, c]
+                                : caps.filter((x) => x !== c),
+                            )
+                          }
+                        />
+                        <span>{c}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="form-row-note">
+                    采集能力决定该机器人可执行的任务类型。
+                  </p>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Panel>
 
       {err && (
         <p role="alert" className="reference-upload-error">

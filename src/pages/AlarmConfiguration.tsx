@@ -4,12 +4,6 @@ import { useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
 import { ALARM_LEVELS, type AlarmLevel } from "../data/types";
 import { rulesOf, evaluateRule, type AlarmRule } from "../data/alarmRules";
-import {
-  alarmText,
-  logicText,
-  templatesOf,
-  triggerText,
-} from "../data/alarmTemplates";
 import { Panel, Table, Btn, Modal, Field, Badge, Note } from "../components/UI";
 function InlineEditor({
   title,
@@ -119,10 +113,10 @@ export function AlarmConfiguration({
               {r.type === "数值范围"
                 ? `低于 ${r.min} 或高于 ${r.max} ${r.unit}`
                 : `不等于 ${r.expected}`}
-              {/* 触发逻辑来自后台管理的告警模板（引用关系直接写在行内，避免"改了没生效"） */}
+              {/* 触发逻辑口径直接写在行内，避免"改了没生效" */}
               <small>
                 触发逻辑：
-                {r.triggerMode || "单次即触发"}
+                {r.triggerMode || "识别即触发"}
                 {r.triggerMode === "连续确认"
                   ? `（连续 ${Math.max(2, r.consecutive || 2)} 次）`
                   : ""}
@@ -131,10 +125,7 @@ export function AlarmConfiguration({
             r.level,
             <>
               <Badge>{r.enabled ? "启用" : "停用"}</Badge> 第 {r.version} 版
-              <small>
-                来源：{sourceOf(r)}
-                {r.templateId ? ` · 引用模板 ${r.templateId}` : ""}
-              </small>
+              <small>来源：{sourceOf(r)}</small>
             </>,
             readOnly ? (
               <Btn onClick={() => go("points")}>去配置告警</Btn>
@@ -154,81 +145,10 @@ export function AlarmConfiguration({
         </Field>
         {rule ? <RuleTrial key={`${rule.id}-${rule.version}-${rule.type}`} rule={rule} /> : <p className="muted">暂无可试算的规则，请先配置巡检点规则。</p>}
       </Panel>
-      {/* 引用方：告警模板统一在「告警管理 › 告警模板管理」维护，此处只读展示引用关系 */}
-      {!pointId && (
-        <Panel
-          title="告警模板 · 引用自告警管理"
-          extra={
-            <Btn
-              disabled={s.roleId !== "admin"}
-              onClick={() => go("alarm-templates")}
-            >
-              去告警模板维护 →
-            </Btn>
-          }
-        >
-          <Table
-            heads={[
-              "告警模板",
-              "触发条件",
-              "触发逻辑",
-              "声光报警",
-              "默认等级",
-              "处理流程",
-              "状态",
-            ]}
-            rows={templatesOf(s).map((t) => [
-              t.name,
-              triggerText(t.trigger),
-              logicText(t.trigger),
-              alarmText(t.alarmSeconds),
-              t.level,
-              `${t.flow.length} 步`,
-              <Badge>{t.enabled ? "启用" : "停用"}</Badge>,
-            ])}
-          />
-          <Note>
-            点位未绑「巡检目标台账 › 告警设置」时，判定规则按检测类型引用启用模板的触发条件与等级；
-            规则编辑弹窗里可一键套用告警模板，套用即生成该点位规则的新版本。
-          </Note>
-        </Panel>
-      )}
       {!pointId && <SystemAlarmParameters />}
       {!readOnly && edit && (
         <Editor title="告警规则 · 保存为新版本" onClose={() => E(undefined)}>
           <div className="form-grid">
-            {/* 套用后台管理维护的告警模板：填充触发条件、等级与触发逻辑（仍保存为本站点位规则） */}
-            <Field label="套用告警模板">
-              <select
-                value=""
-                onChange={(e) => {
-                  const tpl = templatesOf(s).find((x) => x.id === e.target.value);
-                  if (!tpl) return;
-                  E({
-                    ...edit,
-                    name: tpl.name,
-                    type: tpl.trigger.type,
-                    unit: tpl.trigger.unit || edit.unit,
-                    min: tpl.trigger.min,
-                    max: tpl.trigger.max,
-                    expected: tpl.trigger.expected || edit.expected,
-                    level: tpl.level,
-                    templateId: tpl.id,
-                    triggerMode: tpl.trigger.mode,
-                    consecutive: tpl.trigger.consecutive,
-                  });
-                }}
-              >
-                <option value="">不套用 · 手动填写</option>
-                {templatesOf(s)
-                  .filter((t) => t.enabled)
-                  .map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}（{t.level} · {logicText(t.trigger)}）
-                    </option>
-                  ))}
-              </select>
-            </Field>
             <Field label="名称">
               <input
                 value={edit.name}
@@ -289,7 +209,7 @@ export function AlarmConfiguration({
             {/* 触发逻辑：识别即触发 / 连续确认（连续 N 次命中才告警），随规则版本落库，采集时按此判定 */}
             <Field label="触发逻辑">
               <select
-                value={edit.triggerMode || "单次即触发"}
+                value={edit.triggerMode || "识别即触发"}
                 onChange={(e) =>
                   E({
                     ...edit,
@@ -297,7 +217,7 @@ export function AlarmConfiguration({
                   })
                 }
               >
-                <option value="单次即触发">识别即触发（本次识别到异常就告警）</option>
+                <option value="识别即触发">识别即触发（本次识别到异常就告警）</option>
                 <option value="连续确认">连续确认（连续 N 次异常才告警）</option>
               </select>
             </Field>
@@ -321,14 +241,6 @@ export function AlarmConfiguration({
               />
             </Field>
           </div>
-          {edit.templateId && (
-            <Note>
-              引用模板 {edit.templateId}，处置流程：
-              {(
-                templatesOf(s).find((t) => t.id === edit.templateId)?.flow || []
-              ).join(" → ") || "—"}
-            </Note>
-          )}
           <div className="modal-actions">
             <Btn onClick={() => E(undefined)}>取消</Btn>
             <Btn

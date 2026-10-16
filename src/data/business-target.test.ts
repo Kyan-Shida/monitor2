@@ -4,8 +4,7 @@ import { seed } from "./seed";
 import { transition as run } from "./engine";
 import { parse, parentOf, menuIdOf, pages } from "./navigation";
 import { defaultRequirementOfInstrument } from "./deviceMaster";
-import { rulesOf } from "./alarmRules";
-import { kindOfTarget, templateFor } from "./alarmTemplates";
+import { kindOfUnit, rulesOf } from "./alarmRules";
 
 /** 便捷取巡检目标台账 */
 const bt = (s: ReturnType<typeof seed>, id: string) =>
@@ -104,7 +103,7 @@ test("仪表只是资产：新增巡检目标台账需要巡检要求 + 算法 +
         requirementId: "REQ-UNKNOWN",
         algorithm: "x",
       }),
-    /巡检要求不存在/,
+    /算法模板不存在/,
   );
   // 算法（AI 表达方式）必填
   assert.throws(
@@ -274,7 +273,7 @@ test("告警设置只在巡检目标台账上：点位规则按目标的阈值 /
   assert.equal(rulesOf(s).find((r) => r.pointId === "P001")!.enabled, true);
 });
 
-test("环境 / 区域类目标也走主数据：巡检要求 → 算法 → 告警模板（检测类型不再靠单位猜）", () => {
+test("环境 / 区域类目标也走主数据：巡检要求 → 算法 → 检测类型（不再靠单位猜）", () => {
   const s = seed();
   const reqs = s.requirements || [];
   // 每条巡检要求都要声明适用目标类型与采集方式（页面按它过滤候选、带出采集方式）
@@ -290,45 +289,19 @@ test("环境 / 区域类目标也走主数据：巡检要求 → 算法 → 告�
   for (const r of reqs)
     assert.ok(algos.has(r.algorithm), `${r.id} 的默认算法应来自算法清单`);
 
-  // 区域气体：要求声明检测类型 = 气体浓度 + 单位 ppm → 命中 ppm 口径的模板（不是探头 %LEL 那条）
+  // 区域气体：要求声明检测类型 = 气体浓度 + 单位 ppm → 检测类型由单位换算得到（ppm 属气体浓度）
   const gas = bt(s, "BT-ENV-GAS");
   assert.equal(gas.requirementId, "REQ-GAS-AREA");
-  assert.equal(kindOfTarget(s, gas.requirementId, gas.unit), "气体浓度");
-  assert.equal(
-    templateFor(
-      s,
-      kindOfTarget(s, gas.requirementId, gas.unit),
-      gas.unit,
-      gas.alarm?.templateId,
-    )?.id,
-    "TPL-06",
-  );
-  // 没有量纲的环境类目标：靠巡检要求的 detectKind 命中模板，而不是落到「阀门状态」
-  assert.equal(
-    templateFor(s, "声纹", "")?.id,
-    "TPL-08",
-    "声纹应有专门的告警模板",
-  );
-  assert.equal(templateFor(s, "不安全行为", "")?.id, "TPL-09");
-  assert.equal(templateFor(s, "外观", "")?.id, "TPL-10");
-  // 区域红外：台账显式关联区域高温模板（℃ 0–120），与探头测温的 TPL-02 区分开
-  assert.equal(bt(s, "BT-ENV-IR").alarm?.templateId, "TPL-07");
+  assert.equal(kindOfUnit(gas.unit), "气体浓度");
 });
 
-test("告警规则来源二选一：选择现有模板 / 手动输入（手填口径落库并随快照带出）", () => {
+test("告警口径手填落库并随规则带出（触发逻辑 / 声光 / 处置流程）", () => {
   let s = seed();
-  // 种子台账按检测类型带出了模板 → 模板来源：触发逻辑 / 声光报警 / 处置流程都取模板值
-  const byTpl = rulesOf(s).find((r) => r.pointId === "P001")!;
-  assert.equal(byTpl.templateId, "TPL-01");
-  assert.equal(byTpl.triggerMode, "单次即触发");
-  assert.equal(byTpl.alarmSeconds, 10);
-  assert.ok(byTpl.flow.length > 0, "模板来源应带上模板的处置流程");
-  // 切成手动输入：用台账自己的判定口径 + 手填的触发逻辑 / 声光 / 处置流程
+  // 手填口径：台账自己的判定口径 + 手填的触发逻辑 / 声光 / 处置流程
   s = run(s, {
     type: "UPDATE_BUSINESS_TARGET",
     id: "BT-II-V001-P",
     alarm: {
-      source: "手动",
       triggerMode: "连续确认",
       consecutive: 2,
       alarmSeconds: 5,
@@ -336,17 +309,16 @@ test("告警规则来源二选一：选择现有模板 / 手动输入（手填�
     },
   });
   const manual = rulesOf(s).find((r) => r.pointId === "P001")!;
-  assert.equal(manual.templateId, undefined, "手动来源不再引用模板");
   assert.equal(manual.triggerMode, "连续确认");
   assert.equal(manual.consecutive, 2);
   assert.equal(manual.alarmSeconds, 5);
   assert.deepEqual(manual.flow, ["现场确认压力表读数", "复测确认恢复正常"]);
-  // 手动来源的「连续确认」至少要 2 次，填 1 次直接拒绝
+  // 「连续确认」至少要 2 次，填 1 次直接拒绝
   assert.throws(() =>
     run(s, {
       type: "UPDATE_BUSINESS_TARGET",
       id: "BT-II-V001-P",
-      alarm: { source: "手动", triggerMode: "连续确认", consecutive: 1 },
+      alarm: { triggerMode: "连续确认", consecutive: 1 },
     }),
   );
 });

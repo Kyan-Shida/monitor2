@@ -1,8 +1,8 @@
 /**
  * @file alarm-kpi.test.ts
- * @description 告警记录 KPI 的维度口径回归：区域 / 属地 / 设备三个维度可切分、
+ * @description 告警记录 KPI 的维度口径回归：区域 / 设备两个维度可切分、
  *              合计与总览卡一致、百分比与指标中心（报警准确率 / 告警处理率）同源；
- *              以及属地单位的设备主数据口径与告警推送名单的业务约束
+ *              以及告警推送名单的业务约束
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,8 +10,7 @@ import { seed } from "./seed";
 import { transition as run } from "./engine";
 import { ALARM_KPI_DIMS, alarmKpiRows, dimValueOfAlarm } from "./alarmKpi";
 import { alarmClassOfAlarm } from "./alarmSettings";
-import { pushStaffOfAlarm, territoryScopeOptionsOf } from "./alarmPush";
-import { territoryOfDevice } from "./deviceMaster";
+import { pushStaffOfAlarm } from "./alarmPush";
 import type { Alarm } from "./types";
 
 const admin = () => {
@@ -20,47 +19,7 @@ const admin = () => {
   return s;
 };
 
-test("属地单位：罐区归储运部，装置区按 A / B 段分属装置一部 / 二部", () => {
-  const s = seed();
-  for (const d of s.devices!) assert.ok(d.territory, `${d.name} 缺属地单位`);
-  const units = [...new Set(s.devices!.map((d) => d.territory))].sort();
-  assert.deepEqual(units, ["储运部", "装置一部", "装置二部"]);
-  // 显式维护值优先：设备台账里改成别的单位后，派生口径不再覆盖
-  assert.equal(territoryOfDevice({ ...s.devices![0], territory: "安全环保部" }), "安全环保部");
-});
-
-test("属地主数据：后台可增改删，被设备 / 推送范围引用时不可删", () => {
-  let s = admin();
-  assert.deepEqual(s.territories, ["储运部", "装置一部", "装置二部", "安全环保部"]);
-  // 推送绑定的属地候选与主数据同源（不再从设备台账派生）
-  assert.deepEqual(territoryScopeOptionsOf(s), s.territories);
-
-  // 新增：去空格后落库，同名拦截
-  s = run(s, { type: "ADD_TERRITORY", name: " 运维中心 " });
-  assert.ok(s.territories!.includes("运维中心"));
-  assert.throws(() => run(s, { type: "ADD_TERRITORY", name: "运维中心" }), /已存在/);
-
-  // 改名：设备归属与推送范围都按名称引用，一并同步
-  const device = s.devices!.find((d) => territoryOfDevice(d) === "储运部")!;
-  const staff = s.alarmPushStaff!.find((p) => p.territories?.includes("装置一部"))!;
-  s = run(s, { type: "RENAME_TERRITORY", from: "储运部", to: "储运一部" });
-  s = run(s, { type: "RENAME_TERRITORY", from: "装置一部", to: "装置一部A" });
-  assert.equal(
-    territoryOfDevice(s.devices!.find((d) => d.id === device.id)!),
-    "储运一部",
-  );
-  assert.deepEqual(
-    s.alarmPushStaff!.find((p) => p.id === staff.id)!.territories,
-    ["装置一部A", "装置二部"],
-  );
-
-  // 删除：被设备 / 推送范围引用时拦截，未被引用的可删
-  assert.throws(() => run(s, { type: "DELETE_TERRITORY", name: "储运一部" }), /引用/);
-  s = run(s, { type: "DELETE_TERRITORY", name: "运维中心" });
-  assert.ok(!s.territories!.includes("运维中心"));
-});
-
-test("告警 KPI 三个维度都能切分，合计与总览卡一致", () => {
+test("告警 KPI 两个维度都能切分，合计与总览卡一致", () => {
   const s = seed();
   const total = alarmKpiRows(s, "区域").reduce((n, r) => n + r.total, 0);
   assert.equal(total, s.alarms.filter((a) => a.taskId).length);
@@ -79,9 +38,6 @@ test("告警 KPI 三个维度都能切分，合计与总览卡一致", () => {
   // 区域维度只落到区域主数据口径里
   const regions = alarmKpiRows(s, "区域").map((r) => r.key);
   assert.ok(regions.every((x) => ["一期罐区", "装置区", "未分区", "未标注设备"].includes(x)));
-  // 属地维度来自设备主数据的属地单位
-  const territories = alarmKpiRows(s, "属地").map((r) => r.key);
-  assert.ok(territories.some((x) => ["储运部", "装置一部", "装置二部"].includes(x)));
 });
 
 test("KPI 百分比口径：准确率 = 已处理中非误报占比，处理率 = 已处理 / 总数", () => {
@@ -118,7 +74,7 @@ test("KPI 百分比口径：准确率 = 已处理中非误报占比，处理率 
   );
 });
 
-test("告警类别口径：随所属台账的告警类型，台账缺失时按大类兜底", () => {
+test("告警类别口径：随主告警项的告警分类，台账缺失时按大类兜底", () => {
   const s = admin();
   const withTarget = s.alarms.find((a) => {
     const p = s.points.find((x) => x.id === a.pointId);
@@ -132,7 +88,7 @@ test("告警类别口径：随所属台账的告警类型，台账缺失时按�
       .inspectItems!.some((it) => it.targetId === b.id),
   )!;
   assert.equal(alarmClassOfAlarm(s, withTarget), t.alarm!.category);
-  // 改台账的告警类型后，同一告警的类别随之变化（单一数据源）
+  // 改主告警项（第一条）的告警分类后，同一告警的类别随之变化（单一数据源）
   // 换一个与当前不同的分类：避免新口径下默认类型与目标类型相同而测不出变化
   const other = s
     .alarmClasses!.map((c) => c.name)
@@ -140,7 +96,14 @@ test("告警类别口径：随所属台账的告警类型，台账缺失时按�
   const moved = run(s, {
     type: "SAVE_ALARM_SETTING",
     targetId: t.id,
-    setting: { ...t.alarm!, category: other, enabled: true, items: t.alarm!.items! },
+    setting: {
+      ...t.alarm!,
+      // 告警分类按告警项单独配：主项（第一条）就是台账级分类的来源
+      items: [
+        { ...t.alarm!.items![0], alarmClass: other },
+        ...t.alarm!.items!.slice(1),
+      ],
+    },
   });
   assert.equal(alarmClassOfAlarm(moved, withTarget), other);
 });
@@ -171,11 +134,11 @@ test("告警推送人员：登录名唯一、仅管理员可维护、等级留�
   assert.equal(removed.alarmPushStaff!.some((x) => x.login === "zhangsan"), false);
 });
 
-test("告警推送范围：区域 / 属地 / 设备三维绑定，留空 = 不限，维度之间同时成立", () => {
+test("告警推送范围：区域 / 设备两维绑定，留空 = 不限，维度之间同时成立", () => {
   const s = admin();
-  // 演示数据一人绑定一个维度，覆盖三种绑定方式
+  // 演示数据一人绑定一个维度，覆盖两种绑定方式
   assert.deepEqual(s.alarmPushStaff![0].areas, ["一期罐区"]);
-  assert.deepEqual(s.alarmPushStaff![1].territories, ["装置一部", "装置二部"]);
+  assert.deepEqual(s.alarmPushStaff![1].areas, ["装置区"]);
   assert.deepEqual(s.alarmPushStaff![2].devices, ["V001 原料储罐", "V002 缓冲罐"]);
 
   /** 只给对象与等级，其余字段与本用例无关 */
@@ -191,20 +154,22 @@ test("告警推送范围：区域 / 属地 / 设备三维绑定，留空 = 不�
   });
   const pushed = (a: Alarm) => pushStaffOfAlarm(s, a).map((p) => p.name);
 
-  // 一期罐区 / 储运部 / V001 原料储罐 的一级告警：按区域绑定与按设备绑定都命中
+  // 一期罐区 / 装置区 / V001 原料储罐 的一级告警：按区域绑定与按设备绑定都命中
   const v001 = s.points.find((p) => p.device === "V001 原料储罐")!;
   assert.deepEqual(pushed(alarm({ pointId: v001.id })), ["王海峰", "李建国"]);
   // 同一台设备的二级告警：只收一级的王海峰落选，全部等级的李建国仍命中
   assert.deepEqual(pushed(alarm({ pointId: v001.id, level: "二级" })), ["李建国"]);
-  // 装置区 A 段管廊（属地 = 装置一部）的一级告警：只有按属地绑定的周敏命中
+  // 装置区管廊的一级告警：按区域（装置区）绑定的周敏命中
   assert.deepEqual(pushed(alarm({ pointId: "P007" })), ["周敏"]);
   // 机器人本体告警没有设备，只按所属区域匹配：R01（一期罐区）命中按区域绑定的王海峰
   assert.deepEqual(
     pushed(alarm({ category: "机器人", robotId: "R01" })),
     ["王海峰"],
   );
-  // R03 属装置区，无人绑定该区域 → 无接收人
-  assert.deepEqual(pushed(alarm({ category: "机器人", robotId: "R03" })), []);
+  // R03 属装置区，命中按区域绑定装置区的周敏（验证机器人告警按区域兜底，与设备告警同源）
+  assert.deepEqual(pushed(alarm({ category: "机器人", robotId: "R03" })), [
+    "周敏",
+  ]);
 
   // 保存时归一化：去空、去重
   const saved = run(s, {
@@ -215,20 +180,4 @@ test("告警推送范围：区域 / 属地 / 设备三维绑定，留空 = 不�
     saved.alarmPushStaff!.find((p) => p.id === "AP-01")!.areas,
     ["一期罐区"],
   );
-});
-
-test("设备属地可在设备主数据里维护（UPDATE_DEVICE 写回）", () => {
-  const s = admin();
-  const d = s.devices![0];
-  const after = run(s, {
-    type: "UPDATE_DEVICE",
-    id: d.id,
-    name: d.name,
-    deviceType: d.type,
-    deviceKind: d.deviceKind,
-    region: d.region,
-    locationDesc: d.locationDesc,
-    territory: "安全环保部",
-  });
-  assert.equal(after.devices!.find((x) => x.id === d.id)!.territory, "安全环保部");
 });

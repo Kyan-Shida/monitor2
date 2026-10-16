@@ -46,6 +46,7 @@ export function MapImageCanvas({
   onBlank,
   track,
   paths,
+  areas,
   onHover,
   onSelectPath,
   hint,
@@ -72,6 +73,16 @@ export function MapImageCanvas({
   }[];
   /** 折线点选回调（标定工作台「元素选择」） */
   onSelectPath?: (id: string) => void;
+  /**
+   * 区域范围（闭合多边形）层：区域配置画范围、地图详情展示范围共用
+   * @description closed = 已闭合的成品范围（填色）；否则只画绘制中的虚线草稿
+   */
+  areas?: {
+    id: string;
+    name?: string;
+    points: { x: number; y: number }[];
+    closed?: boolean;
+  }[];
   /** 鼠标在图面移动时回报百分比坐标（标定工作台的「实时位姿」） */
   onHover?: (x: number, y: number) => void;
   /** 底部提示文案（覆盖默认） */
@@ -209,6 +220,47 @@ export function MapImageCanvas({
                 }
               />
             ))}
+          </svg>
+        )}
+        {/* 区域范围：闭合多边形填色 + 虚线草稿，与底图同一百分比坐标系 */}
+        {!!areas?.length && (
+          <svg
+            className="map-track map-areas"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            {areas.map((a) => {
+              if (a.points.length < 2) return null;
+              const pts = a.points.map((v) => `${v.x},${v.y}`).join(" ");
+              const cx = a.points.reduce((n, p) => n + p.x, 0) / a.points.length;
+              const cy = a.points.reduce((n, p) => n + p.y, 0) / a.points.length;
+              return (
+                <g key={a.id} className={a.closed ? "area-shape" : "area-draft"}>
+                  <polygon
+                    points={
+                      a.closed ? pts : `${pts} ${a.points[0].x},${a.points[0].y}`
+                    }
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {/* 草稿态：逐顶点画圆点，提示还可继续加点；成品态只在中心标名称 */}
+                  {!a.closed &&
+                    a.points.map((p, i) => (
+                      <circle key={i} cx={p.x} cy={p.y} r={0.6} />
+                    ))}
+                  {a.closed && a.name && (
+                    <text
+                      x={cx}
+                      y={cy}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                    >
+                      {a.name}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
           </svg>
         )}
         {markers.map((mk) => (

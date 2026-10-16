@@ -59,8 +59,8 @@ test("一个停靠位覆盖多种采集方式时，动作列表保留全部（�
   // 本用例只验证动作推导：跳过"试验发布 → 同步 → 自主验证"（该链路由端到端用例覆盖），
   // 直接把新点位与地图恢复到可用于建任务的状态
   p.state = "已启用";
-  // 注意：ANNOTATE 已把地图打回「未发布」（结构化克隆后需重新取引用）
-  s.maps.find((x) => x.id === "MAP-A03")!.state = "已发布";
+  // 注意：ANNOTATE 已把地图打回「未同步」（结构化克隆后需重新取引用）
+  s.maps.find((x) => x.id === "MAP-A03")!.syncState = "已同步";
   s = run(s, {
     type: "CREATE_TASK",
     name: "多采集方式",
@@ -113,9 +113,9 @@ test("巡检项配置的机器操作内容决定任务指令集；变更只影�
     name: before.name,
     inspectItems: [{ ...spec, actions: ["拍照", "采集红外热像"] }],
   });
-  // 保存巡检点会把点位打回停用、地图打回未发布：本用例只验证指令集来源，故先复位
+  // 保存巡检点会把点位打回停用、地图打回未同步：本用例只验证指令集来源，故先复位
   s.points.find((p) => p.id === "P004")!.state = "已启用";
-  s.maps.find((m) => m.id === "MAP-A03")!.state = "已发布";
+  s.maps.find((m) => m.id === "MAP-A03")!.syncState = "已同步";
   s = run(s, {
     type: "CREATE_TASK",
     name: "变更后",
@@ -214,7 +214,7 @@ test("端到端验收（K′4）：上传底图 → 图上标注（多选检测�
   assert.equal(p.taught, true);
   // ④ 单级定版（无试验 / 正式之分）→ 同步给验证机器人 → 自主验证
   s = run(s, { type: "PUBLISH", id: MAP });
-  assert.equal(mapOf().state, "已发布");
+  assert.equal(mapOf().syncState, "已同步");
   s = syncTo(s, MAP, "R02");
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02" });
   assert.equal(s.points.find((x) => x.id === p.id)!.state, "已启用");

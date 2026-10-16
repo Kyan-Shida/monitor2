@@ -2,7 +2,7 @@ import { TakeoverOutcome } from "./TakeoverOutcome";
 /**
  * @file ReplayDetail.tsx
  * @description 执行回溯详情（对照任务回溯参考版式）：左侧「可见光 / 红外」双画面 + 导航地图（点位与巡检路径），
- *              右侧任务汇总信息 +「巡检结果 / 风险记录 / 执行事件」分页列表，支持逐项展开与全部展开
+ *              右侧任务汇总信息 +「巡检结果 / 告警记录 / 执行事件」分页列表，支持逐项展开与全部展开
  * @interaction 由 pages/ObjectDetails.tsx 在执行回溯页选中任务后渲染；只读回看，不产生状态变更
  */
 import { useState } from "react";
@@ -22,8 +22,8 @@ export function ReplayDetail({
   task: Task;
 }) {
   const { s } = useStore();
-  /** 右侧分页：巡检结果 / 风险记录 / 执行事件 */
-  const [tab, SETTAB] = useState<"结果" | "风险" | "事件">("结果");
+  /** 右侧分页：巡检结果 / 告警记录 / 执行事件 */
+  const [tab, SETTAB] = useState<"结果" | "告警" | "事件">("结果");
   /** 全部展开 / 收起，以及逐项展开的点位 */
   const [allOpen, SETALL] = useState(false);
   const [openIds, SETOPEN] = useState<string[]>([]);
@@ -132,13 +132,13 @@ export function ReplayDetail({
             </b>
           </span>
           <span>
-            发现风险
+            发现告警
             <b className={riskTotal ? "rv-risk" : ""}>{riskTotal} 项</b>
           </span>
         </div>
 
         <Panel
-          title="巡检结果与风险记录"
+          title="巡检结果与告警记录"
           extra={
             tab !== "事件" && (
               <Btn onClick={() => SETALL(!allOpen)}>
@@ -151,7 +151,7 @@ export function ReplayDetail({
             {(
               [
                 ["结果", `巡检结果（${results.length}）`],
-                ["风险", `风险记录（${riskTotal}）`],
+                ["告警", `告警记录（${riskTotal}）`],
                 ["事件", "执行事件"],
               ] as const
             ).map(([k, label]) => (
@@ -213,9 +213,13 @@ export function ReplayDetail({
                               {x.recognized} → {x.final} {x.unit}
                             </div>
                             <div className="rv-detail-row">
-                              <i>判断 / 复核</i>
+                              <i>判定 / 告警</i>
                               <Badge>{judgeOf(x)}</Badge>
-                              <Badge>{x.status}</Badge>
+                              {x.abnormal ? (
+                                <Badge tone="red">已触发告警</Badge>
+                              ) : (
+                                <span className="muted">不触发告警</span>
+                              )}
                             </div>
                             <div className="rv-detail-row">
                               <i>识别置信度</i>
@@ -251,7 +255,7 @@ export function ReplayDetail({
             </div>
           ) : (
             <div className="rv-rows">
-              {!riskTotal && <Note>本次任务未发现风险项。</Note>}
+              {!riskTotal && <Note>本次任务未发现告警项。</Note>}
               {risks.map((r, i) => (
                 <div className="rv-row open" key={r.p.id}>
                   <span className="n">{i + 1}</span>
@@ -267,8 +271,7 @@ export function ReplayDetail({
                       .map((x) => (
                         <div className="rv-detail-row" key={x.id}>
                           <i>异常项</i>
-                          {x.item}：{x.recognized} → {x.final} {x.unit}（
-                          {x.status}）
+                          {x.item}：{x.recognized} → {x.final} {x.unit}
                         </div>
                       ))}
                   </div>

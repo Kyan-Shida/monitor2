@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { go } from "../data/navigation";
+import { go, usePageSize } from "../data/navigation";
 import { ObjectLink, Pager } from "../components/Business";
 import { ReplayDetail } from "../components/ReplayDetail";
 import { ResultView } from "../components/ResultView";
@@ -21,6 +21,8 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
   const [replayFrom, setReplayFrom] = useState("");
   const [replayTo, setReplayTo] = useState("");
   const [replayPage, setReplayPage] = useState(1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [size, setSize] = usePageSize("objectReplay.size");
   /** 单条结果关联的告警事件：异常即告警（按结果 ID 精确匹配） */
   const alarmOf = (rid: string) => s.alarms.find((a) => a.resultId === rid);
   if (page === "point") {
@@ -96,7 +98,7 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
     return <ResultView task={tk} />;
   }
   // 「执行回溯」内置页（设备巡检档案目录下）：与「巡检结果详情」同版式——
-  // 左侧「可见光 + 红外」双画面 + 导航地图（点位与巡检路径），右侧任务汇总 + 巡检结果 / 风险记录 / 执行事件
+  // 左侧「可见光 + 红外」双画面 + 导航地图（点位与巡检路径），右侧任务汇总 + 巡检结果 / 告警记录 / 执行事件
   if (page === "replay-detail") {
     const tk = s.tasks.find((x) => x.id === id);
     if (!tk) return <Note>未找到该任务。</Note>;
@@ -139,7 +141,6 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
       }
       setReplayPage(1);
     };
-    const size = 6;
     const pages = Math.max(1, Math.ceil(filtered.length / size));
     const curPage = Math.min(replayPage, pages);
     const pageItems = filtered.slice((curPage - 1) * size, curPage * size);
@@ -235,7 +236,16 @@ export function ObjectDetails({ page, id }: { page: string; id?: string }) {
               </button>
             ))}
           </div>
-          <Pager page={curPage} count={filtered.length} size={size} onChange={setReplayPage} />
+          <Pager
+            page={curPage}
+            count={filtered.length}
+            size={size}
+            onChange={setReplayPage}
+            onSize={(n) => {
+              setSize(n);
+              setReplayPage(1);
+            }}
+          />
         </Panel>
         <div className="replay-detail">
           {cur ? (

@@ -33,9 +33,7 @@ export const logNames: Record<string, string> = {
   CONTROL: "人工操作回执",
   CONTROL_EXIT: "退出接管核对",
   CONTROL_RELEASE: "控制权释放",
-  REVIEW: "结果复核",
   ALARM_LABEL: "告警处理",
-  SAVE_ALARM_TEMPLATE: "告警模板配置",
   TASK_FINISHED: "机器人结束回报",
   QUICK_DISPATCH: "临时任务快速下发",
   EMERGENCY_STOP: "紧急停止",
@@ -95,33 +93,6 @@ export const parseTime = (x: string): number => {
     : Date.parse(x || "");
 };
 
-/**
- * 复检闭环时限（天）
- * @description 受理后超过该天数仍未闭环的告警，自动按「无效闭环」对待（口径见 verifyStateOf）
- */
-export const VERIFY_DAYS = 30;
-/**
- * 复检状态（派生值，随当前时间变化）
- * @description 「超过 30 天自动无效闭环」由这里派生，不写回告警数据：
- *              已闭环的按记录值展示；待反馈且已过时限的显示为「无效闭环」并标记超期；
- *              超期判定以**受理时间**（verify.startedAt）为起点，与处理时间同源
- * @param a 告警
- * @param now 当前时间戳（默认系统时间，测试可注入）
- * @returns 复检状态、剩余天数、是否超期自动判定
- */
-export function verifyStateOf(a: Alarm, now = Date.now()) {
-  const v = a.verify;
-  if (!v)
-    return { state: "未进入复检" as const, leftDays: 0, overdue: false };
-  if (v.state !== "待反馈")
-    return { state: v.state, leftDays: 0, overdue: false };
-  const leftDays = Math.ceil(
-    (parseTime(v.startedAt) + VERIFY_DAYS * 86400000 - now) / 86400000,
-  );
-  return leftDays > 0
-    ? { state: "待反馈" as const, leftDays, overdue: false }
-    : { state: "无效闭环" as const, leftDays: 0, overdue: true };
-}
 export const stageOf = (t?: Task) =>
   !t
     ? "—"

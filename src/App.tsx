@@ -17,6 +17,8 @@ import {
   Presentation,
   ChevronRight,
   ChevronDown,
+  PanelLeftClose,
+  PanelLeftOpen,
   Gauge,
   ClipboardList,
   ListChecks,
@@ -64,6 +66,8 @@ import {
   activeMenuId,
   activeGroupOf,
   back,
+  backTrailPage,
+  initTrail,
   parentTargetOf,
 } from "./data/navigation";
 import { useStore } from "./data/store";
@@ -76,8 +80,6 @@ import { SpaceManage } from "./pages/SpaceManage";
 import { BusinessTargets } from "./pages/BusinessTargets";
 import { InspectionPoints } from "./pages/InspectionPoints";
 import { PointEdit } from "./pages/PointEdit";
-import { InspectItemEdit } from "./pages/InspectItemEdit";
-import { PointOnsite } from "./pages/PointOnsite";
 import { Annotation } from "./pages/Annotation";
 import { Planning } from "./pages/Planning";
 import { AlarmConfiguration } from "./pages/AlarmConfiguration";
@@ -98,10 +100,9 @@ import { NotificationCenter } from "./components/NotificationCenter";
 import { TenantSwitcher } from "./components/TenantSwitcher";
 import { ObjectDetails } from "./pages/ObjectDetails";
 import { DeviceArchive } from "./pages/DeviceArchive";
+import { DeviceTargets } from "./pages/DeviceTargets";
 import { DeviceMaster } from "./pages/DeviceMaster";
 import { Admin } from "./pages/Admin";
-import { AlgoTemplates } from "./pages/AlgoTemplates";
-import { AlarmTemplates } from "./pages/AlarmTemplates";
 import { Requirements } from "./pages/Requirements";
 import { RobotAbilities } from "./pages/RobotAbilities";
 import { RobotNew } from "./pages/RobotNew";
@@ -151,11 +152,12 @@ const pageIcons: Record<string, LucideIcon> = {
   equipment: Boxes,
   admin: SlidersHorizontal,
   "alarm-templates": BellRing,
-  "algo-templates": BrainCircuit,
   points: MapPin,
   "points-space": MapPinned,
   annotation: Pencil,
   templates: FileStack,
+  "route-edit": FileStack,
+  "route-navigate": MapPinned,
   calendar: CalendarDays,
   users: Users,
   routes: Route,
@@ -201,7 +203,18 @@ export default function App() {
     /** 顶栏用户下拉菜单：替代原生角色切换器 */
     [userMenu, SETUSER] = useState(false),
     /** 退出登录演示弹窗 */
-    [logoutOpen, SETLOGOUT] = useState(false);
+    [logoutOpen, SETLOGOUT] = useState(false),
+    /** 侧边栏折叠：隐藏后工作区自动占满；记忆到本地，刷新保持 */
+    [sidebarCollapsed, SETSC] = useState(() => {
+      try { return localStorage.getItem("inspection-sidebar-collapsed") === "true"; } catch { return false; }
+    });
+  function toggleSidebar() {
+    SETSC((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("inspection-sidebar-collapsed", String(next)); } catch { /* memory only */ }
+      return next;
+    });
+  }
   const [reviewEnabled, setReviewEnabled] = useState(() => {
     try { return localStorage.getItem("inspection-review-enabled") === "true"; } catch { return false; }
   });
@@ -238,6 +251,8 @@ export default function App() {
     window.addEventListener("hashchange", fn);
     return () => window.removeEventListener("hashchange", fn);
   }, []);
+  /** 访问轨迹：让「返回」回到来时的页面而非死板的目录父级 */
+  useEffect(() => initTrail(), []);
   // 首次进入按当前角色落地页跳转：角色决定默认工作台（原型阶段代替真实登录）
   useEffect(() => {
     if (!location.hash || location.hash === "#" || location.hash === "#/")
@@ -261,10 +276,25 @@ export default function App() {
   /** 侧边栏高亮的一级中心：以高亮叶子所属分组为准，与叶子保持一致（避免详情页错高亮到自身的静态归属组） */
   const activeGroup = activeGroupOf(page, route.from);
   /**
-   * 返回目标：优先回到显式来源页；否则按导航目录层级逐级向上，
-   * 不依赖点击历史；已到终点时为空，按钮置灰
+   * 侧边栏一级中心序号：按当前角色可见的中心连续编号
+   * @description 整组页面都不可见的中心（如已收起的「巡检执行」）不占序号，
+   *              否则侧边栏会出现 01 / 03 的跳号；判定与侧边栏渲染同一套条件
    */
-  const backTarget = fromMeta ? fromMeta.id : parentTargetOf(page);
+  const centerNos = new Map<string, number>();
+  for (const [name] of groups)
+    if (
+      visiblePages.some(
+        (p) => p.group === name && !p.parent && canSee(role, p.id, p.group),
+      )
+    )
+      centerNos.set(name, centerNos.size + 1);
+  /**
+   * 返回目标：显式来源页 → 来时的页面（访问轨迹）→ 导航目录父级；
+   * 顺序与 back() 的执行顺序保持一致，按钮提示即实际返回目标
+   */
+  const backTarget = fromMeta
+    ? fromMeta.id
+    : backTrailPage() || parentTargetOf(page);
   const backName = backTarget
     ? routeMeta.find((x) => x.id === backTarget)?.name || backTarget
     : "";
@@ -299,14 +329,12 @@ export default function App() {
     body = <BusinessTargets mode="edit" id={id} key={id || "new"} />;
   // 巡检点管理：已配置巡检点列表 +「添加巡检点」；id 传入时按该地图预筛
   else if (page === "annotation") body = <InspectionPoints id={id} />;
-  // 添加 / 编辑巡检点（内置页）：名称 + 地图 + 标定点 + 多个巡检项
+  // 巡检点详情（内置页）：新增 / 编辑巡检点合并成一页（基本信息 + 巡检项清单 / 详情就地切换）
   else if (page === "point-edit")
     body = <PointEdit id={id === "new" ? undefined : id} />;
-  // 添加 / 编辑巡检项（内置页）：从「添加 / 编辑巡检点」页的巡检项列表进入（原弹窗改为整页）
-  else if (page === "inspect-item-edit")
-    body = <InspectItemEdit id={id} key={id || "new"} />;
-  // 现场采集（跑图）新增巡检点（内置页）：巡检点新增的唯一入口；id 可带机器人（深链）
-  else if (page === "point-onsite") body = <PointOnsite id={id} />;
+  // 现场采集（跑图）新增巡检点：同一页，只是入口语义不同（「采集当前位置」可点，自动读实时坐标）
+  else if (page === "point-onsite")
+    body = <PointEdit field robot={id} key={`onsite-${id || "new"}`} />;
   // 地图标注工作台（内置页）：候选目标 / 图面双击打点 / 试采与自主验证
   else if (page === "point-annotate") body = <Annotation id={id} />;
   else if (page === "maps") body = <Maps id={id} tab={tab} />;
@@ -316,19 +344,20 @@ export default function App() {
   else if (page === "map-calibrate") body = <MapCalibrate id={id} key={id} />;
   // 地图导航实时监控页（内置页）：选完机器狗后进入，导航操作 + 实时监控二合一
   else if (page === "map-navigate") body = <MapNavigate id={id} tab={tab} />;
+  // 路线导航（内置页）：巡检路线列表「导航」进入，页面同一套，但归属「巡检路线」目录
+  else if (page === "route-navigate")
+    body = <MapNavigate id={id} tab={tab} />;
   // 空间管理（资源与地图 › 空间）：全局坐标系配准、全局↔局部换算、地图拓扑与版本校验
   else if (page === "space") body = <SpaceManage />;
   // 设备主数据（阶段③）：清单导入 / 启停 / 是否巡检的后台，沿用 equipment 路由
   else if (page === "equipment") body = <DeviceMaster />;
-  // 后台管理：工厂已有基础数据（区域 / 设备 / 仪表）配置
-  // 旧深链 `admin?tab=algo`：算法已独立成页（后台管理 › 算法模板管理）
-  else if (page === "admin")
-    body = tab === "algo" ? <AlgoTemplates /> : <Admin tab={tab} />;
-  // 后台管理：算法模板管理（AI 能力清单的唯一维护入口，供目标台账 / 巡检要求引用）
-  else if (page === "algo-templates") body = <AlgoTemplates />;
-  // 后台管理：告警模板管理（触发逻辑的唯一维护入口，供其他页面引用）
-  else if (page === "alarm-templates") body = <AlarmTemplates />;
-  // 后台管理：巡检要求管理（平台「看什么、怎么判」标准表达的唯一维护入口，供目标台账引用）
+  // 设备巡检目标（内置页）：设备台账行内「巡检目标」进入，按设备维护检测项
+  else if (page === "device-targets")
+    body = <DeviceTargets id={id} key={id || "new"} />;
+  // 后台管理：工厂已有基础数据（区域）配置
+  // 旧深链 `admin?tab=algo`：算法原独立成页，现已并入「后台管理 › 算法模板」
+  else if (page === "admin") body = <Admin />;
+  // 后台管理：算法模板（原「算法模板管理」+「巡检要求管理」合并；供巡检目标台账引用）
   else if (page === "requirements") body = <Requirements />;
   // 后台管理：机器人能力（两级清单：能力类型 → 能力参数；巡检项能力项的候选来源）
   else if (page === "payloads") body = <RobotAbilities />;
@@ -339,7 +368,11 @@ export default function App() {
   )
     body = <ObjectDetails page={page} id={id} />;
   else if (page === "archive") body = <DeviceArchive id={id} tab={tab} />;
-  else if (["templates", "plans", "plan-edit", "tasks", "quick"].includes(page))
+  else if (
+    ["templates", "route-edit", "plans", "plan-edit", "tasks", "quick"].includes(
+      page,
+    )
+  )
     body = <Planning page={page} id={id} />;
   else if (page === "dispatch" || page === "queue") body = <DispatchDesk key={id || "primary"} id={id} />;
   else if (["queue"].includes(page))
@@ -359,7 +392,7 @@ export default function App() {
   else if (page === "alarm-classes") body = <AlarmClasses />;
   // 告警管理 › 告警设置：一个台账一个告警设置（可含多个告警项），与巡检目标台账同一份数据
   else if (page === "alarm-settings") body = <AlarmSettings />;
-  // 告警管理 › 推送设置：推送人员名单 + 区域 / 属地 / 设备绑定范围
+  // 告警管理 › 推送设置：推送人员名单 + 区域 / 设备绑定范围
   else if (page === "alarm-push") body = <AlarmPush />;
   else if (page === "replay") body = <ObjectDetails page="replay" id={id} />;
   else body = <Supporting page={page} />;
@@ -368,7 +401,7 @@ export default function App() {
     .filter(([k]) => k.includes(search) || search.includes(k))
     .flatMap(([, ids]) => ids);
   return (
-    <div className="app">
+    <div className={"app" + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -447,7 +480,7 @@ export default function App() {
                 >
                   <Icon size={18} />
                   <span>{groupName}</span>
-                  <small>{String(i + 1).padStart(2, "0")}</small>
+                  <small>{String(centerNos.get(groupName) ?? 0).padStart(2, "0")}</small>
                   <ChevronDown
                     size={13}
                     className="nav-chevron"
@@ -543,6 +576,15 @@ export default function App() {
       </aside>
       <div className="workspace">
         <header>
+          <button
+            className="sidebar-toggle"
+            title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            aria-pressed={sidebarCollapsed}
+            onClick={toggleSidebar}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
           <button
             className="back-btn"
             title={backTarget ? `返回：${backName}` : "已在顶层页面"}
@@ -702,7 +744,14 @@ export default function App() {
         </header>
         {/* 页签导航：仿浏览器多标签，记录访问过的页面，便于多功能页并存与快速切换 */}
         <PageTabs route={route} role={role} iconOf={pageIcons} />
-        <main>
+        {/* 工作台 / 巡检点详情：main 锁一屏（整页不滚，溢出由卡片内部滚动兜底）；其余页面维持整页滚动 */}
+        <main
+          className={
+            page === "workbench" || page === "point-edit" || page === "point-onsite"
+              ? "main-fill"
+              : ""
+          }
+        >
           {allowed ? (
             <div key={page + "-" + (id || "") + "-" + (tab || "")}>{body}</div>
           ) : (
@@ -711,9 +760,6 @@ export default function App() {
               请使用顶栏角色切换器切换身份，或返回该角色的默认工作台。
             </Note>
           )}
-          <footer>
-            智能机器巡检平台 · 演示环境 · 数据仅存于本机 · 非真实机器人控制
-          </footer>
         </main>
       </div>
       {message && (

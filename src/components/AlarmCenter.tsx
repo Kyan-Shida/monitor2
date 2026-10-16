@@ -1,7 +1,8 @@
 /**
  * @file AlarmCenter.tsx
  * @description 顶栏告警中心（替代原消息铃铛）：按钮显示未处理告警数，点击打开**告警弹窗**；
- *              弹窗支持拖动悬浮与最小化为小胶囊，逐条可「去处理」直达告警详情。不含消息中心。
+ *              弹窗支持拖动悬浮与最小化为小胶囊；**悬浮钉常驻、不给关闭**（告警必须可被随时看到），
+ *              逐条可「去处理」直达告警详情。不含消息中心。
  * @interaction 由 App.tsx 顶栏 header-right 渲染；跳转经 data/navigation 的 go()
  */
 import {
@@ -10,9 +11,11 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Bell, Minus, X } from "lucide-react";
+import { Bell, Minus } from "lucide-react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
+import { ALARM_CLASS_MAINS, type AlarmClassMain } from "../data/types";
+import { mainOfAlarm } from "../data/alarmSettings";
 
 /** 未处理告警判定：尚无人工处理（处理时间为空） */
 const isOpen = (a: { handledAt?: string }) => !a.handledAt;
@@ -29,18 +32,39 @@ export function AlarmCenter() {
   const [pos, SETPOS] = useState<{ x: number; y: number } | null>(null);
   /** 拖动会话的指针偏移；非空表示正在拖动 */
   const [drag, SETDRAG] = useState<{ ox: number; oy: number } | null>(null);
+  /**
+   * 弹窗内的标签页：业务预警 / 机器人预警
+   * @description 口径与「告警记录」一致（见 data/alarmSettings 的 mainOfAlarm）：
+   *              业务预警 = 设备 / 环境类判定异常；机器人预警 = 机器人本体事件
+   */
+  const [main, SETMAIN] = useState<AlarmClassMain>("业务预警");
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const list = s.alarms
-    .filter((a) => isOpen(a))
-    .sort((a, b) => rank(a.level) - rank(b.level));
-  const urgentList = list.filter((a) => a.level === "一级");
+  /** 全部未处理告警：顶栏角标、最小化胶囊与一级拦截都用它，不随标签页变化 */
+  const allOpen = s.alarms.filter((a) => isOpen(a));
+  /** 一级告警（全量）：全局拦截只看一级，避免切到机器人预警时漏掉业务一级 */
+  const urgentList = allOpen.filter((a) => a.level === "一级");
   const urgent = urgentList.length;
-  const lv2Count = list.filter((a) => a.level === "二级").length;
-  const lv3Count = list.filter((a) => a.level === "三级").length;
-  /** 头部主色调：最高告警等级决定（urgent 红 > lv2 琥珀 > 仅三级 蓝灰） */
+  /** 当前标签页的未处理告警（列表与头部摘要都按它统计） */
+  const list = allOpen
+    .filter((a) => mainOfAlarm(a.category) === main)
+    .sort((a, b) => rank(a.level) - rank(b.level));
+  /**
+   * 按等级计数
+   * @param level 告警等级（一级 / 二级 / 三级）
+   * @param arr 统计范围，默认当前标签页清单；传全量用于顶栏 tooltip
+   */
+  const lvCount = (level: string, arr: typeof list = list) =>
+    arr.filter((a) => a.level === level).length;
+  /** 头部主色调：当前标签页的最高等级决定（一级红 > 二级琥珀 > 仅三级 蓝灰） */
   const headTone: "urgent" | "lv2" | "lv3" | "none" =
-    urgent > 0 ? "urgent" : lv2Count > 0 ? "lv2" : list.length > 0 ? "lv3" : "none";
+    lvCount("一级") > 0
+      ? "urgent"
+      : lvCount("二级") > 0
+        ? "lv2"
+        : list.length > 0
+          ? "lv3"
+          : "none";
 
   /**
    * 一级告警全局拦截：
@@ -113,11 +137,11 @@ export function AlarmCenter() {
       <button
         className={
           "alarm-entry" +
-          (urgent > 0 ? " has-urgent" : list.length ? " has-alarm" : "")
+          (urgent > 0 ? " has-urgent" : allOpen.length ? " has-alarm" : "")
         }
         title={
-          list.length
-            ? `未处置 ${list.length} · 一级 ${urgent} · 二级 ${lv2Count} · 三级 ${lv3Count}`
+          allOpen.length
+            ? `未处置 ${allOpen.length} · 一级 ${urgent} · 二级 ${lvCount("二级", allOpen)} · 三级 ${lvCount("三级", allOpen)}`
             : "暂无告警"
         }
         onClick={() => {
@@ -127,9 +151,9 @@ export function AlarmCenter() {
       >
         <Bell size={17} />
         <span className="entry-label">告警</span>
-        {list.length > 0 && (
+        {allOpen.length > 0 && (
             <i className="bell-badge alarm">
-              {list.length > 99 ? "99+" : list.length}
+              {allOpen.length > 99 ? "99+" : allOpen.length}
             </i>
           )}
       </button>
@@ -156,19 +180,22 @@ export function AlarmCenter() {
         </div>
       )}
 
-      {/* 最小化态：右下角小胶囊 */}
-      {open && min && (
+      {/* 悬浮钉：右下角常驻小胶囊（收起态一直可见，不提供关闭入口） */}
+      {(!open || min) && (
         <button
           className="alarm-min"
           title="展开告警弹窗"
-          onClick={() => SETMIN(false)}
+          onClick={() => {
+            SETOPEN(true);
+            SETMIN(false);
+          }}
         >
           <Bell size={15} />
-          告警 {list.length}
+          告警 {allOpen.length}
         </button>
       )}
 
-      {/* 悬浮告警弹窗：头部可拖动，支持最小化 / 关闭 */}
+      {/* 悬浮告警弹窗：头部可拖动，只能收起为悬浮钉（不提供关闭） */}
       {open && !min && (
         <div
           ref={panelRef}
@@ -180,18 +207,18 @@ export function AlarmCenter() {
             <b>告警 <em className="alarm-total">{list.length}</em> 条</b>
             {/* 分级摘要 chips：一级红 / 二级琥珀 / 三级蓝灰，数量为 0 时半透明 */}
             <div className="alarm-head-lv">
-              <span className="alarm-lv-chip lv1" style={{ opacity: urgent ? 1 : 0.35 }}>
-                <i />一级 {urgent}
+              <span className="alarm-lv-chip lv1" style={{ opacity: lvCount("一级") ? 1 : 0.35 }}>
+                <i />一级 {lvCount("一级")}
               </span>
-              <span className="alarm-lv-chip lv2" style={{ opacity: lv2Count ? 1 : 0.35 }}>
-                <i />二级 {lv2Count}
+              <span className="alarm-lv-chip lv2" style={{ opacity: lvCount("二级") ? 1 : 0.35 }}>
+                <i />二级 {lvCount("二级")}
               </span>
-              <span className="alarm-lv-chip lv3" style={{ opacity: lv3Count ? 1 : 0.35 }}>
-                <i />三级 {lv3Count}
+              <span className="alarm-lv-chip lv3" style={{ opacity: lvCount("三级") ? 1 : 0.35 }}>
+                <i />三级 {lvCount("三级")}
               </span>
             </div>
             <span className="alarm-head-spacer" />
-            {/* 一级告警拦截期间：不给「最小化 / 关闭」，必须先知晓 / 去处理 */}
+            {/* 一级告警拦截期间：不给「收起」，必须先知晓 / 去处理 */}
             {interceptAlarm ? (
               <>
                 <button
@@ -218,21 +245,27 @@ export function AlarmCenter() {
             ) : (
               <>
                 <button
-                  title="最小化"
+                  title="收起为悬浮钉"
                   onClick={() => SETMIN(true)}
                   onPointerDown={(e) => e.stopPropagation()}
                 >
                   <Minus size={15} />
                 </button>
-                <button
-                  title="关闭"
-                  onClick={() => SETOPEN(false)}
-                  onPointerDown={(e) => e.stopPropagation()}
-                >
-                  <X size={15} />
-                </button>
               </>
             )}
+          </div>
+          {/* 标签页：业务预警 / 机器人预警（与「告警记录」同一组口径）；切换只影响本弹窗的列表与头部摘要 */}
+          <div className="segmented alarm-panel-tabs">
+            {ALARM_CLASS_MAINS.map((m) => (
+              <button
+                key={m}
+                className={main === m ? "active" : ""}
+                onClick={() => SETMAIN(m)}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {m}
+              </button>
+            ))}
           </div>
           {list.length ? (
             <ul className="alarm-panel-list">

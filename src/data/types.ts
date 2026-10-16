@@ -135,12 +135,13 @@ export interface MapAsset {
   /** 空间版本 V{n}（界面展示口径）：底图 / 建图内容变更时自增（点位标定不改变本版本） */
   version: number;
   /**
-   * 地图状态：`未发布`（内容未定版）/ `已发布`（已定版，可下发与引用）
-   * @description 平台**不区分试验版 / 正式版**：下发时会自动把当前内容定版为「已发布」
+   * 同步状态：`未同步`（当前版本尚未下发给所有引用它的机器人）/
+   *           `已同步`（当前版本已下发给所有引用它的机器人）
+   * @description 平台**不区分试验版 / 正式版**：下发时即把当前内容定版，「已同步」表示机器人端都用上了最新版
    */
-  state: "未发布" | "已发布";
+  syncState: "未同步" | "已同步";
   /**
-   * 逻辑启停：与派生的 `state` 解耦，用于人工停用某张地图
+   * 逻辑启停：与派生的 `syncState` 解耦，用于人工停用某张地图
    * @description 停用后该地图不再允许用于导航 / 任务下发；默认「启用」
    */
   status?: "启用" | "停用";
@@ -669,6 +670,22 @@ export type CaptureKind = "可见光" | "红外" | "气体" | "声音";
 /** 全部采集方式：导入校验与能力口径共用同一份名单 */
 export const captureKinds: CaptureKind[] = ["可见光", "红外", "气体", "声音"];
 
+/**
+ * 检测项分类建议项（界面按此给下拉建议，允许手填）
+ * @description 常见仪表分类 + 环境类：分类只表达"看的是什么量"，
+ *              不作白名单校验，用户可填清单外的值
+ */
+export const itemCategories = [
+  "压力",
+  "温度",
+  "液位",
+  "流量",
+  "阀位",
+  "气体浓度",
+  "环境",
+  "外观",
+];
+
 /** 巡检项（阶段③：设备清单里的"巡检什么"） */
 export interface InspectItem {
   id: string;
@@ -681,6 +698,12 @@ export interface InspectItem {
    *              供「巡检目标台账」按设备形态（实体设备 / 虚拟设备）归类。缺省按「仪表」处理。
    */
   targetKind?: "仪表" | "区域";
+  /**
+   * 检测项分类（界面口径：压力 / 温度 / 阀位 / 环境 …）
+   * @description 与「类型」（实体 / 虚拟）并列的第二维度：类型说有没有实体形态，
+   *              分类说看的是什么量。下拉给常见项、允许手填，界面按 itemCategories 建议。
+   */
+  category?: string;
   /** 采集方式 */
   kind: CaptureKind;
   unit: string;
@@ -696,25 +719,27 @@ export interface InspectItem {
    区域 → 设备 → 仪表；仪表只是资产，不能直接巡检；
    仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 = 巡检目标台账（可执行的最小巡检单元） */
 
-/** 区域（工厂树第一层） */
+/** 区域树固定根 id：全厂区（内置、不可删除 / 改名），所有区域最终挂在它下面 */
+export const ROOT_AREA_ID = "AREA-ROOT";
+/** 固定根显示名 */
+export const ROOT_AREA_NAME = "全厂区";
+
+/** 区域（工厂树节点，根节点为固定的「全厂区」AREA-ROOT） */
 export interface Area {
   id: string;
   name: string;
+  /** 父级区域（可选）：区域支持多级树，根区域不设父级 */
+  parentId?: string;
+  /** 区域负责人（非必填，从推送人员里选） */
+  owner?: string;
+  /** 管理部门（非必填，从推送人员所属部门里选） */
+  department?: string;
+  /**
+   * 区域范围轮廓（**全厂区 2D 底图**百分比坐标，≥3 个顶点的闭合多边形）
+   * @description 未绘制时为 undefined；仅保存**已闭合**的顶点，编辑时回显并在地图上展示
+   */
+  polygon?: { x: number; y: number }[];
 }
-
-/**
- * 属地单位（设备主数据的「属地」口径）
- * @description 属地主数据的**初始值**：运行时以 `State.territories` 为准，
- *              可在「后台管理 › 工厂基础数据 › 属地配置」增删改；
- *              设备台账下拉、告警 KPI 属地维度、告警推送范围都取同一份口径
- */
-export const TERRITORY_UNITS = [
-  "储运部",
-  "装置一部",
-  "装置二部",
-  "安全环保部",
-] as const;
-export type TerritoryUnit = (typeof TERRITORY_UNITS)[number];
 
 /**
  * 仪表：实际被巡检的资产对象
@@ -747,43 +772,72 @@ export type RequirementKind = (typeof requirementKinds)[number];
 /** 判定方式：这一类要求"怎么判" */
 export type JudgeType = "数值范围" | "期望状态" | "有无目标" | "等级评分";
 
-/** 巡检要求（模板库：看滴漏 / 看高温 / 看仪表读数 / 看外观破损 …） */
+/**
+ * 检测类型：这条要求 / 这个目标的检测项属于哪一类
+ * @description 由巡检要求显式声明；老数据缺失时可按单位换算兜底（见 alarmRules.kindOfUnit）
+ */
+export const APPLY_KINDS = [
+  "压力",
+  "温度",
+  "气体浓度",
+  "阀门状态",
+  "位移",
+  "液位",
+  "声纹",
+  "不安全行为",
+  "外观",
+] as const;
+export type ApplyKind = (typeof APPLY_KINDS)[number];
+
+/**
+ * 算法模板（原「巡检要求」+「算法模板管理」两套主数据合并，界面口径统一叫「算法模板」）
+ * @description 一条模板 = 看什么（`kind` 算法能力类型 / `judge` 判定方式）+ 怎么采（`capture` 默认采集方式）
+ *              + 拿什么算（`algorithm`）+ 阈值口径（`unit` / `min` 下限含 / `max` 上限含）+ 部署位置与状态。
+ *              巡检目标台账选模板即带出上述默认值；类型 `Requirement` 保留原有命名，减少对既有引用的改动。
+ */
 export interface Requirement {
   id: string;
+  /** 算法模板编码（ALG-xx，必填且唯一） */
+  code: string;
   name: string;
   kind: RequirementKind;
+  /** 模板说明：适用场景 / 原理 / 注意事项（选填） */
   description: string;
   /**
    * 适用的目标类型（TGT-01 口径）
    * @description 仪表 = 有形表计（看读数 / 看阀位）；环境 / 区域 = 空间范围（气体 / 红外 / 声纹 / AI 行为 / 拍照）。
-   *              台账抽屉按目标类型过滤巡检要求，避免把"看仪表读数"配到区域类目标上
+   *              台账按目标类型过滤算法模板，避免把"看仪表读数"配到区域类目标上
    */
   targetKinds: ("仪表" | "环境" | "区域")[];
   /**
    * 默认采集方式（决定需要哪种机器人上装能力）
-   * @description 仪表类目标用仪表自己的采集方式；环境 / 区域类目标没有仪表，采集方式由巡检要求给出
+   * @description 仪表类目标用仪表自己的采集方式；环境 / 区域类目标没有仪表，采集方式由算法模板给出
    */
   capture: CaptureKind;
   /**
-   * 检测类型（匹配告警模板的口径，见 alarmTemplates.kindOfTarget）
+   * 检测类型
    * @description 环境 / 区域类目标常常没有"有量纲的单位"（声纹、AI 行为），
-   *              只按单位换算会猜成"阀门状态"；因此由巡检要求显式声明，留空 = 按台账单位换算
+   *              只按单位换算会猜成"阀门状态"；因此由算法模板显式声明，留空 = 按台账单位换算
    */
-  detectKind?: import("./alarmTemplates").ApplyKind;
-  /** 背后的算法 / AI 表达方式（默认值，巡检目标台账可覆盖） */
+  detectKind?: ApplyKind;
+  /** 算法：算这条模板看的东西用哪个 AI 能力（取自平台算法库 ALGO_LIBRARY） */
   algorithm: string;
-  /** 默认判定方式与阈值（可被巡检目标台账覆盖） */
+  /** 默认判定方式与阈值 (可被巡检目标台账覆盖) */
   judge: JudgeType;
   unit?: string;
   min?: number;
   max?: number;
   expected?: string;
+  /** 部署位置：云端 / 本体（沿用算法库口径） */
+  deploy: AlgoDeploy;
+  /** 状态：停用后不再出现在巡检目标台账的算法模板候选里 */
+  state: "启用" | "停用";
   /** 默认采集与复核要求 */
   needPhoto?: boolean;
   needVideo?: boolean;
   needReview?: boolean;
   cycle?: string;
-  /** 版本号：每次保存自增（后台管理 › 巡检要求管理维护） */
+  /** 版本号：每次保存自增（后台管理 › 算法模板维护） */
   version?: number;
   /** 最近修改时间（展示用） */
   updatedAt?: string;
@@ -864,47 +918,48 @@ export interface AlarmItem {
   /** 声光报警持续时长（秒），0 = 不启动 */
   alarmSeconds: number;
   /**
-   * 引用的告警模板（后台管理 › 告警模板管理）
-   * @description 选中即带出判断类型 / 阈值 / 单位 / 等级 / 声光报警（一处维护、多点引用），
-   *              留空 = 手填内容字段；第一条（主告警项）的模板同步为台账 `BusinessAlarm.templateId`，
-   *              因此台账的「告警规则来源」由主项决定，不再单独维护
+   * 告警分类：引用「告警管理 › 告警类别」中启用的分类名称（如 生产运行 / 设备运行）
+   * @description 每条告警项单独配；第一条（主告警项）的值同步到台账 `BusinessAlarm.category`
    */
-  templateId?: string;
+  alarmClass?: string;
+  /**
+   * 触发逻辑（每条告警项单独配）
+   * @description 识别即触发 = 本次识别到异常就告警；连续确认 = 连续命中 N 次才告警。
+   *              第一条（主告警项）的值同步到台账 `BusinessAlarm.triggerMode / consecutive`
+   */
+  triggerMode?: "识别即触发" | "连续确认";
+  /** 连续确认次数（≥2，仅 triggerMode = 连续确认 时生效） */
+  consecutive?: number;
 }
 /**
  * 告警设置（挂在巡检目标台账上，一个台账一条）
- * @description 维护入口有两个且是**同一份数据**：巡检目标台账「3、告警规则」与
+ * @description 维护入口有两个且是**同一份数据**：巡检目标台账「告警设置」与
  *              「告警管理 › 告警设置」，改任一处另一处同步生效。
  *              巡检点 / 点位不提供告警配置：巡检点的判定直接复用所绑业务目标的
- *              阈值（`judge/min/max/expected`）与这里的设置（等级 / 通知 / 引用模板）。
- *              `enabled` 是平台唯一的「告警开关」：停用后该台账只记录结果、不做判定
+ *              阈值（`judge/min/max/expected`）与这里的设置（等级 / 通知 / 告警项）。
+ *              `enabled` 是平台唯一的「告警开关」：停用后该台账只记录结果、不做判定。
+ *              告警项全部手填，平台不再有「告警模板」概念（每条告警项自带判定口径）
  */
 export interface BusinessAlarm {
-  /**
-   * 告警规则来源（台账「3、告警规则」选择）
-   * @description 模板 = 选现有模板（触发条件 / 触发逻辑 / 等级 / 声光报警 / 处置流程由模板下发）；
-   *              手动 = 手动输入（用台账自己的判定口径）。老数据缺省按"手动"处理
-   */
-  source?: "模板" | "手动";
   /** 告警等级：决定告警列表分级（一级 / 二级 / 三级） */
   level: AlarmLevel;
-  /** 触发条件补充说明（手动来源时可写依据；模板来源时按模板回显） */
+  /** 触发条件补充说明（可写判定依据） */
   trigger?: string;
   /** 通知对象（岗位 / 角色），随告警记录一并带出 */
   notify?: string[];
   /**
-   * 关联的告警模板（告警管理 › 告警模板管理，source = 模板 时生效）
-   * @description 选中后本目标的触发条件 / 触发逻辑 / 等级 / 声光报警 / 处置流程都按该模板走
-   *              （一处维护、多点引用）；留空 = 按检测类型自动套用后台管理的启用模板
+   * 触发逻辑（识别即触发 / 连续确认）
+   * @description 按告警项单独配，此处只是**主项（第一条）的镜像**，保存时由主项派生（见 applyAlarmSetting）
    */
-  templateId?: string;
-  /** 手动来源：触发逻辑（单次即触发 = 识别即触发 / 连续确认） */
-  triggerMode?: "单次即触发" | "连续确认";
-  /** 手动来源：连续确认次数（至少 2） */
+  triggerMode?: "识别即触发" | "连续确认";
+  /** 连续确认次数（至少 2）：主项的镜像 */
   consecutive?: number;
   /** 手动来源：声光报警持续时长（秒），0 = 不启动 */
   alarmSeconds?: number;
-  /** 手动来源：处置流程步骤（受理后按此逐条复检） */
+  /**
+   * 处置流程步骤
+   * @description 配置侧已无填写入口；字段保留供既有数据与结果快照展示
+   */
   flow?: string[];
   /**
    * ↓ 以下为「告警管理 › 告警设置」字段：与巡检目标台账共用同一个 alarm 对象（单数据源 = 天然同步）
@@ -914,7 +969,15 @@ export interface BusinessAlarm {
    *  老缓存里的残留值会在告警设置补齐时被清除
    */
   name?: string;
-  /** 告警类型（告警设置）：引用「告警类别」中启用的分类名称 */
+  /**
+   * 告警大类：业务预警绑定台账；机器人预警是机器人本体事件，不绑台账
+   * @description 在告警设置弹窗里选；选机器人预警时表单不再出现「关联台账」
+   */
+  main?: AlarmClassMain;
+  /**
+   * 告警分类：引用「告警类别」中启用的分类名称（如 生产运行）
+   * @description 按告警项单独配，此处只是**主项（第一条）的镜像**；主项没选分类时保留原值
+   */
   category?: string;
   /**
    * 告警开关（告警设置）：决定该台账的告警规则是否启用
@@ -998,12 +1061,6 @@ export interface DeviceAsset {
   deviceKind?: DeviceKind;
   regionCode: string;
   locationDesc: string;
-  /**
-   * 属地单位（属地管理责任单位，如 储运部 / 装置一部）
-   * @description 告警 KPI 的「属地」维度口径：设备台账（资源与地图 › 设备台账）维护，
-   *              告警按设备归属统计；未指定时统计为「未指定」
-   */
-  territory?: string;
   coord?: string;
   coordSys?: string;
   height?: number;
@@ -1019,6 +1076,8 @@ export interface DeviceAsset {
   state?: "在用" | "停用";
   /** 所属厂区（清单里的厂区列）：指标按厂区裁剪时用；缺省时不参与裁剪 */
   region?: string;
+  /** 最近更新时间（建档 / 编辑 / 清单导入时刷新，用于台账「更新时间」列） */
+  updatedAt?: string;
 }
 
 /** 逻辑巡检点（阶段④：只表达"要巡检什么"，不含坐标） */
@@ -1240,6 +1299,25 @@ export interface Task {
   deadline?: string;
   preemptedTaskId?: string;
 }
+/**
+ * 自定义路线的路径锚点（底图百分比坐标，口径与 RoutePreview / MapImageCanvas 一致）
+ * @description `pointId` 非空表示该锚点吸附到某个巡检点的定位点——只引用既有巡检点，
+ *              不会新建或删除业务点位；机器狗按这条自绘线路行驶，不再沿父线路网寻路
+ */
+export interface RouteNode {
+  x: number;
+  y: number;
+  pointId?: string;
+  /**
+   * 与前一个锚点之间是否按曲线连接
+   * @description 画线工具的「直线 / 曲线」逐段落在锚点上：曲线段按中点垂直偏移生成控制点，
+   *              机器狗实际走的就是这条平滑线；首个锚点该字段无意义
+   */
+  curve?: boolean;
+}
+/** 巡检路线方式：固定路线（沿已标定的固定路网自动寻路）/ 自定义路线（自绘线路，须导航验证后方可启用） */
+export const routeModes = ["固定路线", "自定义路线"] as const;
+export type RouteMode = (typeof routeModes)[number];
 export interface Template {
   id: string;
   name: string;
@@ -1255,6 +1333,20 @@ export interface Template {
   /** 路线状态：启用后计划方可引用；停用仅存档不参与生成 */
   state: "启用" | "停用";
   version: number;
+  /** 路线方式：缺省视为「固定路线」（老数据兼容） */
+  mode?: RouteMode;
+  /** 自定义线路的路径锚点（`mode="自定义路线"` 时必填，至少 2 个） */
+  path?: RouteNode[];
+  /**
+   * 导航验证：自定义路线必须由机器人实跑一遍验证可行后才允许启用
+   * @description 跟随父线的路线沿已验证路网行驶，缺省视为已通过
+   */
+  verified?: boolean;
+  /** 验证机器人 / 验证时间（列表与详情展示用） */
+  verifiedBy?: string;
+  verifiedAt?: string;
+  /** 最近一次保存时间（路线列表「更新时间」列；老数据缺省显示「—」） */
+  updatedAt?: string;
 }
 /** 计划执行方式：周期任务（按「每天 / 每周 / 每班」循环）/ 定时任务（指定日期时刻执行一次） */
 export const planKinds = ["周期任务", "定时任务"] as const;
@@ -1318,32 +1410,6 @@ export const ALARM_CATEGORY_DESC: Record<AlarmCategory, string> = {
   机器人: "机器人本体异常：传感器、通信、定位、电量、急停、固件、里程保养等",
 };
 
-/** 复检步骤：受理后按引用模板的处置流程逐条反馈 */
-export interface VerifyStep {
-  /** 步骤文字（受理时按当时引用的模板落库，模板后续修改不影响在办的复检） */
-  text: string;
-  /** 是否已完成 */
-  done: boolean;
-  /** 完成时间 */
-  at?: string;
-}
-/**
- * 反馈（复检）流程
- * @description 只有「受理」的告警进入：处置流程（引用自告警模板）逐条回馈是否完成，
- *              全部完成即有效闭环；未闭环超过 30 天自动判定为无效闭环（口径见 selectors.verifyStateOf）
- */
-export interface VerifyFlow {
-  /** 进入复检的时间（= 受理时间） */
-  startedAt: string;
-  /** 处置流程步骤清单 */
-  steps: VerifyStep[];
-  /** 复检结论：待反馈 / 有效闭环 / 无效闭环 */
-  state: "待反馈" | "有效闭环" | "无效闭环";
-  /** 闭环时间 */
-  closedAt?: string;
-  /** 闭环说明 / 依据 */
-  note?: string;
-}
 export interface Alarm {
   id: string;
   /** 告警分类：业务场景 / 机器人本体异常（新增维度，与级别正交） */
@@ -1374,8 +1440,6 @@ export interface Alarm {
   handleNote?: string;
   /** ALM-05 是否误报：人工判定，用于统计报警准确率（准确率 = 已处理中非误报占比） */
   falsePositive?: boolean;
-  /** 反馈（复检）流程：仅「受理」的告警进入（「忽略」= 不处置，不需要复检） */
-  verify?: VerifyFlow;
   /** 处置机制摘要（按级别自动推导，可覆盖） */
   handle?: string;
   time: string;
@@ -1391,17 +1455,15 @@ export interface AlarmPushStaff {
   phone: string;
   /** 用户登录名（推送通道按登录名定位账号） */
   login: string;
-  /** 所属部门 / 属地单位 */
+  /** 所属部门 */
   dept: string;
   /** 接收的告警等级：可多选，空数组 = 全部等级 */
   levels: AlarmLevel[];
   /**
    * 绑定范围 · 区域：可多选，空数组 = 不限区域。
-   * 与属地 / 设备三个维度同时成立（各维度内多选取并集），见 alarmPush.pushStaffOfAlarm
+   * 与设备维度同时成立（各维度内多选取并集），见 alarmPush.pushStaffOfAlarm
    */
   areas?: string[];
-  /** 绑定范围 · 属地单位：可多选，空数组 = 不限属地 */
-  territories?: string[];
   /** 绑定范围 · 设备：可多选，空数组 = 不限设备 */
   devices?: string[];
   /** 是否发送短信 */
@@ -1482,12 +1544,6 @@ export interface State {
   systemRules?: import("./alarmRules").SystemRules;
   alarmRules?: import("./alarmRules").AlarmRule[];
   /**
-   * 告警模板（告警管理 › 告警模板管理）
-   * @description 名称 + 触发条件 + 触发逻辑 + 声光报警 + 默认等级 + 处理流程；
-   *              原「告警规则库」已并入本集合（规则库的级别 / 类型 / 阈值 / 触发条件都是模板已有字段）
-   */
-  alarmTemplates?: import("./alarmTemplates").AlarmTemplate[];
-  /**
    * 告警类别（告警管理 › 告警类别）：分类名称 + 告警大类 + 是否启用
    * @description 启用的分类是「告警设置 › 告警类型」与「告警记录 › 分类筛选」的数据源
    */
@@ -1534,11 +1590,6 @@ export interface State {
   devices?: DeviceAsset[];
   /** 区域（工厂树第一层：区域 → 设备 → 仪表） */
   areas?: Area[];
-  /**
-   * 属地单位（设备「属地」字段的候选口径）
-   * @description 后台管理 › 工厂基础数据 › 属地配置 维护；告警 KPI 属地维度与告警推送范围同源
-   */
-  territories?: string[];
   /** 仪表（被巡检的资产对象，挂设备下） */
   instruments?: Instrument[];
   /** 巡检要求（模板库） */

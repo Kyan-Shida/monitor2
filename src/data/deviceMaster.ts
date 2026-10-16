@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file deviceMaster.ts
  * @description 设备主数据（阶段③）访问与判定的**唯一出口**：设备查找、停用拦截、
  *              「是否巡检」过滤、导入校验都收敛到这里，避免引擎与页面各写一套口径。
@@ -17,7 +17,7 @@ import type {
   Robot,
   Instrument,
 } from "./types";
-import { captureAction } from "./types";
+import { captureAction, ROOT_AREA_ID } from "./types";
 
 /** 设备编码：取设备名首段（与 `selectors.deviceCode` 同口径） */
 export const codeOfDeviceName = (name: string) => name.split(" ")[0];
@@ -243,6 +243,39 @@ export const defaultTargetKindOfTarget = (target: string): "仪表" | "区域" =
     : "仪表";
 
 /**
+ * 检测目标 → 建议分类（缺省口径）
+ * @description 分类只表达"看的是什么量"（压力 / 温度 / 阀位 / 液位 / 流量 / 气体浓度 / 环境），
+ *              界面按 `itemCategories` 给下拉建议且允许手填，不作白名单校验。
+ *              种子、新增 / 编辑检测项、老缓存回填三处共用同一口径。
+ * @param target 检测目标名（如 出口压力表 / 罐壁温度）
+ * @returns 建议分类
+ */
+export const defaultCategoryOfTarget = (target: string) =>
+  /压力/.test(target)
+    ? "压力"
+    : /温度|罐壁|罐体/.test(target)
+      ? "温度"
+      : /阀/.test(target)
+        ? "阀位"
+        : /液位/.test(target)
+          ? "液位"
+          : /流量/.test(target)
+            ? "流量"
+            : /气体|浓度/.test(target)
+              ? "气体浓度"
+              : "环境";
+
+/**
+ * 检测项「类型」的界面口径：仪表 → 实体、区域 → 虚拟
+ * @description 界面统一按实体 / 虚拟展示（与设备形态同词），数据仍沿用仪表 / 区域两档，
+ *              避免改动既有台账 / 仪表 / 巡检要求的口径
+ */
+export const itemTypeLabel = (k?: string) => (k === "区域" ? "虚拟" : "实体");
+/** 检测项「类型」界面值 → 数据值（实体 → 仪表、虚拟 → 区域） */
+export const itemKindOfType = (t: string): "仪表" | "区域" =>
+  t === "虚拟" ? "区域" : "仪表";
+
+/**
  * 设备类型 → 设备形态（缺省口径）
  * @description 有实体形态的装置（储罐 / 泵 / 分析仪…）→ 实体设备；
  *              区域 / 空间类目标载体（管廊 / 管线 / 罐区 / 围堰 / 池 / 地面 / 平台）→ 虚拟设备。
@@ -333,26 +366,6 @@ export function areaNameOf(s: State, d: DeviceAsset): string {
 }
 
 /**
- * 属地单位：按安装位置落到属地管理责任单位
- * @description 告警 KPI 的「属地」维度口径：罐区归储运部，装置区按 A / B 段分属装置一部 / 二部；
- *              设备台账（`DeviceMaster` / `Admin`）里显式维护的值优先
- * @param d 设备主数据
- * @returns 属地单位名称；识别不出时为空串（统计时归入「未指定」）
- */
-export function territoryOfDevice(
-  d: Pick<DeviceAsset, "locationDesc" | "territory">,
-): string {
-  if (d.territory) return d.territory;
-  const at = (prefix: string, unit: string) =>
-    d.locationDesc.startsWith(prefix) ? unit : "";
-  return (
-    at("装置区 A 段", "装置一部") ||
-    at("装置区 B 段", "装置二部") ||
-    at("一期罐区", "储运部")
-  );
-}
-
-/**
  * 区域下拉 / 设备树可用的区域清单
  * @description 区域主数据 ∪ 设备实际归属（去重、剔除「未分区」），
  *              老缓存里区域主数据缺失时也能从设备安装位置兜底出可选项。
@@ -360,7 +373,11 @@ export function territoryOfDevice(
  * @returns 区域名称列表（保持主数据顺序，新出现的归属追加在后）
  */
 export function areaOptions(s: State): string[] {
-  const names = (s.areas || []).map((a) => a.name).filter(Boolean);
+  // 固定根「全厂区」只是树形容器，不作为设备归属分组，从下拉/设备树中剔除
+  const names = (s.areas || [])
+    .filter((a) => a.id !== ROOT_AREA_ID)
+    .map((a) => a.name)
+    .filter(Boolean);
   const derived = (s.devices || []).map((d) => areaNameOf(s, d));
   return [...new Set([...names, ...derived])].filter(
     (x) => x && x !== "未分区",

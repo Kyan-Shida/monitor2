@@ -16,7 +16,7 @@ const quick = (points: string[], name = "临时复核") => ({
   atomicActions: ["拍照"],
 });
 
-test("设备清单导入直接生效：编码唯一、采集方式与单位受校验", () => {
+test("设备清单导入直接生效：编码唯一，采集方式与单位落默认值", () => {
   const s = seed();
   const count = s.devices!.length;
   assert.throws(
@@ -35,32 +35,34 @@ test("设备清单导入直接生效：编码唯一、采集方式与单位受�
           {
             id: "V008",
             name: "V008 新增储罐",
-            items: [
-              { id: "II-V008-L", target: "液位读数", kind: "可见光", unit: "" },
-            ],
+            items: [{ id: "", target: "液位读数" }],
           },
         ],
       }),
-    /缺少单位/,
-  );
-  assert.throws(
-    () =>
-      run(s, {
-        type: "IMPORT_DEVICES",
-        devices: [
-          {
-            id: "V008",
-            name: "V008 新增储罐",
-            items: [
-              { id: "II-V008-L", target: "液位读数", kind: "热成像", unit: "m" },
-            ],
-          },
-        ],
-      }),
-    /采集方式不合法/,
+    /缺少编码或检测目标/,
   );
   // 校验失败不落库
   assert.equal(s.devices!.length, count);
+  // 采集方式 / 单位不再填写：缺失时落默认值（可见光 / 无单位），所属区域与安装位置照常落库
+  const s2 = run(s, {
+    type: "IMPORT_DEVICES",
+    devices: [
+      {
+        id: "V008",
+        name: "V008 新增储罐",
+        deviceKind: "实体设备",
+        region: "一期罐区",
+        locationDesc: "一期罐区东侧",
+        items: [{ id: "II-V008-1", target: "液位读数" }],
+      },
+    ],
+  });
+  const dev = s2.devices!.find((d) => d.id === "V008")!;
+  assert.equal(dev.items[0].kind, "可见光");
+  assert.equal(dev.items[0].unit, "");
+  assert.equal(dev.items[0].targetKind, "仪表");
+  assert.equal(dev.region, "一期罐区");
+  assert.equal(dev.locationDesc, "一期罐区东侧");
 });
 
 test("设备清单导入支持同一设备多行（一设备多检测项）", () => {
@@ -337,4 +339,71 @@ test("设备形态：清单导入与新增设备按设备类型推导，显式�
       }),
     /设备形态.*不合法/,
   );
+});
+
+test("设备档案就地编辑：改名同步点位归属键，名称必填 / 形态受校验", () => {
+  let s = seed();
+  const pid = s.points.find((p) => p.device === "V001 原料储罐")!.id;
+  s = run(s, {
+    type: "UPDATE_DEVICE",
+    id: "DEV-V001",
+    name: "V001 原料储罐（西）",
+    deviceKind: "虚拟设备",
+    region: "一期罐区",
+    locationDesc: "一期罐区北侧",
+  });
+  const dev = s.devices!.find((d) => d.id === "DEV-V001")!;
+  assert.equal(dev.name, "V001 原料储罐（西）");
+  assert.equal(dev.deviceKind, "虚拟设备");
+  assert.equal(dev.region, "一期罐区");
+  assert.equal(dev.locationDesc, "一期罐区北侧");
+  // 设备名是点位归属键（Point.device ↔ DeviceAsset.name）：改名后点位仍须认得到设备
+  assert.equal(s.points.find((p) => p.id === pid)!.device, "V001 原料储罐（西）");
+  assert.throws(
+    () => run(s, { type: "UPDATE_DEVICE", id: "DEV-V001", name: "  " }),
+    /设备名称/,
+  );
+  assert.throws(
+    () =>
+      run(s, {
+        type: "UPDATE_DEVICE",
+        id: "DEV-V001",
+        name: "V001 原料储罐（西）",
+        deviceKind: "半实体",
+      }),
+    /设备形态.*不合法/,
+  );
+});
+
+test("批量删除设备：整批先校验后落库（混入有关联点位的设备则一台都不删）", () => {
+  let s = seed();
+  // 造两台没有巡检点位的设备，其中 T002 带仪表单
+  s = run(s, {
+    type: "ADD_DEVICE",
+    id: "T001",
+    name: "T001 测试设备",
+    deviceKind: "实体设备",
+    region: "一期罐区",
+  });
+  s = run(s, {
+    type: "ADD_DEVICE",
+    id: "T002",
+    name: "T002 测试设备",
+    deviceKind: "实体设备",
+    region: "一期罐区",
+  });
+  s = run(s, { type: "ADD_INSTRUMENT", id: "INS-T002", name: "T002 仪表", deviceId: "T002" });
+  const linked = s.devices!.find((d) => s.points.some((p) => p.device === d.name))!;
+  const before = s.devices!.length;
+  assert.throws(
+    () => run(s, { type: "DELETE_DEVICES", ids: ["T001", linked.id] }),
+    /已关联巡检点位/,
+  );
+  assert.equal(s.devices!.length, before);
+  assert.throws(() => run(s, { type: "DELETE_DEVICES", ids: [] }), /请选择要删除的设备/);
+  // 只删无关联点位的设备：设备与其仪表单一并移除
+  s = run(s, { type: "DELETE_DEVICES", ids: ["T001", "T002"] });
+  assert.equal(s.devices!.length, before - 2);
+  assert.ok(!s.devices!.some((d) => d.id === "T001" || d.id === "T002"));
+  assert.ok(!(s.instruments || []).some((i) => i.deviceId === "T002"));
 });

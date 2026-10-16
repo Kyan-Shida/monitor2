@@ -6,10 +6,10 @@
  *              数值参数支持「查询（回读已记录值）/ 设置（下发并记录）」，右侧实时回显参数总览并可保存。
  * @interaction 被 pages/PointEdit.tsx、pages/PointOnsite.tsx 调用
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Thermometer, Video } from "lucide-react";
 import { Badge, Btn, Field, Modal, Note, Table } from "./UI";
-import { DeviceTree } from "./DeviceTree";
+import { Cascader, type CascaderOption } from "./Cascader";
 import { useStore } from "../data/store";
 import { areaNameOf } from "../data/deviceMaster";
 import {
@@ -85,6 +85,13 @@ export interface InspectItemDrawerProps {
    * @description 供内置页使用：标题与「保存本项 / 取消」由页面顶栏承担
    */
   bare?: boolean;
+  /**
+   * 当前正在记录参数的动作
+   * @description 操控台常驻在页面左栏，这份状态由页面持有，这里只用于「当前巡检项记录参」回显
+   */
+  recordingAction?: AtomicAction | "";
+  /** 记录动作变化时回写页面 */
+  onRecordingActionChange?: (a: AtomicAction | "") => void;
 }
 
 /**
@@ -101,10 +108,11 @@ export function InspectItemDrawer({
   onOpenBt,
   inline,
   bare,
+  recordingAction,
+  onRecordingActionChange,
 }: InspectItemDrawerProps) {
-  const [recordingAction, setRecordingAction] = useState<AtomicAction | "">(
-    draft.actions[0] || "",
-  );
+  /** 正在记录参数的动作；页面未接管时缺省取本项第一个动作 */
+  const recAct = recordingAction ?? draft.actions[0] ?? "";
 
   /** 取某原子动作的逐项编排；未单独配置时回退到共享视角 */
   function cfgOf(a: AtomicAction): AtomicActionConfig {
@@ -133,10 +141,6 @@ export function InspectItemDrawer({
   }
 
   const { s } = useStore();
-  /** 三栏选择器：左栏树选中值（""=全部 / "r:区域" / "d:设备" / "s:台账"） */
-  const [navKey, NAVKEY] = useState("");
-  /** 三栏选择器中栏关键词 */
-  const [btKw, BTKW] = useState("");
 
   const instruments = s.instruments || [];
   const devices = s.devices || [];
@@ -154,31 +158,47 @@ export function InspectItemDrawer({
   };
   const reqOfTarget = (b: BusinessTarget) =>
     requirements.find((r) => r.id === b.requirementId);
-  /** 空间与区域（非装置）台账：树上挂到独立分组 */
-  const spaceTargets = useMemo(
-    () =>
-      businessTargets.filter(
-        (b) => !b.instrumentId || (b.targetKind && b.targetKind !== "仪表"),
-      ),
-    [businessTargets],
-  );
-  /** 树节点 → 中栏台账候选 */
-  const btMatches = (b: BusinessTarget) => {
-    if (!navKey) return true;
-    if (navKey.startsWith("s:")) return b.id === navKey.slice(2);
-    if (navKey.startsWith("d:")) return devOfTarget(b)?.id === navKey.slice(2);
-    return areaOfTarget(b) === navKey.slice(2);
-  };
-  const btList = businessTargets.filter((b) => {
-    if (!btMatches(b)) return false;
-    const k = btKw.trim();
-    return (
-      !k ||
-      (b.id + labelOfBt(b.id) + (b.algorithm || "") + (b.unit || "")).includes(k)
-    );
-  });
-  /** 当前选中的台账（右栏详情） */
+  /** 当前选中的台账（口径回显） */
   const selBt = businessTargets.find((b) => b.id === draft.targetId);
+  /**
+   * 巡检目标台账的级联候选：区域 › 设备 › 台账
+   * @description 摘掉设备的「空间 / 区域」类台账另起一组（它们不挂设备）；
+   *              叶子 value = 台账 id，「选中即按其算法带出能力与原子动作」
+   */
+  const targetOptions: CascaderOption[] = (() => {
+    const devName = (id: string) => devices.find((d) => d.id === id)?.name || id;
+    const byArea = new Map<string, Map<string, CascaderOption[]>>();
+    const space: CascaderOption[] = [];
+    businessTargets.forEach((b) => {
+      const leaf: CascaderOption = {
+        value: b.id,
+        label: b.name || labelOfBt(b.id),
+      };
+      const dev = devOfTarget(b);
+      if (!dev) {
+        space.push(leaf);
+        return;
+      }
+      const area = areaOfTarget(b) || "其他区域";
+      const devs = byArea.get(area) || new Map<string, CascaderOption[]>();
+      devs.set(dev.id, [...(devs.get(dev.id) || []), leaf]);
+      byArea.set(area, devs);
+    });
+    return [
+      ...[...byArea].map(([area, devs]) => ({
+        value: `a:${area}`,
+        label: area,
+        children: [...devs].map(([devId, items]) => ({
+          value: `d:${devId}`,
+          label: devName(devId),
+          children: items,
+        })),
+      })),
+      ...(space.length
+        ? [{ value: "space", label: "空间与区域", children: space }]
+        : []),
+    ];
+  })();
 
   /**
    * 同步原子动作集合
@@ -193,7 +213,7 @@ export function InspectItemDrawer({
     });
     onChange({ actions: next, actionConfigs: cfgs, ...extra });
     if (recordingAction && !next.includes(recordingAction as AtomicAction))
-      setRecordingAction(next[0] || "");
+      onRecordingActionChange?.(next[0] || "");
   }
 
   /** 选择巡检目标台账：按其算法自动带出对应能力（能力项表格里的行） */
@@ -286,176 +306,46 @@ export function InspectItemDrawer({
   }
 
   const content = (
-    /*
-      本页四步一屏读完：
-      ① 选择巡检目标（名称 + 台账：检什么 · 怎么判）
-      ② 明确本项需要哪些上装工作（上装开关）
-      ③ 视频面板实时操作机器 / 云台，把机器调到最佳观察位置（平台自动记录参数）
-      ④ 参数总览与保存（右栏随操控实时回显）
-    */
-    <div className="item-steps">
-      {/* ① 选择需要巡检的目标 */}
-      <section className="item-step">
-        <h4 className="item-step-h">
-          <i>1</i>
-          <span>选择需要巡检的目标</span>
-          <small className="step-tail">
-            {draft.targetId ? labelOfBt(draft.targetId) : "未选择台账"}
-          </small>
-        </h4>
+    /* 巡检项详情：名称 / 目标台账 / 所需能力列表 / 当前巡检项记录参（操控台在页面左栏常驻） */
+    <div className="pd-detail">
+      <Field label="巡检项名称" required>
+        <input
+          value={draft.name}
+          placeholder="例如 压力读数 / 泵体滴漏"
+          onChange={(e) => onChange({ name: e.target.value })}
+        />
+      </Field>
 
-        <Field label="巡检项名称">
-          <input
-            value={draft.name}
-            placeholder="例如 压力读数 / 泵体滴漏"
-            onChange={(e) => onChange({ name: e.target.value })}
-          />
-        </Field>
+      {/* 巡检目标台账：级联选择器（区域 › 设备 › 台账），点中即生效 */}
+      <Field label="巡检目标台账（检什么 · 怎么判）" required>
+        <Cascader
+          options={targetOptions}
+          value={draft.targetId}
+          placeholder="请选择巡检目标"
+          onChange={pickTarget}
+        />
+      </Field>
+      {selBt && (
+        <p className="muted">
+          判定：{judgeTextOf(selBt)} · 采集 {reqOfTarget(selBt)?.capture || "—"}
+        </p>
+      )}
+      {!businessTargets.length && (
+        <Note>
+          还没有巡检目标台账：业务目标 = 仪表 + 算法模板 + 算法 + 阈值 + 判断标准。
+          请先在「巡检目标台账」里建，或点下方「＋ 快速新建巡检目标台账」。
+        </Note>
+      )}
 
-        {/*
-          目标台账 = 三栏选择器：左「区域 › 设备」树 ／ 中「台账列表」／ 右「台账详情」。
-          点中一条台账即生效（自动按其算法勾选所需上装与原子动作），右栏只读回显口径。
-        */}
-        <div className="bt-picker">
-          <div className="bt-picker-head">
-            <span className="bt-picker-cur">
-              巡检目标台账（检什么 · 怎么判）：
-              <b>点中一条即选中</b>，右栏看口径详情
-            </span>
-          </div>
-          <div className="pick-3col">
-            {/* 左栏：与「巡检目标台账」页同一棵树；非装置类挂「空间与区域」分组 */}
-            <DeviceTree
-              value={navKey}
-              onChange={NAVKEY}
-              ariaLabel="巡检目标台账树"
-              rootLabel="全部台账"
-              rootCount={businessTargets.length}
-              countOf={(d) =>
-                businessTargets.filter((b) => devOfTarget(b)?.id === d.id).length
-              }
-              hideEmpty
-              extraGroup={
-                spaceTargets.length
-                  ? {
-                      name: "空间与区域",
-                      leaves: spaceTargets.map((b) => ({
-                        value: "s:" + b.id,
-                        label: labelOfBt(b.id),
-                      })),
-                    }
-                  : undefined
-              }
-            />
-            {/* 中栏：台账列表 */}
-            <div className="pick-main">
-              <div className="filter-bar">
-                <input
-                  placeholder="搜索台账 / 设备 / 算法"
-                  value={btKw}
-                  onChange={(e) => BTKW(e.target.value)}
-                />
-              </div>
-              <div className="pick-list">
-                {btList.map((b) => {
-                  const req = reqOfTarget(b);
-                  return (
-                    <button
-                      key={b.id}
-                      className={"pick" + (draft.targetId === b.id ? " on" : "")}
-                      onClick={() => pickTarget(b.id)}
-                    >
-                      <b>{labelOfBt(b.id)}</b>
-                      <small>
-                        {req?.capture || "—"}
-                        {b.unit ? ` · ${b.unit}` : ""} · {b.algorithm || "—"}
-                      </small>
-                    </button>
-                  );
-                })}
-                {!btList.length && (
-                  <p className="muted">
-                    没有匹配的台账，请在左栏换设备 / 区域或调整关键词。
-                  </p>
-                )}
-              </div>
-            </div>
-            {/* 右栏：台账详情（只读口径 + 自动勾选的上装） */}
-            <aside className="pick-picked">
-              <div className="pick-picked-head">
-                <b>台账详情</b>
-              </div>
-              {selBt ? (
-                <div className="pick-detail">
-                  <p className="pick-detail-name">{labelOfBt(selBt.id)}</p>
-                  <div className="bt-sum-kv">
-                    <span>类型</span>
-                    <b>
-                      {selBt.targetKind || (selBt.instrumentId ? "仪表" : "环境")}
-                    </b>
-                    <span>区域</span>
-                    <b>{areaOfTarget(selBt) || "—"}</b>
-                    <span>设备</span>
-                    <b>{devOfTarget(selBt)?.name || selBt.anchor || "—"}</b>
-                    <span>巡检要求</span>
-                    <b>{reqOfTarget(selBt)?.name || "—"}</b>
-                    <span>采集方式</span>
-                    <b>
-                      {reqOfTarget(selBt)?.capture ||
-                        insOf(selBt.instrumentId)?.capture ||
-                        "—"}
-                    </b>
-                    <span>算法</span>
-                    <b>{selBt.algorithm || "—"}</b>
-                    <span>判定标准</span>
-                    <b>{judgeTextOf(selBt)}</b>
-                    <span>告警等级</span>
-                    <b>{selBt.alarm?.level || "—"}</b>
-                  </div>
-                  <h6>自动勾选的上装</h6>
-                  <div className="pick-detail-tags">
-                    {[
-                      ...new Set(
-                        actionsOfTarget(selBt).map(
-                          (x) => atomicActionCapability[x],
-                        ),
-                      ),
-                    ].map((k) => (
-                      <Badge key={k}>{k}</Badge>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p className="pick-empty">未选择</p>
-              )}
-            </aside>
-          </div>
-        </div>
-
-        {!businessTargets.length && (
-          <Note>
-            还没有巡检目标台账：业务目标 = 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准。
-            请先在「巡检目标台账」里建，或点上方「＋ 快速新建巡检目标台账」。
-          </Note>
-        )}
-      </section>
-
-      {/*
-        ② 上装开关：明确「这一项巡检需要哪些上装参与」。
-        选中台账时按其算法自动置开；也可手动开关，开 = 记入该上装主动作，关 = 移除该上装全部动作。
-      */}
-      <section className="item-step">
-        <h4 className="item-step-h">
-          <i>2</i>
-          <span>明确本项需要哪些能力</span>
-          <small className="step-tail">
-            已选 {abilities.length} 项能力 · 原子动作 {draft.actions.length} 个
-          </small>
-        </h4>
-        {/* 能力项表格：能力参数取自「后台管理 › 机器人能力」，选完带出能力类型与特有配置 */}
-        <div className="task-toolbar">
+      {/* 所需能力列表：选中台账时按其算法自动置开，也可手动增删 */}
+      <div className="pd-block">
+        <div className="pd-block-head">
+          <b>
+            所需能力列表
+            <em className="req">*</em>
+          </b>
           <Btn primary onClick={addAbility}>
-            ＋ 新增一行
+            新增
           </Btn>
         </div>
         <Table
@@ -537,49 +427,15 @@ export function InspectItemDrawer({
           })}
         />
         {!draft.actions.length && (
-          <Note>
-            还没有能力参与：先选巡检目标，再点「＋ 新增一行」挑能力。
-          </Note>
+          <Note>还没有能力参与：先选巡检目标，再点「新增」挑能力。</Note>
         )}
-      </section>
+      </div>
 
-      {/* ③ 实时操控对准最佳位置（平台自动记录参数）＋ ④ 参数总览与保存 */}
-      <section className="item-step">
-        <h4 className="item-step-h">
-          <i>3</i>
-          <span>
-            通过视频面板实时操作机器 / 云台，把机器调到能看到本巡检项的最佳位置
-          </span>
-          <small className="step-tail">平台自动记录参数</small>
-        </h4>
-        {!draft.actions.length ? (
-          <Note>选择巡检目标与能力后，此处显示视频面板与操控台。</Note>
-        ) : (
-          <div className="item-cockpit">
-            <div className="item-cockpit-left">
-              <ControlCockpit
-                draft={draft}
-                recordingAction={recordingAction}
-                onRecordingActionChange={setRecordingAction}
-                cfgOf={cfgOf}
-                updCfg={updCfg}
-                onPoseAt={(at) => onChange({ pose: { ...draft.pose, at } })}
-              />
-            </div>
-            <div className="item-cockpit-right">
-              <h4 className="item-step-h">
-                <i>4</i>
-                <span>保存本项参数</span>
-              </h4>
-              <ParamSummary
-                draft={draft}
-                action={recordingAction}
-                cfgOf={cfgOf}
-              />
-            </div>
-          </div>
-        )}
-      </section>
+      {/* 当前巡检项记录参：左栏操控台实时记录，这里回显 */}
+      <div className="pd-block">
+        <b>当前巡检项记录参</b>
+        <ParamSummary draft={draft} action={recAct} cfgOf={cfgOf} />
+      </div>
     </div>
   );
 
@@ -789,7 +645,8 @@ function ParamSummary({
 }
 
 /** 操控台：人实际操控机器 / 云台 / 上装，操作即自动记录到当前动作参数 */
-function ControlCockpit({
+/** 「机器控制」区：双路视频 + 机器人移动 + 云台 + 辅助功能（巡检点详情页左栏常驻） */
+export function ControlCockpit({
   draft,
   recordingAction,
   onRecordingActionChange,

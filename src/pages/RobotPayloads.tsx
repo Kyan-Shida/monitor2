@@ -9,7 +9,10 @@
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
+import { usePageSize, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Field, Modal } from "../components/UI";
+import { Pager } from "../components/Business";
+import { DeleteConfirm } from "../components/ListDelete";
 import { atomicActions, atomicActionCapability, captureKinds } from "../data/types";
 import { deviceTypes } from "../data/deviceProfile";
 import type {
@@ -35,6 +38,13 @@ export function RobotPayloads() {
   const list = s.robotPayloads || [];
   const [form, FORM] = useState<PayloadForm | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [pn, PN] = useViewState("payloads.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [pageSize, SETPAGESIZE] = usePageSize("payloads.size");
+  // 分页切片：当前页一律 clamp 到有效范围
+  const pages = Math.max(1, Math.ceil(list.length / pageSize));
+  const cur = Math.min(Math.max(1, pn), pages);
+  const pageRows = list.slice((cur - 1) * pageSize, cur * pageSize);
   /**
    * 采集方式 → 可选动作
    * @description 动作归哪类采集由 `atomicActionCapability` 唯一决定，
@@ -107,7 +117,7 @@ export function RobotPayloads() {
             "状态",
             "操作",
           ]}
-          rows={list.map((p) => [
+          rows={pageRows.map((p) => [
             p.id,
             <b>{p.name}</b>,
             <div className="payload-abilities">
@@ -162,6 +172,16 @@ export function RobotPayloads() {
               </Btn>
             </div>,
           ])}
+        />
+        <Pager
+          page={cur}
+          count={list.length}
+          size={pageSize}
+          onChange={PN}
+          onSize={(n) => {
+            SETPAGESIZE(n);
+            PN(1);
+          }}
         />
       </Panel>
 
@@ -283,23 +303,8 @@ export function RobotPayloads() {
         </Modal>
       )}
 
-      {/* 删除二次确认 */}
-      {confirm && (
-        <Modal title={confirm.title} onClose={() => setConfirm(null)}>
-          <p>{confirm.text}</p>
-          <div className="modal-actions">
-            <Btn onClick={() => setConfirm(null)}>取消</Btn>
-            <Btn
-              primary
-              onClick={() => {
-                if (confirm.run() !== false) setConfirm(null);
-              }}
-            >
-              确认删除
-            </Btn>
-          </div>
-        </Modal>
-      )}
+      {/* 删除二次确认（通用组件） */}
+      <DeleteConfirm state={confirm} onClose={() => setConfirm(null)} />
     </>
   );
 }

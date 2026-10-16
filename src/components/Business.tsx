@@ -219,32 +219,63 @@ function TimelineRow({ l }: { l: import("../data/types").Log }) {
     </div>
   );
 }
+/**
+ * 列表分页条（全站唯一分页组件）
+ * @description 左「共 N 条 / N 页」+「每页 N 条」· 右「上一页 / 当前页 / 下一页」（页码固定贴最右）；
+ *              切片仍由调用方做（本组件只渲染控件），默认每页 5 条
+ * @param onSize 传了才渲染「每页」选择器（父组件的条数随之变化）
+ * @param unit 计数单位：列表为「条」，任务维度分组为「个任务」
+ * @param sizes 「每页」下拉的候选条数
+ */
 export function Pager({
   page,
   count,
-  size = 6,
+  size = 5,
   unit = "条",
+  sizes = [5, 10, 20],
   onChange,
+  onSize,
 }: {
   page: number;
   count: number;
   size?: number;
-  /** 计数单位：结果分页为"条"，任务维度分组分页为"个任务" */
   unit?: string;
+  sizes?: number[];
   onChange: (n: number) => void;
+  /** 切换每页条数 */
+  onSize?: (n: number) => void;
 }) {
   const max = Math.max(1, Math.ceil(count / size));
+  const cur = Math.min(Math.max(1, page), max);
   return (
-    <div className="pager">
+    <div className="pagination">
       <span>
-        共 {count} {unit} · 第 {Math.min(page, max)} / {max} 页
+        共 {count} {unit} / {max} 页
       </span>
-      <Btn disabled={page <= 1} onClick={() => onChange(page - 1)}>
-        上一页
-      </Btn>
-      <Btn disabled={page >= max} onClick={() => onChange(page + 1)}>
-        下一页
-      </Btn>
+      {onSize && (
+        <label className="inline-filter">
+          <span>每页</span>
+          <select value={size} onChange={(e) => onSize(Number(e.target.value))}>
+            {sizes.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <span>{unit}</span>
+        </label>
+      )}
+      <div className="page-btns">
+        <Btn disabled={cur <= 1} onClick={() => onChange(cur - 1)}>
+          上一页
+        </Btn>
+        <span className="page-info">
+          {cur} / {max}
+        </span>
+        <Btn disabled={cur >= max} onClick={() => onChange(cur + 1)}>
+          下一页
+        </Btn>
+      </div>
     </div>
   );
 }

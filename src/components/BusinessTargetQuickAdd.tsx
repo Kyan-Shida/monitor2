@@ -1,7 +1,7 @@
 /**
  * @file BusinessTargetQuickAdd.tsx
  * @description 「快速新建巡检目标台账」抽屉（现场补录入口）：
- *              巡检目标台账 = 业务目标与要求 + 仪表 + 巡检要求 + 算法 + 阈值 + 判断标准 + 告警设置。
+ *              巡检目标台账 = 业务目标与要求 + 仪表 + 算法模板 + 算法 + 阈值 + 判断标准 + 告警设置。
  *              提交即人工新增、直接生效；由「添加 / 编辑巡检点」与「现场采集新增巡检点」共用。
  * @interaction 引擎 action：ADD_BUSINESS_TARGET；被 pages/PointEdit.tsx、pages/PointOnsite.tsx 消费
  */
@@ -26,7 +26,7 @@ interface QuickForm {
 }
 
 /**
- * 取初始表单：按预选仪表 + 其默认巡检要求带出算法 / 判定 / 阈值 / 单位 / 判断标准
+ * 取初始表单：按预选仪表 + 其默认算法模板带出算法 / 判定 / 阈值 / 单位 / 判断标准
  * @param s 状态
  * @param instrumentId 预选仪表 id；缺省用第一个仪表
  * @returns 初始表单
@@ -70,7 +70,7 @@ export function BusinessTargetQuickAdd({
   const { s, act } = useStore();
   const [bt, BT] = useState<QuickForm>(() => initForm(s, instrumentId));
 
-  /** 选巡检要求：带出算法 / 判定 / 阈值 / 单位 / 判断标准 */
+  /** 选算法模板：带出算法 / 判定 / 阈值 / 单位 / 判断标准 */
   function applyReq(rid: string, insId: string) {
     const req = (s.requirements || []).find((r) => r.id === rid);
     const ins = s.instruments?.find((x) => x.id === insId);
@@ -133,11 +133,11 @@ export function BusinessTargetQuickAdd({
       }
     >
       <Note>
-        巡检目标台账 = 仪表 + 巡检要求 + 算法 + 告警模板。
+        巡检目标台账 = 仪表 + 算法模板。
         此处为现场补录入口，建完提交即人工新增、直接生效。
         <br />
         新建默认<b>二级告警（通知设备岗）</b>；判定异常即告警，平台没有"告警开关"，
-        告警等级 / 通知 / 关联告警模板统一在「巡检目标台账 › 3、告警规则」维护。
+        告警等级 / 通知统一在「巡检目标台账 › 3、告警规则」维护。
       </Note>
       <Field label="检测目标（仪表）">
         <select
@@ -163,13 +163,13 @@ export function BusinessTargetQuickAdd({
           })}
         </select>
       </Field>
-      <Field label="巡检要求（决定看什么）">
+      <Field label="算法模板（决定看什么）">
         <select
           value={bt.requirementId}
           onChange={(e) => applyReq(e.target.value, bt.instrumentId)}
         >
           {(s.requirements || [])
-            // 现场补录的都是仪表类目标：只列适用于仪表的巡检要求
+            // 现场补录的都是仪表类目标：只列适用于仪表的算法模板
             .filter((r) => (r.targetKinds || ["仪表"]).includes("仪表"))
             .map((r) => (
               <option key={r.id} value={r.id}>
@@ -181,26 +181,6 @@ export function BusinessTargetQuickAdd({
       <p className="muted">
         {(s.requirements || []).find((r) => r.id === bt.requirementId)?.description}
       </p>
-      {/* 算法值来自「后台管理 › 算法模板管理」，不再手填（打通联动） */}
-      <Field label="算法 / AI 表达方式（来源：后台管理 › 算法模板管理）">
-        <select
-          value={bt.algorithm}
-          onChange={(e) => BT({ ...bt, algorithm: e.target.value })}
-        >
-          <option value="">请选择算法</option>
-          {[
-            ...(s.algoConfigs || [])
-              .filter((a) => a.state !== "停用")
-              .map((a) => a.name),
-            ...(bt.algorithm &&
-            !(s.algoConfigs || []).some((a) => a.name === bt.algorithm)
-              ? [bt.algorithm]
-              : []),
-          ].map((x) => (
-            <option key={x}>{x}</option>
-          ))}
-        </select>
-      </Field>
       <Field label="判定方式">
         <select
           value={bt.judge}

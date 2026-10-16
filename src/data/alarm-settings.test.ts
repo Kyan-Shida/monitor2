@@ -13,7 +13,6 @@ import {
   alarmClassesOf,
   derivedTargetNameOf,
   enabledAlarmClassesOf,
-  itemFromTemplate,
   settingOf,
   targetNameOf,
   withAlarmSetting,
@@ -118,10 +117,10 @@ test("告警设置保存后与台账判定口径同步，并进入点位规则",
   assert.equal(after.alarm!.name, undefined);
   assert.equal(after.alarm!.items!.length, 2, "多条告警项应保留");
   const rule = rulesOf(s).find((r) => r.pointId === pointOfTarget(s, t.id)!.id)!;
-  // 等级按台账走（模板只提供缺省等级）
+  // 等级按台账走
   assert.equal(rule.level, "一级");
-  // 触发条件：该台账来源为「模板」，上下限仍由模板下发（既有口径，见 alarmRules.rulesOf）
-  assert.equal(rule.min, t.alarm!.templateId ? rule.min : 0.3);
+  // 触发条件：点位规则的上下限来自台账判定口径（同源，见 alarmRules.rulesOf）
+  assert.equal(rule.min, 0.3);
 });
 
 test("告警开关：停用后该台账不做异常判定", () => {
@@ -156,14 +155,10 @@ test("告警开关是总闸：已存规则在台账停用后同样不判定", ()
   );
 });
 
-test("告警设置校验：告警类型 / 告警项必填", () => {
+test("告警设置校验：告警项必填", () => {
   const s = admin();
   const t = s.businessTargets![0];
   const base = settingOf(s, t);
-  assert.throws(
-    () => run(s, { type: "SAVE_ALARM_SETTING", targetId: t.id, setting: { ...base, category: " " } }),
-    /告警类型/,
-  );
   assert.throws(
     () => run(s, { type: "SAVE_ALARM_SETTING", targetId: t.id, setting: { ...base, items: [] } }),
     /至少添加一条/,
@@ -302,49 +297,6 @@ test("withAlarmSetting 幂等：已齐备的台账原样返回", () => {
   assert.equal(filled.alarm!.items!.length, 1);
   assert.equal(filled.alarm!.items![0].judge, legacy.judge);
   assert.equal(filled.judge, legacy.judge);
-});
-
-test("告警项可引用模板：主项模板决定台账来源，并按模板判定；改回手填只清引用", () => {
-  let s = admin();
-  const t0 = s.businessTargets!.find((b) => !!pointOfTarget(s, b.id))!;
-  const pid = pointOfTarget(s, t0.id)!.id;
-  const tpl = s.alarmTemplates!.find((x) => x.enabled)!;
-  const set = settingOf(s, t0);
-  // 模拟表格里「告警模板」下拉选中：一键带出判断类型 / 阈值 / 单位 / 等级 / 声光报警
-  const main = itemFromTemplate(set.items[0], tpl);
-  assert.equal(main.templateId, tpl.id);
-  assert.equal(main.level, tpl.level);
-  assert.equal(main.judge, tpl.trigger.type);
-  s = run(s, {
-    type: "SAVE_ALARM_SETTING",
-    targetId: t0.id,
-    setting: { ...set, items: [main, ...set.items.slice(1)] },
-  });
-  const saved = s.businessTargets!.find((b) => b.id === t0.id)!;
-  // 台账来源随主项：引用了模板 → 模板来源，模板 ID 同步到台账，判定口径同源
-  assert.equal(saved.alarm!.source, "模板");
-  assert.equal(saved.alarm!.templateId, tpl.id);
-  assert.equal(saved.judge, tpl.trigger.type);
-  assert.equal(saved.alarm!.items![0].templateId, tpl.id);
-  assert.equal(rulesOf(s).find((r) => r.pointId === pid)!.templateId, tpl.id);
-
-  // 改回手填（清掉模板引用）：来源回落手动，已带出的字段保留
-  s = run(s, {
-    type: "SAVE_ALARM_SETTING",
-    targetId: t0.id,
-    setting: { ...set, items: [{ ...main, templateId: undefined }, ...set.items.slice(1)] },
-  });
-  const back = s.businessTargets!.find((b) => b.id === t0.id)!;
-  assert.equal(back.alarm!.source, "手动");
-  assert.equal(back.alarm!.templateId, undefined);
-  assert.equal(back.alarm!.items![0].judge, tpl.trigger.type);
-});
-
-test("主告警项的模板引用：老缓存缺引用时按台账关联模板回落（两处口径一致）", () => {
-  const s = seed();
-  const t = s.businessTargets!.find((b) => !!b.alarm?.templateId)!;
-  // 种子的告警项不写 templateId，读口径时按台账关联的模板回落到第一条
-  assert.equal(settingOf(s, t).items[0].templateId, t.alarm!.templateId);
 });
 
 test("台账派生名：区域类没有仪表也没有锚点时用巡检要求名兜底（不再空着）", () => {

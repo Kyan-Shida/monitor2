@@ -1,43 +1,37 @@
+/**
+ * @file DeviceArchive.tsx
+ * @description 设备巡检档案（内置页）：主数据字段块 + 检测目标 / 历史结果 / 关联告警三个视图
+ * @interaction 由「设备台账」行内「设备档案」进入；采集证据、巡检任务两个视图已下线
+ */
 import { useStore } from "../data/store";
-import { go, useViewState } from "../data/navigation";
-import { pointOf, terminal, fmtTime, judgeOf } from "../data/selectors";
+import { useViewState } from "../data/navigation";
+import { pointOf, judgeOf } from "../data/selectors";
 import { Panel, Table, Badge, Note } from "../components/UI";
 import { ObjectLink } from "../components/Business";
-import { ResultTrend } from "../components/ResultTrend";
-import { archiveIdOf, deviceOf, deviceKindOf } from "../data/deviceMaster";
+import { DeviceSummary } from "../components/DeviceSummary";
+import { deviceOf } from "../data/deviceMaster";
+
+/** 档案视图（顺序即 tab 顺序）；旧记忆值落在已下线视图上时回落到首个视图 */
+const TABS = ["检测目标", "历史结果", "关联告警"];
+
 export function DeviceArchive({ id }: { id?: string; tab?: string }) {
   const { s } = useStore();
-  // 设备口径：以设备主数据为准（唯一来源）；旧缓存缺主数据时回落到"由点位反推"
-  const master = (s.devices || []).filter((d) =>
-    s.points.some((p) => p.device === d.name),
-  );
-  const devices = master.length
-    ? master.map((d) => d.name)
-    : [...new Set(s.points.map((p) => p.device))];
-  // 设备档案：严格按路由上的设备 ID 绑定，查不到就明确提示（不退化到"第一台设备"）
+  // 设备口径：以设备主数据为准（唯一来源）；严格按路由上的设备编码 / 主数据 id 绑定，
+  // 查不到就明确提示（不退化到"第一台设备"，也不要求该设备已有巡检点）
   const picked = id ? deviceOf(s, id) : undefined;
-  const device = picked && devices.includes(picked.name) ? picked.name : "";
-  const dev = device ? deviceOf(s, device) : undefined;
+  const device = picked?.name || "";
+  const dev = picked;
   const points = device ? s.points.filter((p) => p.device === device) : [],
     results = device
       ? s.results.filter((r) => pointOf(s, r)?.device === device)
       : [],
     alarms = device
       ? s.alarms.filter((a) => points.some((p) => p.id === a.pointId))
-      : [],
-    tasks = device
-      ? s.tasks.filter((t) => t.items.some((p) => p.device === device))
       : [];
   // 视图状态按设备维度记忆：未绑定时先用占位 key，保证 Hook 调用顺序稳定
   const scope = device || "_";
-  const [tab, T] = useViewState("archive." + scope, "检测对象"),
-    [pid, P] = useViewState("archive.point." + scope, points[0]?.id || ""),
-    [srcF, SF] = useViewState("archive.tasks.src." + scope, "全部"),
-    [robotF, RF] = useViewState("archive.tasks.robot." + scope, "全部"),
-    [stateF, STF] = useViewState("archive.tasks.state." + scope, "全部"),
-    [taskQ, TQ] = useViewState("archive.tasks.q." + scope, ""),
-    [fromD, FD] = useViewState("archive.tasks.from." + scope, ""),
-    [toD, TD] = useViewState("archive.tasks.to." + scope, "");
+  const [view, T] = useViewState("archive." + scope, TABS[0]);
+  const tab = TABS.includes(view) ? view : TABS[0];
   // 未绑定到具体设备（缺 ID 或 ID 不存在）时直接说明，不展示别的设备的档案
   // 注：必须放在全部 Hook 之后，避免 Hook 调用数量随数据变化
   if (!device)
@@ -46,134 +40,68 @@ export function DeviceArchive({ id }: { id?: string; tab?: string }) {
         未找到设备{id ? ` ${id}` : ""}，请从「设备台账」进入设备档案。
       </Note>
     );
-  // 设备巡检任务筛选：来源 / 机器人 / 状态三个下拉 + 任务名称/编号关键词，选项从本设备任务动态派生
-  const taskSrcOpts = ["全部", ...new Set(tasks.map((t) => t.source))];
-  const taskRobotOpts = [
-    "全部",
-    "未分配",
-    ...new Set(tasks.map((t) => t.robotId).filter(Boolean)),
-  ];
-  const taskStateOpts = ["全部", ...new Set(tasks.map((t) => t.state))];
-  const taskRows = tasks.filter((t) => {
-    if (taskQ && !(t.name + t.id).includes(taskQ)) return false;
-    if (srcF !== "全部" && t.source !== srcF) return false;
-    if (robotF !== "全部" && (t.robotId || "未分配") !== robotF) return false;
-    if (stateF !== "全部" && t.state !== stateF) return false;
-    // 时间区间：按任务结束时间比对，未结束的任务回落到生成时间（YYYY-MM-DD 可直接字符串比较）
-    const day = (t.finishedAt || t.created).slice(0, 10);
-    if (fromD && day < fromD) return false;
-    if (toD && day > toD) return false;
-    return true;
-  });
   return (
     <>
-      <div className="context-bar">
-        <b>设备档案</b>
-        <select
-          aria-label="档案设备"
-          value={archiveIdOf(s, device)}
-          onChange={(e) => go("archive", e.target.value)}
-        >
-          {devices.map((x) => (
-            <option key={x} value={archiveIdOf(s, x)}>
-              {x}
-            </option>
-          ))}
-        </select>
-        <span>
-          {points.length} 个检测对象 · {results.length} 条结果 · {alarms.length}{" "}
-          个关联告警
-        </span>
-      </div>
       <div className="object-summary">
-        <h2>{device}</h2>
-        <p>
-          所属区域：{s.maps.find((m) => m.id === points[0]?.mapId)?.region}
-          　设备编码：{dev?.id || archiveIdOf(s, device)}
-          {dev && <>　设备类型：{dev.type}</>}
-          {dev && <>　设备形态：{deviceKindOf(dev)}</>}
-          {dev?.locationDesc && <>　安装位置：{dev.locationDesc}</>}
-          {dev?.state === "停用" && <>　<Badge>已停用</Badge></>}
-        </p>
-        <small>按设备聚合对象、检测项、历史证据、告警与巡检任务。</small>
+        {dev ? <DeviceSummary key={dev.id} dev={dev} /> : <h2>{device}</h2>}
       </div>
       <div className="local-tabs">
-        {["检测对象", "历史结果", "关联告警", "采集证据", "巡检任务"].map(
-          (x) => (
-            <button
-              key={x}
-              className={tab === x ? "active" : ""}
-              onClick={() => T(x)}
-            >
-              {x}
-            </button>
-          ),
-        )}
-      </div>
-      {tab === "检测对象" ? (
-        <>
-          <Panel title="设备检测对象与最新结果">
-            <Table
-              heads={[
-                "检测对象",
-                "业务点位",
-                "检测项",
-                "最新值",
-                "最新检测时间",
-                "状态",
-                "结果",
-              ]}
-              rows={points.map((p) => {
-                const r = results.find((x) => x.pointId === p.id);
-                return [
-                  p.object,
-                  <ObjectLink type="point" id={p.id}>
-                    {p.name}
-                  </ObjectLink>,
-                  p.item,
-                  r ? `${r.final} ${r.unit}` : "尚未检测",
-                  r?.time || "—",
-                  <Badge>{r?.status || p.state}</Badge>,
-                  r ? (
-                    <ObjectLink type="review" id={r.id} to="result-detail">
-                      {r.id}
-                    </ObjectLink>
-                  ) : (
-                    "无结果"
-                  ),
-                ];
-              })}
-            />
-          </Panel>
-          <Panel
-            title="设备历史趋势"
-            extra={
-              <select value={pid} onChange={(e) => P(e.target.value)}>
-                {points.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.object} · {p.item}
-                  </option>
-                ))}
-              </select>
-            }
+        {TABS.map((x) => (
+          <button
+            key={x}
+            className={tab === x ? "active" : ""}
+            onClick={() => T(x)}
           >
-            <ResultTrend results={results.filter((r) => r.pointId === pid)} />
-          </Panel>
-        </>
-      ) : tab === "历史结果" || tab === "采集证据" ? (
-        <Panel title={tab}>
+            {x}
+          </button>
+        ))}
+      </div>
+      {tab === "检测目标" ? (
+        <Panel title="设备检测目标与最新识别">
           <Table
-            heads={["时间", "检测项", "值 / 来源", "判断", "证据详情"]}
+            heads={[
+              "检测目标",
+              "业务点位",
+              "观察项",
+              "最新识别",
+              "最新检测时间",
+              "结果",
+            ]}
+            rows={points.map((p) => {
+              const r = results.find((x) => x.pointId === p.id);
+              return [
+                p.object,
+                <ObjectLink type="point" id={p.id}>
+                  {p.name}
+                </ObjectLink>,
+                p.item,
+                r ? `${r.final} ${r.unit}` : "尚未检测",
+                r?.time || "—",
+                r ? (
+                  <ObjectLink type="review" id={r.id} to="result-detail">
+                    {r.id}
+                  </ObjectLink>
+                ) : (
+                  "无结果"
+                ),
+              ];
+            })}
+          />
+        </Panel>
+      ) : tab === "历史结果" ? (
+        <Panel title="历史结果">
+          <Table
+            heads={["时间", "观察项", "值 / 来源", "判断", "证据详情"]}
             rows={results.map((r) => [
               r.time,
               r.item,
-              tab === "采集证据" ? r.source : `${r.final} ${r.unit}`,
+              `${r.final} ${r.unit}`,
               <Badge>{judgeOf(r)}</Badge>,
               <ObjectLink type="review" id={r.id} to="result-detail" />,
             ])}
           />
         </Panel>
-      ) : tab === "关联告警" ? (
+      ) : (
         <Panel title="设备告警">
           <Table
             heads={["告警", "状态", "来源任务", "处置"]}
@@ -184,90 +112,6 @@ export function DeviceArchive({ id }: { id?: string; tab?: string }) {
               <ObjectLink type="alarm" id={a.id} to="alarm-detail">
                 查看详情
               </ObjectLink>,
-            ])}
-          />
-        </Panel>
-      ) : (
-        <Panel
-          className="panel-filters-wrap"
-          title="设备巡检任务"
-          extra={
-            <div className="actions">
-              <label className="inline-filter">
-                <span>来源：</span>
-                <select value={srcF} onChange={(e) => SF(e.target.value)}>
-                  {taskSrcOpts.map((o) => (
-                    <option key={o}>{o}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="inline-filter">
-                <span>机器人：</span>
-                <select value={robotF} onChange={(e) => RF(e.target.value)}>
-                  {taskRobotOpts.map((o) => (
-                    <option key={o}>{o}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="inline-filter">
-                <span>状态：</span>
-                <select value={stateF} onChange={(e) => STF(e.target.value)}>
-                  {taskStateOpts.map((o) => (
-                    <option key={o}>{o}</option>
-                  ))}
-                </select>
-              </label>
-              {/* 时间维度：按任务结束时间筛选，未结束任务回落到生成时间 */}
-              <label
-                className="inline-filter"
-                title="按任务结束时间筛选；未结束的任务按生成时间"
-              >
-                <span>时间：</span>
-                <input
-                  type="date"
-                  aria-label="起始日期"
-                  value={fromD}
-                  onChange={(e) => FD(e.target.value)}
-                />
-                <span>~</span>
-                <input
-                  type="date"
-                  aria-label="结束日期"
-                  value={toD}
-                  onChange={(e) => TD(e.target.value)}
-                />
-              </label>
-              <input
-                placeholder="搜索任务名称 / 编号"
-                value={taskQ}
-                onChange={(e) => TQ(e.target.value)}
-              />
-            </div>
-          }
-        >
-          <Table
-            heads={["任务", "来源", "机器人", "状态", "时间（生成 / 结束）", "回放"]}
-            rows={taskRows.map((t) => [
-              <ObjectLink type="task-detail" id={t.id}>
-                {t.name}
-              </ObjectLink>,
-              t.source,
-              <ObjectLink type="robot" id={t.robotId} />,
-              <Badge>{t.state}</Badge>,
-              <>
-                <span>{fmtTime(t.created)}</span>
-                <small className="cell-muted">
-                  {t.finishedAt ? `结束 ${fmtTime(t.finishedAt)}` : "尚未结束"}
-                </small>
-              </>,
-              // 仅已结束任务存在执行回溯，才提供过程回放入口；未结束任务无可回放内容
-              terminal.includes(t.state) ? (
-                <ObjectLink type="replay" id={t.id} to="replay-detail">
-                  过程回放
-                </ObjectLink>
-              ) : (
-                <span className="muted">—</span>
-              ),
             ])}
           />
         </Panel>

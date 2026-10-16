@@ -40,7 +40,7 @@ const spec = (
 /** 把巡检点置为可下发状态（保存会打回停用、地图回未发布，本用例只验证指令集来源） */
 function enable(s: State, pointId: string) {
   s.points.find((p) => p.id === pointId)!.state = "已启用";
-  s.maps.find((m) => m.id === "MAP-A03")!.state = "已发布";
+  s.maps.find((m) => m.id === "MAP-A03")!.syncState = "已同步";
 }
 
 test("添加巡检点：名称 + 地图 + 标定点（带定位ID）+ 多个巡检项逐项保存", () => {
@@ -72,7 +72,7 @@ test("添加巡检点：名称 + 地图 + 标定点（带定位ID）+ 多个巡�
   const t = targetsOf(s, "MAP-A03").find((x) => x.id === "T-NEW")!;
   assert.equal(t.pointId, p.id);
   assert.equal(t.state, "已确认");
-  assert.equal(s.maps[0].state, "已发布");
+  assert.equal(s.maps[0].syncState, "已同步");
   // 多个巡检项 → 内部派生多条逻辑点（不暴露给用户）
   assert.equal(p.logicalIds!.length, 2);
   assert.equal(

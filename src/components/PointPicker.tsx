@@ -1,16 +1,31 @@
 /**
  * @file PointPicker.tsx
  * @description 巡检点选择器三栏布局：左「区域 › 设备」目录树（与设备台账同一棵树，节点可整组勾选 / 取消）、
- *              中「巡检点列表」（由调用方渲染）、右「已选清单」（可就地移除）
+ *              中「巡检点列表」（由调用方渲染）、右「已选清单」（可就地移除）；
+ *              cascade 模式下三栏收成「级联浮层 + 已选清单」两段，选点不再经过中栏表格
  * @interaction Planning.tsx（模板 / 计划弹窗的勾选表）、QuickTaskDrawer.tsx（临时任务）
  */
-import { useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { X } from "lucide-react";
 import { useStore } from "../data/store";
 import { DeviceTree, type DeviceTreeValue } from "./DeviceTree";
 import { Btn, Modal } from "./UI";
 import { areaNameOf, devicesOfPoint } from "../data/deviceMaster";
 import type { DeviceAsset, Point } from "../data/types";
+
+/**
+ * 级联浮层的展开方向判据
+ * @description 触发器下方剩余空间小于该值（且上方更宽裕）时改为向上展开
+ */
+const MIN_BELOW = 240;
+/** 浮层高度上限（px）：超过就在列内滚动 */
+const POP_MAX_H = 340;
 
 /**
  * 去重（同一巡检点覆盖多台设备时会被重复收集）
@@ -28,6 +43,7 @@ export function PointPicker({
   onOptimize,
   onClear,
   onReorder,
+  cascade,
   children,
 }: {
   /** 候选巡检点（调用方已按搜索 / 状态等前置条件筛选） */
@@ -46,6 +62,12 @@ export function PointPicker({
    *              不传则只展示清单（临时任务等不关心顺序的场景）
    */
   onReorder?: (from: number, to: number) => void;
+  /**
+   * 目录树与勾选表是否收进「级联选择器」（点触发器展开区域 › 设备 › 巡检点三级浮层）
+   * @description 选点在浮层里点选，中栏勾选表整块不再渲染，只留右侧已选清单占满宽度；
+   *              不传则维持原来的「树 / 列表 / 已选」三栏平铺
+   */
+  cascade?: boolean;
   /** 中栏：调用方渲染列表，入参为目录树裁剪后的巡检点 */
   children: (rows: Point[]) => ReactNode;
 }) {
@@ -54,6 +76,63 @@ export function PointPicker({
   const [drag, DRAG] = useState<number | null>(null);
   /** 最优排序的二次确认弹窗 */
   const [askOptimize, ASK] = useState(false);
+  /** 级联选择器的展开态（cascade 模式） */
+  const [cascadeOpen, SETCASCADEOPEN] = useState(false);
+  /**
+   * 级联浮层坐标（fixed 定位）
+   * @description 浮层不能留在原地：外层面板 `.panel` 是 `overflow: hidden`，
+   *              absolute 浮层会被裁掉（第三列巡检点只剩半行 = 看起来「被遮住」）。
+   *              改为 fixed + 打开时按触发器实测坐标定位，高度按那一侧的可用空间收敛
+   */
+  const [popPos, SETPOPPOS] = useState({
+    top: 0,
+    left: 0,
+    up: false,
+    maxH: POP_MAX_H,
+  });
+  /** 触发器容器：取实时位置用 */
+  const cascadeBox = useRef<HTMLDivElement>(null);
+  /** 浮层：渲染后量一次宽度，超出视口右沿就往左挪 */
+  const cascadePop = useRef<HTMLDivElement>(null);
+
+  /** 按触发器实时位置定位浮层（下方空间不足则向上翻，左右夹在视口内） */
+  function placePop() {
+    const r = cascadeBox.current?.getBoundingClientRect();
+    if (!r) return;
+    const up = window.innerHeight - r.bottom < MIN_BELOW && r.top > MIN_BELOW;
+    const space = (up ? r.top : window.innerHeight - r.bottom) - 14;
+    SETPOPPOS({
+      top: up ? r.top - 6 : r.bottom + 6,
+      left: Math.max(8, Math.min(r.left, window.innerWidth - 650)),
+      up,
+      maxH: Math.max(160, Math.min(POP_MAX_H, space)),
+    });
+  }
+
+  /**
+   * 打开时定位，滚动 / 窗口尺寸变化时跟随
+   * @description 浮层是 fixed，不随页面或弹窗内容滚动，必须自己重算坐标
+   */
+  useEffect(() => {
+    if (!cascadeOpen) return;
+    placePop();
+    const onMove = () => placePop();
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [cascadeOpen]);
+
+  /** 浮层渲染后量一次实际宽度：超出视口右沿就往左挪（挪够即停，不会来回抖） */
+  useEffect(() => {
+    if (!cascadeOpen) return;
+    const el = cascadePop.current;
+    if (!el) return;
+    const over = el.getBoundingClientRect().right - (window.innerWidth - 8);
+    if (over > 0) SETPOPPOS((p) => ({ ...p, left: Math.max(8, p.left - over) }));
+  }, [cascadeOpen]);
   /** 目录树选中节点：与设备台账同口径（""=全部 / "r:区域" / "d:设备ID"） */
   const [node, setNode] = useState<DeviceTreeValue>("");
   /**
@@ -98,24 +177,146 @@ export function PointPicker({
       onChange={() => toggleGroup(items)}
     />
   );
+  /** 「区域 › 设备」目录树：与设备台账同一棵，计数按候选巡检点统计 */
+  const tree = (
+    <DeviceTree
+      value={node}
+      onChange={(v) => {
+        setNode(v);
+        // 级联模式下点选即收起，回到勾选表继续操作
+        SETCASCADEOPEN(false);
+      }}
+      ariaLabel="巡检点树"
+      rootLabel="全部巡检点"
+      rootCount={points.length}
+      countOf={(d) => pointsOfDevice(d.id).length}
+      groupCountOf={(devs) => pointsOfRegion(devs).length}
+      hideEmpty
+      rootExtra={groupBox(points, "全选全部巡检点")}
+      regionExtra={(devs) => groupBox(pointsOfRegion(devs), "全选该区域的巡检点")}
+      deviceExtra={(d) => groupBox(pointsOfDevice(d.id), `全选 ${d.name} 的巡检点`)}
+    />
+  );
+  /** 级联选择器当前层级文案（""=全部 / "r:区域" / "d:设备"） */
+  const nodeLabel = !node
+    ? "全部巡检点"
+    : node.startsWith("d:")
+      ? s.devices?.find((d) => d.id === node.slice(2))?.name || "已选设备"
+      : node.slice(2);
+  /**
+   * 级联面板的三级数据：区域 → 设备 → 巡检点
+   * @description 列式级联（与「巡检目标」选择器同形态）；第三级的巡检点可多选，勾选即加入已选
+   */
+  const cascadeRegions = [
+    ...new Set(
+      points
+        .flatMap((p) => devicesOfPoint(s, p).map((d) => areaNameOf(s, d)))
+        .filter(Boolean),
+    ),
+  ];
+  const [cascadeRegion, SETCASCADEREGION] = useState("");
+  const [cascadeDevice, SETCASCADEDEVICE] = useState("");
+  const cascadeDevices = cascadeRegion
+    ? (s.devices || []).filter((d) => areaNameOf(s, d) === cascadeRegion)
+    : [];
+  const cascadePoints = cascadeDevice ? pointsOfDevice(cascadeDevice) : [];
   return (
     <>
-    <div className="pick-3col">
-      {/* 左栏：与设备台账同一棵「区域 › 设备」树，计数按候选巡检点统计 */}
-      <DeviceTree
-        value={node}
-        onChange={setNode}
-        ariaLabel="巡检点树"
-        rootLabel="全部巡检点"
-        rootCount={points.length}
-        countOf={(d) => pointsOfDevice(d.id).length}
-        groupCountOf={(devs) => pointsOfRegion(devs).length}
-        hideEmpty
-        rootExtra={groupBox(points, "全选全部巡检点")}
-        regionExtra={(devs) => groupBox(pointsOfRegion(devs), "全选该区域的巡检点")}
-        deviceExtra={(d) => groupBox(pointsOfDevice(d.id), `全选 ${d.name} 的巡检点`)}
-      />
-      <div className="pick-main">{children(rows)}</div>
+    {cascade && (
+      <div className="pick-cascade" ref={cascadeBox}>
+        <button
+          type="button"
+          className="pick-cascade-trigger"
+          onClick={() => SETCASCADEOPEN(!cascadeOpen)}
+        >
+          <span>{nodeLabel}</span>
+          <i>{cascadeOpen ? "▲" : "▼"}</i>
+        </button>
+        {cascadeOpen && (
+          <>
+            {/* 透明遮罩：点空白处收起浮层 */}
+            <div
+              className="pick-cascade-mask"
+              onClick={() => SETCASCADEOPEN(false)}
+            />
+            {/* 三列级联：区域 → 设备 → 巡检点（第三列多选，勾选即入已选清单）；
+                坐标 / 高度上限由 placePop() 按触发器实测位置写入（fixed 定位，不被面板裁切） */}
+            <div
+              ref={cascadePop}
+              className={"pick-cascade-panel" + (popPos.up ? " up" : "")}
+              style={
+                {
+                  top: popPos.top,
+                  left: popPos.left,
+                  maxHeight: popPos.maxH,
+                  // 列高跟着面板收敛，避免面板变矮后列还撑着 320px 溢出去
+                  "--pop-h": `${popPos.maxH}px`,
+                } as CSSProperties
+              }
+            >
+              <ul className="cascade-col">
+                {cascadeRegions.map((r) => (
+                  <li key={r}>
+                    <button
+                      type="button"
+                      className={cascadeRegion === r ? "on" : ""}
+                      onClick={() => {
+                        SETCASCADEREGION(r);
+                        SETCASCADEDEVICE("");
+                      }}
+                    >
+                      {r}
+                      <i>›</i>
+                    </button>
+                  </li>
+                ))}
+                {!cascadeRegions.length && (
+                  <li className="cascade-empty">无可用区域</li>
+                )}
+              </ul>
+              <ul className="cascade-col">
+                {cascadeDevices.map((d) => (
+                  <li key={d.id}>
+                    <button
+                      type="button"
+                      className={cascadeDevice === d.id ? "on" : ""}
+                      onClick={() => SETCASCADEDEVICE(d.id)}
+                    >
+                      {d.name}
+                      <i>›</i>
+                    </button>
+                  </li>
+                ))}
+                {!cascadeDevices.length && (
+                  <li className="cascade-empty">请选择</li>
+                )}
+              </ul>
+              <ul className="cascade-col">
+                {cascadePoints.map((p) => (
+                  <li key={p.id}>
+                    <label className="cascade-check">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(p.id)}
+                        onChange={() => onToggle(p.id)}
+                      />
+                      <span>{p.name}</span>
+                    </label>
+                  </li>
+                ))}
+                {!cascadePoints.length && (
+                  <li className="cascade-empty">请选择</li>
+                )}
+              </ul>
+            </div>
+          </>
+        )}
+      </div>
+    )}
+    <div className={cascade ? "pick-cascade-col" : "pick-3col"}>
+      {!cascade && tree}
+      {/* 级联模式下选点在下拉浮层里完成，中栏勾选表整块去掉，只留右侧已选清单 */}
+      {!cascade && <div className="pick-main">{children(rows)}</div>}
       <aside className="pick-picked">
         <div className="pick-picked-head">
           <span>
@@ -189,7 +390,7 @@ export function PointPicker({
       {askOptimize && (
         <Modal title="最优排序" onClose={() => ASK(false)}>
           <p>
-            依据父线（路网）节点序列重排已选巡检点，生成无折返执行顺序。
+            依据固定路线（路网）节点序列重排已选巡检点，生成无折返执行顺序。
             本次调整 {picked.length} 个巡检点的执行次序。
           </p>
           <div className="modal-actions">

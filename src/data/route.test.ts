@@ -59,6 +59,59 @@ test("巡检路线：落父线地图、保留点位顺序、跨图选点被拦",
   assert.equal(s.templates.find((x) => x.id === "TMP01")!.version, 2);
 });
 
+test("自定义路线：路径锚点落「巡检点 id」，误落定位点 id 会被拦下", () => {
+  const s0 = seed();
+  const p1 = s0.points.find((x) => x.id === "P001")!;
+  const p2 = s0.points.find((x) => x.id === "P002")!;
+  const template = s0.templates.find((x) => x.id === "TMP01")!;
+  // 定位点（target）与巡检点是两套 id：P001 → O101，别混用
+  assert.notEqual(p1.targetId, p1.id);
+
+  // 正常口径：锚点吸附到巡检点，pointId = 巡检点 id（与 RoutePreview 落库一致）
+  const s = run(s0, {
+    type: "SAVE_TEMPLATE",
+    id: "TMP01",
+    name: template.name,
+    points: [p1.id, p2.id],
+    mode: "自定义路线",
+    path: [
+      { x: p1.x, y: p1.y, pointId: p1.id },
+      { x: p2.x, y: p2.y, pointId: p2.id, curve: true },
+    ],
+    state: "启用",
+    end: "返航",
+  });
+  const saved = s.templates.find((x) => x.id === "TMP01")!;
+  assert.equal(saved.mode, "自定义路线");
+  assert.deepEqual(saved.points, [p1.id, p2.id], "执行点按画线吸附顺序落库");
+  assert.equal(saved.state, "停用", "自定义路线保存后一律停用，待导航验证");
+  assert.equal(saved.verified, false);
+  // 停用中的自定义路线不能直接启用，必须先跑导航验证
+  assert.throws(
+    () => run(s, { type: "TOGGLE_TEMPLATE_STATE", id: "TMP01" }),
+    /导航验证/,
+  );
+
+  // 错误口径：把定位点 id 当巡检点 id 提交（历史 bug）—— 引擎按 s.points 查不到即拦下
+  assert.throws(
+    () =>
+      run(s0, {
+        type: "SAVE_TEMPLATE",
+        id: "TMP01",
+        name: "自定义路线（误用定位点 id）",
+        points: [p1.targetId, p2.targetId],
+        mode: "自定义路线",
+        path: [
+          { x: p1.x, y: p1.y, pointId: p1.targetId },
+          { x: p2.x, y: p2.y, pointId: p2.targetId },
+        ],
+        state: "启用",
+        end: "返航",
+      }),
+    /所选巡检点不存在或已删除/,
+  );
+});
+
 test("子线沿父线走：取路网最短路径，不连通时才回退直连", () => {
   const s = seed();
   const map = s.maps.find((x) => x.id === "MAP-A03")!;
@@ -144,8 +197,8 @@ test("装置区的点与设备都归装置区地图，不会混进罐区（跨�
   const s = seed();
   const mB = s.maps.find((m) => m.id === "MAP-B01")!;
   assert.equal(mB.region, "装置区");
-  // R03 与装置区轨道段都引用这张图：地图必须存在且派生状态为「已发布」
-  assert.equal(publishStateOf(s, mB), "已发布");
+  // R03 与装置区轨道段都引用这张图：地图必须存在且派生同步状态为「已同步」
+  assert.equal(publishStateOf(s, mB), "已同步");
   for (const id of ["P007", "P010"]) {
     const p = s.points.find((x) => x.id === id)!;
     assert.equal(p.mapId, "MAP-B01", `${id} 应挂在装置区地图`);

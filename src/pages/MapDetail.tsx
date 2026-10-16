@@ -13,8 +13,10 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Badge, Btn, Modal, Note, Panel } from "../components/UI";
 import { MapSpatialPreview } from "../components/MapSpatialPreview";
+import { MapImageCanvas } from "../components/MapImageCanvas";
 import { MapDispatch } from "../components/MapDispatch";
 import { mapVer } from "../data/versionLabel";
+import { SAMPLE_MAP_IMAGE } from "../data/sampleMap";
 
 export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
   const { s, act } = useStore();
@@ -45,7 +47,7 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
         <span>
           {m.id} · {m.region} · {mapVer(m.version)}
         </span>
-        <Badge>{m.state}</Badge>
+        <Badge>{m.syncState}</Badge>
       </div>
 
       {legacyWorkbench && (
@@ -69,10 +71,6 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
           <dd>{m.region}</dd>
           <dt>空间版本</dt>
           <dd>第 {m.version} 版</dd>
-          <dt>状态</dt>
-          <dd>
-            <Badge>{m.state}</Badge>
-          </dd>
           <dt>启用状态</dt>
           <dd>
             <Badge>{m.status || "启用"}</Badge>
@@ -190,6 +188,35 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
           onSelect={() => go("annotation", m.id)}
         />
       </Panel>
+
+      {/*
+        区域范围：画在全厂区 2D 底图上的闭合多边形（后台管理 › 区域配置 绘制）。
+        没有任何区域画过范围时不占版面
+      */}
+      {(() => {
+        const shaded = (s.areas || []).filter(
+          (a) => (a.polygon?.length || 0) >= 3,
+        );
+        if (!shaded.length) return null;
+        return (
+          <Panel
+            title="区域范围"
+            extra={<span>{shaded.length} 个区域</span>}
+          >
+            <MapImageCanvas
+              image={SAMPLE_MAP_IMAGE}
+              height={380}
+              hint="区域范围 · 到「后台管理 › 区域配置」调整"
+              areas={shaded.map((a) => ({
+                id: a.id,
+                name: a.name,
+                points: a.polygon!,
+                closed: true,
+              }))}
+            />
+          </Panel>
+        );
+      })()}
 
       {/* 技术存档（建图来源 / 地图文件 / 原始资料）不在地图详情展示：仅在溯源与厂商对接时查看 */}
 

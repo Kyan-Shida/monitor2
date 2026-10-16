@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { go, useViewState } from "../data/navigation";
+import { go, usePageSize, useViewState } from "../data/navigation";
 import {
   pointOf,
   fmtTime,
@@ -10,8 +10,6 @@ import {
   aiStateOf,
   riskReasonOf,
   thresholdOf,
-  verifyStateOf,
-  VERIFY_DAYS,
 } from "../data/selectors";
 import { archiveIdOf } from "../data/deviceMaster";
 import {
@@ -20,24 +18,15 @@ import {
   targetNameOf,
   targetOfAlarm,
 } from "../data/alarmSettings";
-import {
-  ALARM_KPI_DIMS,
-  alarmKpiRows,
-  type AlarmKpiDim,
-} from "../data/alarmKpi";
 import { metricValue } from "../data/metrics";
 import { Btn, Badge, Panel, Table, Field, Note, Modal } from "../components/UI";
 import { ObjectLink, Pager } from "../components/Business";
 import { Video } from "../components/Video";
+import { EvidenceList } from "../components/EvidenceList";
 import { ResultTrend } from "../components/ResultTrend";
+import { FilterPanel } from "../components/FilterPanel";
 import type { Result } from "../data/types";
-import { ALARM_CATEGORIES, ALARM_LEVELS } from "../data/types";
-import {
-  alarmText,
-  logicText,
-  templatesOf,
-  triggerText,
-} from "../data/alarmTemplates";
+import { ALARM_CATEGORIES, ALARM_CLASS_MAINS, ALARM_LEVELS } from "../data/types";
 export function Results({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const [q, Q] = useViewState("results.q", ""),
@@ -56,6 +45,13 @@ export function Results({ page, id }: { page: string; id?: string }) {
     /** 视图：按任务（执行视角）/ 按巡检点（设备视角） */
     [group, GR] = useViewState("results.group", "按任务"),
     [pn, PN] = useViewState("results.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [pageSize, SETPAGESIZE] = usePageSize("results.size");
+  /**
+   * 查询条件展开态：默认收起，点「筛选」才显示（与设备台账同款）
+   * @description 条件为「即改即生效」的实时口径，因此不设草稿与「查询」
+   */
+  const [queryOpen, QOPEN] = useState(false);
   /** 结果详情（白盒）内置页：采集证据种类切换 */
   const [evidence, E] = useState("照片");
   /**
@@ -194,33 +190,40 @@ export function Results({ page, id }: { page: string; id?: string }) {
     const pointGroups = [...byPoint.entries()].sort(
       (a, b) => parseTime(b[1][0].time) - parseTime(a[1][0].time),
     );
-    // 每页展示若干「任务 / 巡检点」行，明细统一在「详情」里查看
-    const pageSize = 10;
+    // 每页展示若干「任务 / 巡检点」行，明细统一在「详情」里查看（每页条数走全站 usePageSize）
     const pageTaskGroups = taskGroups.slice((pn - 1) * pageSize, pn * pageSize);
     const pagePointGroups = pointGroups.slice((pn - 1) * pageSize, pn * pageSize);
     const total = group === "按任务" ? taskGroups.length : pointGroups.length;
     return (
       <>
       <Panel
+        className="panel-filters-wrap"
         title="巡检结果 · 历史查询与追溯"
         extra={
-          <div className="segmented">
-            {["按任务", "按巡检点"].map((x) => (
-              <button
-                key={x}
-                className={group === x ? "active" : ""}
-                onClick={() => {
-                  GR(x);
-                  PN(1);
-                }}
-              >
-                {x}
-              </button>
-            ))}
+          <div className="actions">
+            {/* 筛选：条件默认收起，点「筛选」才展开（与设备台账同款） */}
+            <Btn onClick={() => QOPEN(!queryOpen)}>
+              {queryOpen ? "收起筛选" : "筛选"}
+            </Btn>
+            <div className="segmented">
+              {["按任务", "按巡检点"].map((x) => (
+                <button
+                  key={x}
+                  className={group === x ? "active" : ""}
+                  onClick={() => {
+                    GR(x);
+                    PN(1);
+                  }}
+                >
+                  {x}
+                </button>
+              ))}
+            </div>
           </div>
         }
       >
-        <div className="filter-bar result-query-filters">
+        {queryOpen && (
+          <div className="filter-bar result-query-filters">
           <Field label="时间范围">
             <select
               value={range}
@@ -339,7 +342,8 @@ export function Results({ page, id }: { page: string; id?: string }) {
           >
             重置筛选
           </Btn>
-        </div>
+          </div>
+        )}
         {!total ? (
           <Note>
             没有符合筛选条件的巡检结果，可放宽时间范围或点「重置筛选」。
@@ -472,6 +476,10 @@ export function Results({ page, id }: { page: string; id?: string }) {
           size={pageSize}
           unit={group === "按任务" ? "个任务" : "个巡检点"}
           onChange={PN}
+          onSize={(n) => {
+            SETPAGESIZE(n);
+            PN(1);
+          }}
         />
       </Panel>
       </>
@@ -597,16 +605,56 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
     [devF, DF] = useViewState("alarms.dev", "全部"),
     [lvF, LF] = useViewState("alarms.lv", "全部"),
     [alFrom, AFR] = useViewState("alarms.from", ""),
-    [alTo, ATO] = useViewState("alarms.to", ""),
-    /** KPI 划分维度：区域 / 属地 / 设备 */
-    [dimF, DIMF] = useViewState("alarms.dim", "区域");
+    [alTo, ATO] = useViewState("alarms.to", "");
+  const [alarmPn, APN] = useViewState("alarms.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [alarmsSize, SETALARMSSIZE] = usePageSize("alarms.size");
+  /** 筛选面板展开态：展开时才显示 FilterPanel（触发按钮在「告警记录」面板头部） */
+  const [alarmFilterOpen, SETALARMFILTEROPEN] = useState(false);
+  /** 筛选草稿：字段与 FilterPanel 的 fields 一一对应（点「查询」才写回生效值） */
+  const [alarmDraft, SETALARMDRAFT] = useState({
+    cat: "全部",
+    dev: "全部",
+    from: "",
+    to: "",
+    lv: "全部",
+  });
+  /**
+   * 标签页口径（业务预警 / 机器人预警）：告警事件自带 category。
+   * 业务预警 = 设备 / 环境类判定异常（有业务台账与点位）；机器人预警 = 机器人本体事件
+   *（无业务台账，只有 robotId）。
+   * @description 只切「列表 + 列表自己的筛选项」：顶部四张总览卡仍按业务预警口径统计，
+   *              与指标中心 / 驾驶舱同源，不随标签页变化
+   */
+  const [mainF, MAINF] = useViewState("alarms.main", "业务预警");
+  const isRobot = mainF === "机器人预警";
+  const scopedAlarms = s.alarms.filter((a) =>
+    isRobot
+      ? a.category === "机器人"
+      : // 业务预警沿用原口径：只收录挂了业务台账（taskId）的告警，孤立告警不进列表
+        a.category === "业务" && !!a.taskId,
+  );
+  /** 告警归属名：机器人预警挂机器人名，业务预警挂点位所属设备 */
+  const ownerOf = (a: (typeof s.alarms)[number]) =>
+    isRobot
+      ? s.robots.find((rb) => rb.id === a.robotId)?.name
+      : s.points.find((x) => x.id === a.pointId)?.device;
+  /**
+   * 切换标签页：口径变了，残留的设备 / 分类 / 等级 / 日期筛选会把列表筛空，一律重置
+   */
+  function switchMain(m: string) {
+    MAINF(m);
+    CF("全部");
+    DF("全部");
+    LF("全部");
+    AFR("");
+    ATO("");
+    SETOPEN(false);
+  }
   const [showOpen, SETOPEN] = useState(false);
   const [modal, setModal] = useState<null | "result" | "task">(null);
   /** 保存处理前的二次确认（处理结果保存后不可二次编辑） */
   const [sure, SETSURE] = useState(false);
-  /** 复检步骤勾选（按告警 ID 隔离；未操作时回显告警里已保存的完成情况） */
-  const [vEdit, VEDIT] = useState<{ id: string; done: number[] } | null>(null);
-  const [vNote, VNOTE] = useState("");
   // 告警分级口径统一：一级→red（需立即处置）· 二级→amber（需关注）· 三级→blue（提示）
   const levelTone = (lv: string): "red" | "amber" | "blue" | undefined =>
     lv === "一级" ? "red" : lv === "二级" ? "amber" : lv === "三级" ? "blue" : undefined;
@@ -627,48 +675,85 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
   const countByClass = Object.fromEntries(
     classOptions.map((n) => [
       n,
-      s.alarms.filter((a) => a.taskId && alarmClassOf(a) === n).length,
+      scopedAlarms.filter((a) => alarmClassOf(a) === n).length,
     ]),
   ) as Record<string, number>;
-  const alarmsInCat = s.alarms.filter(
+  const alarmsInCat = scopedAlarms.filter(
     (a) => catActive === "全部" || alarmClassOf(a) === catActive,
   );
   const alarmsAll = alarmsInCat.filter(
     (a) => filter === "全部" || a.state === filter,
   );
-  // 设备 / 等级筛选：仅列告警里真实出现过的设备，避免"选了查不到数据"
+  // 设备 / 机器人筛选：仅列当前标签页里真实出现过的对象，避免"选了查不到数据"
   const devicesInAlarms = [
-    ...new Set(
-      s.alarms.map(
-        (a) => s.points.find((x) => x.id === a.pointId)?.device,
-      ),
-    ),
+    ...new Set(scopedAlarms.map((a) => ownerOf(a))),
   ].filter(Boolean) as string[];
   const alarmsFiltered = alarmsAll.filter((a) => {
-    if (!a.taskId) return false; // 过滤没有关联任务的孤儿告警
-    const p = s.points.find((x) => x.id === a.pointId);
     const v = parseTime(a.time);
     return (
-      (devF === "全部" || p?.device === devF) &&
+      (devF === "全部" || ownerOf(a) === devF) &&
       (lvF === "全部" || a.level === lvF) &&
       (!alFrom || (!Number.isNaN(v) && v >= parseTime(alFrom + " 00:00"))) &&
       (!alTo || (!Number.isNaN(v) && v <= parseTime(alTo + " 23:59")))
     );
   });
+  /**
+   * 告警记录列表：未处理置顶、已处理自动下移（sort 稳定，同组内保持原时序），再按页切片。
+   * @description 先排序后切片，保证翻页顺序稳定
+   */
+  const alarmRows = (
+    showOpen ? alarmsFiltered.filter((a) => !a.handledAt) : alarmsFiltered
+  ).sort((x, y) => Number(!!x.handledAt) - Number(!!y.handledAt));
+  const alarmPages = Math.max(1, Math.ceil(alarmRows.length / alarmsSize));
+  const alarmCur = Math.min(Math.max(1, alarmPn), alarmPages);
+  const alarmPageRows = alarmRows.slice(
+    (alarmCur - 1) * alarmsSize,
+    alarmCur * alarmsSize,
+  );
   // 分级三档（一级 / 二级 / 三级，与告警规则、驾驶舱同源）；计数与列表同源
   const countByLevel = Object.fromEntries(
     ALARM_LEVELS.map((lv) => [
       lv,
-      alarmsAll.filter((a) => a.taskId && a.level === lv).length,
+      alarmsAll.filter((a) => a.level === lv).length,
     ]),
   ) as Record<string, number>;
+  /** 已生效的筛选条件数（「筛选」按钮上的计数） */
+  const alarmFilterCount =
+    (catF !== "全部" ? 1 : 0) +
+    (devF !== "全部" ? 1 : 0) +
+    (lvF !== "全部" ? 1 : 0) +
+    (alFrom ? 1 : 0) +
+    (alTo ? 1 : 0);
+  /** 展开筛选面板：用当前生效值填充草稿（避免丢用户上次填的内容） */
+  function toggleAlarmFilter() {
+    if (!alarmFilterOpen)
+      SETALARMDRAFT({ cat: catF, dev: devF, from: alFrom, to: alTo, lv: lvF });
+    SETALARMFILTEROPEN(!alarmFilterOpen);
+  }
+  /** 查询：草稿写回生效值并收起面板 */
+  function applyAlarmFilter() {
+    CF(alarmDraft.cat);
+    DF(alarmDraft.dev);
+    AFR(alarmDraft.from);
+    ATO(alarmDraft.to);
+    LF(alarmDraft.lv);
+    SETALARMFILTEROPEN(false);
+  }
+  /** 重置：草稿与生效值一起清空，立即生效（不再要求再点一次「查询」） */
+  function resetAlarmFilter() {
+    const empty = { cat: "全部", dev: "全部", from: "", to: "", lv: "全部" };
+    SETALARMDRAFT(empty);
+    CF(empty.cat);
+    DF(empty.dev);
+    AFR(empty.from);
+    ATO(empty.to);
+    LF(empty.lv);
+  }
   // 告警事件列表：支持从驾驶舱「今日告警」下钻（URL 带告警 id），高亮目标行并给出上下文
   if (page === "alarms") {
     const focus = id ? s.alarms.find((x) => x.id === id) : undefined;
     return (
-      <Panel
-        title="告警记录"
-      >
+      <Panel title="告警记录">
         {/* ALM-05：处理结果 + 是否误报 → 报警准确率与处理覆盖率（产品成熟度信号），口径取自指标中心 */}
         <div className="metric-strip">
           <div>
@@ -699,7 +784,6 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             <strong>{metricValue(s, "alarmLabelRate")}%</strong>
           </div>
         </div>
-        {/* KPI 维度划分：区域 / 属地 / 设备，口径与上方总览卡同源（合计 = 告警总数） */}
         {focus && (
           <div className="context-bar">
             <b>驾驶舱下钻</b>
@@ -717,102 +801,68 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             </div>
           </div>
         )}
-        {/* KPI 维度划分：区域 / 属地 / 设备，口径与上方总览卡同源（明细行合计 = 告警总数） */}
-        <div className="toolbar">
-          <div className="segmented">
-            {ALARM_KPI_DIMS.map((d) => (
-              <button
-                key={d}
-                className={dimF === d ? "active" : ""}
-                onClick={() => DIMF(d)}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
+        {/* 标签页：业务预警 / 机器人预警。只切列表与列表自己的筛选项，顶部总览卡口径不变 */}
+        <div className="segmented" style={{ marginBottom: 12 }}>
+          {ALARM_CLASS_MAINS.map((m) => (
+            <button
+              key={m}
+              className={mainF === m ? "active" : ""}
+              onClick={() => switchMain(m)}
+            >
+              {m}
+            </button>
+          ))}
         </div>
-        <Table
-          heads={[dimF, "告警总数", "未处理", "报警准确率", "告警处理率"]}
-          rows={alarmKpiRows(s, dimF as AlarmKpiDim).map((r) => [
-            r.key,
-            r.total,
-            r.open,
-            `${r.accuracy}%`,
-            `${r.rate}%`,
-          ])}
-        />
-        <div className="task-toolbar" style={{ marginTop: 12 }}>
-          <Field label="分类">
-            <select
-              value={catF}
-              onChange={(e) => {
-                CF(e.target.value);
-              }}
-            >
-              <option value="全部">
-                全部（{s.alarms.filter((a) => a.taskId).length}）
-              </option>
-              {classOptions.map((n) => (
-                <option key={n} value={n}>
-                  {n}（{countByClass[n]}）
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="设备">
-            <select
-              value={devF}
-              onChange={(e) => {
-                DF(e.target.value);
-              }}
-            >
-              {["全部", ...devicesInAlarms].map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="起始日期">
-            <input
-              type="date"
-              value={alFrom}
-              onChange={(e) => AFR(e.target.value)}
-            />
-          </Field>
-          <Field label="截止日期">
-            <input
-              type="date"
-              value={alTo}
-              onChange={(e) => ATO(e.target.value)}
-            />
-          </Field>
-          <Field label="等级">
-            <select value={lvF} onChange={(e) => LF(e.target.value)}>
-              <option value="全部">
-                全部（{alarmsAll.filter((a) => a.taskId).length}）
-              </option>
-              {ALARM_LEVELS.map((lv) => (
-                <option key={lv} value={lv}>
-                  {lv}（{countByLevel[lv]}）
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Btn
-            onClick={() => {
-              CF("全部");
-              DF("全部");
-              LF("全部");
-              AFR("");
-              ATO("");
-            }}
-          >
-            重置筛选
+        {/* 筛选：条件收进「筛选」按钮，展开后复用全站 FilterPanel（草稿条件，点「查询」才生效） */}
+        <div className="actions" style={{ justifyContent: "flex-end", marginBottom: 10 }}>
+          <Btn onClick={toggleAlarmFilter}>
+            {alarmFilterOpen ? "收起筛选" : "筛选"}
+            {alarmFilterCount ? `（${alarmFilterCount}）` : ""}
           </Btn>
         </div>
+        {alarmFilterOpen && (
+          <FilterPanel
+            fields={[
+              {
+                key: "cat",
+                label: "分类",
+                options: [
+                  { value: "全部", label: `全部（${scopedAlarms.length}）` },
+                  ...classOptions.map((n) => ({
+                    value: n,
+                    label: `${n}（${countByClass[n]}）`,
+                  })),
+                ],
+              },
+              {
+                key: "dev",
+                label: isRobot ? "机器人" : "设备",
+                options: ["全部", ...devicesInAlarms],
+              },
+              { key: "from", label: "起始日期", type: "date" },
+              { key: "to", label: "截止日期", type: "date" },
+              {
+                key: "lv",
+                label: "等级",
+                options: [
+                  { value: "全部", label: `全部（${alarmsAll.length}）` },
+                  ...ALARM_LEVELS.map((lv) => ({
+                    value: lv,
+                    label: `${lv}（${countByLevel[lv]}）`,
+                  })),
+                ],
+              },
+            ]}
+            value={alarmDraft}
+            onChange={(next) => SETALARMDRAFT({ ...alarmDraft, ...next })}
+            onSearch={applyAlarmFilter}
+            onReset={resetAlarmFilter}
+          />
+        )}
         <Table
           heads={[
             "告警编号",
-            "台账名称",
+            isRobot ? "机器人" : "台账名称",
             "告警分类",
             "告警等级",
             "风险信息",
@@ -821,16 +871,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             "处理时间",
             "操作",
           ]}
-          rows={(
-            showOpen
-              ? alarmsFiltered.filter((a) => !a.handledAt)
-              : alarmsFiltered
-          )
-            // 未处理置顶、已处理自动下移（sort 稳定，同组内保持原时序）
-            .sort((x, y) => Number(!!x.handledAt) - Number(!!y.handledAt))
-            .map((a) => {
-            /** 复检状态：受理后进入复检，超 30 天未闭环自动判无效（派生值） */
-            const vs = verifyStateOf(a);
+          rows={alarmPageRows.map((a) => {
             const p = s.points.find((x) => x.id === a.pointId);
             // 与巡检结果打通：风险原因取自该告警关联的结果（按快照口径）
             const rd = s.results.find((x) => x.id === a.resultId);
@@ -872,36 +913,19 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               </span>,
               <span className="muted">{a.time}</span>,
               // 处理状态：未处理 / 受理 / 忽略（误报单独标注，口径进报警准确率）
-              // 复核：受理的告警再带一行复检状态（待反馈剩 N 天 / 有效闭环 / 无效闭环）
-              <>
-                <Badge
-                  tone={
-                    a.handleResult === "受理"
-                      ? "amber"
-                      : a.handleResult === "忽略"
-                        ? "green"
-                        : undefined
-                  }
-                >
-                  {a.handledAt
-                    ? `${a.handleResult ?? "已处理"}${a.falsePositive ? " · 误报" : ""}`
-                    : "未处理"}
-                </Badge>
-                {a.verify && (
-                  <small
-                    className={
-                      vs.state === "有效闭环"
-                        ? "verify-ok"
-                        : vs.state === "无效闭环"
-                          ? "verify-bad"
-                          : "verify-open"
-                    }
-                  >
-                    复检 {vs.state}
-                    {vs.state === "待反馈" ? `（剩 ${vs.leftDays} 天）` : ""}
-                  </small>
-                )}
-              </>,
+              <Badge
+                tone={
+                  a.handleResult === "受理"
+                    ? "amber"
+                    : a.handleResult === "忽略"
+                      ? "green"
+                      : undefined
+                }
+              >
+                {a.handledAt
+                  ? `${a.handleResult ?? "已处理"}${a.falsePositive ? " · 误报" : ""}`
+                  : "未处理"}
+              </Badge>,
               <span className="muted">{a.handledAt || "—"}</span>,
               // 操作列：处理 / 查看（已处理只能查看，处理结果不可二次编辑）
               // 直接进告警详情页，不再弹窗
@@ -912,6 +936,16 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               </Btn>,
             ];
           })}
+        />
+        <Pager
+          page={alarmCur}
+          count={alarmRows.length}
+          size={alarmsSize}
+          onChange={APN}
+          onSize={(n) => {
+            SETALARMSSIZE(n);
+            APN(1);
+          }}
         />
       </Panel>
     );
@@ -946,7 +980,13 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
         </div>
         <div className="grid two">
           <Panel title="触发证据与业务上下文">
-            <Video live={false} label={p?.name} />
+            {/* 证据清单与告警详情同源：按点位实际记录的采集方式逐类列出 */}
+            <EvidenceList
+              s={s}
+              p={p}
+              robotId={t?.robotId}
+              time={rd?.time || ad.time}
+            />
             <p>
               设备{" "}
               <ObjectLink type="archive" id={p && archiveIdOf(s, p.device)}>
@@ -990,23 +1030,18 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
   const t = s.tasks.find((x) => x.id === a.taskId);
   const p = s.points.find((x) => x.id === a.pointId);
   /**
-   * 处置流程的来源模板：按结果快照里引用的模板 ID 取
-   * @description 用快照而不是当前规则 → 历史告警展示的是当时的处置流程口径
+   * 机器人本体故障（category = 机器人）与业务告警是两套详情口径：
+   * 前者没有业务台账 / 点位 / 检测项 / 读数 / 判定规则，改看机器人本体诊断信息
    */
-  const flowTpl = templatesOf(s).find(
-    (x) => x.id === r?.ruleSnapshot?.templateId,
-  );
-  /** 复检状态（派生值：待反馈 / 有效闭环 / 无效闭环，超 30 天自动判无效） */
-  const vState = verifyStateOf(a);
-  /** 已闭环或已超期：复检步骤只读，不再接受回馈 */
-  const vClosed = !!a.verify && (a.verify.state !== "待反馈" || vState.overdue);
-  /** 复检步骤勾选：用户改动优先，否则回显告警里已保存的完成情况 */
-  const vDone =
-    vEdit && vEdit.id === a.id
-      ? vEdit.done
-      : (a.verify?.steps || [])
-          .map((x, i) => (x.done ? i : -1))
-          .filter((i) => i >= 0);
+  const isRobotFault = a.category === "机器人";
+  const rb = s.robots.find((x) => x.id === a.robotId);
+  /** 故障部件补充说明（告警类别只有「下装 / 上装」，展开成能看懂的范围） */
+  const partHintOf = (cls?: string) =>
+    cls === "下装"
+      ? "底盘 · 行走 · 定位 · 通信 · 电池"
+      : cls === "上装"
+        ? "采集载荷 · 传感器"
+        : "";
   return (
     <>
       <div className="context-bar">
@@ -1018,6 +1053,82 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
       </div>
       <div className="grid two">
         <div className="alarm-col">
+          {/*
+            机器人故障 = 机器人本体事件（下装 / 上装），与"设备判定异常"是两类东西：
+            它没有关联设备、点位 / 检测项、读数、阈值与判定规则，也没有检测目标画面，
+            所以不复用仪表那套布局，改用「机器人本体诊断」两块（故障信息 / 处置记录）
+          */}
+          {isRobotFault ? (
+            <>
+              {/* 故障信息：这条故障"是什么、哪台机器、本体现在什么状况" */}
+              <Panel title="故障信息">
+                <dl className="risk-dl">
+                  <dt>告警分类</dt>
+                  <dd>{a.category}</dd>
+                  {/* 故障部件：本体故障只有「下装 / 上装」两档，这里展开成人能看懂的范围 */}
+                  <dt>故障部件</dt>
+                  <dd>
+                    {a.alarmClass || "—"}
+                    {partHintOf(a.alarmClass) && (
+                      <small>{partHintOf(a.alarmClass)}</small>
+                    )}
+                  </dd>
+                  <dt>当前状态</dt>
+                  <dd>
+                    <Badge>{a.state}</Badge>
+                  </dd>
+                  {/* 本体故障的"位置"就是这台机器：直接给机器人档案入口 */}
+                  <dt>关联机器人</dt>
+                  <dd>
+                    <ObjectLink type="robot" id={a.robotId} />
+                    {rb && <small>{rb.id}</small>}
+                  </dd>
+                  <dt>机型</dt>
+                  <dd>{rb?.deviceType || "—"}</dd>
+                  <dt>所属区域</dt>
+                  <dd>{rb?.region || "—"}</dd>
+                  {/* 本体当前状况：判断故障影响面（离线 = 已失联，故障 / 维护 = 已停用） */}
+                  <dt>本体状态</dt>
+                  <dd>
+                    <Badge
+                      tone={
+                        rb?.state === "故障" || rb?.state === "离线"
+                          ? "red"
+                          : undefined
+                      }
+                    >
+                      {rb?.state || "—"}
+                    </Badge>
+                  </dd>
+                  <dt>电量</dt>
+                  <dd>{rb ? `${rb.battery}%` : "—"}</dd>
+                  <dt>健康度</dt>
+                  <dd>{rb ? `${rb.health} 分` : "—"}</dd>
+                  <dt>固件版本</dt>
+                  <dd>{rb?.firmware || "—"}</dd>
+                  {a.handle && (
+                    <>
+                      <dt>建议处置</dt>
+                      <dd>{a.handle}</dd>
+                    </>
+                  )}
+                </dl>
+              </Panel>
+              {/* 处置记录：本体故障没有"检测目标画面"可看，改为处置留痕（含人工处理说明） */}
+              <Panel title="处置记录">
+                {a.notes.length ? (
+                  <ul className="flow-steps">
+                    {a.notes.map((x, i) => (
+                      <li key={i}>{x}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <Note>暂无处置记录。</Note>
+                )}
+              </Panel>
+            </>
+          ) : (
+            <>
           {/* 风险信息：这条告警"是什么风险、有多严重、从哪来" */}
           <Panel title="风险信息">
             <dl className="risk-dl">
@@ -1070,30 +1181,17 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                 <>
                   <dt>告警阈值</dt>
                   <dd>{thresholdOf(r)}</dd>
-                  {/* 触发来源：这条告警是哪条判定规则、哪个告警模板触发的（一处看清链路） */}
+                  {/* 触发来源：这条告警是哪条判定规则触发的（一处看清链路） */}
                   <dt>触发规则</dt>
                   <dd>
                     {r.ruleSnapshot.id} · {r.ruleSnapshot.name}
                     <small>
                       第 {r.ruleSnapshot.version} 版 ·{" "}
-                      {r.ruleSnapshot.triggerMode || "单次即触发"}
+                      {r.ruleSnapshot.triggerMode || "识别即触发"}
                     </small>
                   </dd>
                 </>
               )}
-              <dt>关联告警模板</dt>
-              <dd>
-                {flowTpl ? (
-                  <>
-                    {flowTpl.name}
-                    <small>
-                      {flowTpl.id} · {flowTpl.flow.length} 步处置流程
-                    </small>
-                  </>
-                ) : (
-                  "未关联（机器人本体事件按级别处置建议执行）"
-                )}
-              </dd>
               {a.handle && (
                 <>
                   <dt>建议处置</dt>
@@ -1105,62 +1203,24 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               <Btn onClick={() => setModal("task")}>来源任务</Btn>
             </div>
           </Panel>
-          {/* 现场记录：证据画面 + 采集信息 + 现场处理留痕 */}
+          {/*
+            现场记录：按该巡检点**实际记录的采集方式**逐类列出证据
+            （视频流常驻 + 照片 / 红外热成像 / 气体浓度曲线 / 声纹音频，取决于点位记了哪些），
+            不再固定只放一个视频
+          */}
           <Panel title="现场记录">
-            <Video
-              live={false}
-              label={p?.name}
+            <EvidenceList
+              s={s}
+              p={p}
               robotId={t?.robotId || a.robotId}
+              time={r?.time || a.time}
             />
-            <p>
-              采集时间 <b>{r?.time || a.time}</b> · {r?.source || "平台自检"}
-            </p>
+            <p>采集来源：{r?.source || "平台自检"}</p>
           </Panel>
-          {/* 处置流程：来源按结果快照判定——引用模板的按模板展示，手动输入的按台账手填流程展示 */}
-          <Panel
-            title="处置流程 · 来自告警规则"
-            extra={<Btn onClick={() => go("alarm-templates")}>模板配置 →</Btn>}
-          >
-            {flowTpl || r?.ruleSnapshot?.flow?.length ? (
-              <>
-                <p className="muted">
-                  {flowTpl ? (
-                    <>
-                      引用告警模板 <b>{flowTpl.name}</b>（{flowTpl.id}）· 触发条件{" "}
-                      {triggerText(flowTpl.trigger)} · 触发逻辑{" "}
-                      {logicText(flowTpl.trigger)} · {alarmText(flowTpl.alarmSeconds)}
-                    </>
-                  ) : (
-                    <>
-                      告警规则为「手动输入」· 触发逻辑{" "}
-                      {r?.ruleSnapshot?.triggerMode || "单次即触发"} ·{" "}
-                      {alarmText(r?.ruleSnapshot?.alarmSeconds)}
-                    </>
-                  )}
-                </p>
-                <ol className="flow-steps">
-                  {(flowTpl?.flow || r?.ruleSnapshot?.flow || []).map((x, i) => (
-                    <li key={i}>{x}</li>
-                  ))}
-                </ol>
-              </>
-            ) : a.handle ? (
-              <>
-                <Note>
-                  本告警未关联点位判定规则（机器人本体事件），按级别处置建议执行：
-                </Note>
-                <ol className="flow-steps">
-                  <li>{a.handle}</li>
-                </ol>
-              </>
-            ) : (
-              <Note>
-                未引用告警模板，暂无处置流程；可在「告警管理 › 告警模板管理」为对应检测类型配置模板后重新采集。
-              </Note>
-            )}
-          </Panel>
+            </>
+          )}
         </div>
-        {/* 处理情况 + 反馈（复检）同列堆叠：受理保存后，复检块就出现在「处理情况」正下方 */}
+        {/* 处理情况：受理 / 忽略 + 是否误报 + 处理说明，一并进报警准确率统计 */}
         <div className="alarm-col">
         <Panel title="处理情况">
           {/* ALM-05：处理结果（受理 / 忽略）+ 是否误报，汇总到指标中心统计报警准确率 */}
@@ -1193,13 +1253,6 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                   ))}
                 </div>
               </Field>
-              {result === "受理" && (
-                <Note>
-                  选择「受理」并保存后自动进入反馈（复检）流程（本块下方）：按处置流程逐条回馈，没反馈或超过
-                  {" "}
-                  {VERIFY_DAYS} 天 = 无效闭环。
-                </Note>
-              )}
               <Field label="是否误报">
                 <div className="radio-row">
                   {(["否", "是"] as const).map((x) => (
@@ -1219,7 +1272,11 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                 <textarea
                   value={note}
                   onChange={(e) => N(e.target.value)}
-                  placeholder="例如：现场确认阀位已关闭到位，告警属实"
+                  placeholder={
+                    isRobotFault
+                      ? "例如：现场确认机器人已复位并恢复通信，故障属实"
+                      : "例如：现场确认阀位已关闭到位，告警属实"
+                  }
                 />
               </Field>
               <div className="actions">
@@ -1235,105 +1292,6 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             </>
           )}
         </Panel>
-        {/*
-          反馈（复检）：只有「受理」的告警进入（受理 = 需要现场处置），紧跟「处理情况」下方。
-          复检清单 = 受理时落库的处置流程（引用告警模板）；逐条勾选完成情况并保存，
-          系统判定闭环：全部勾选完成 = 有效闭环；没反馈 / 超 30 天 = 无效闭环（派生值，见 verifyStateOf）
-        */}
-        {a.verify && (
-          <Panel title="反馈（复检）· 基于处置流程">
-          <>
-            <div className="verify-head">
-              <Badge
-                tone={
-                  vState.state === "有效闭环"
-                    ? "green"
-                    : vState.state === "无效闭环" ||
-                        vState.state === "未进入复检"
-                      ? "red"
-                      : "amber"
-                }
-              >
-                {vState.state}
-              </Badge>
-              <span className="muted">
-                受理时间 {a.verify.startedAt} ·{" "}
-                {vState.state === "待反馈"
-                  ? `距自动无效闭环还有 ${vState.leftDays} 天（时限 ${VERIFY_DAYS} 天）`
-                  : vState.overdue
-                    ? `已超过 ${VERIFY_DAYS} 天未闭环，自动判定为无效闭环`
-                    : `闭环时间 ${a.verify.closedAt || "—"}`}
-              </span>
-            </div>
-            <ol className="verify-steps">
-              {a.verify.steps.map((x, i) => (
-                <li key={i} className={vDone.includes(i) ? "done" : ""}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      disabled={vClosed}
-                      checked={vDone.includes(i)}
-                      onChange={() =>
-                        VEDIT({
-                          id: a.id,
-                          done: vDone.includes(i)
-                            ? vDone.filter((y) => y !== i)
-                            : [...vDone, i],
-                        })
-                      }
-                    />
-                    {x.text}
-                  </label>
-                  <small>
-                    {vDone.includes(i) ? `已完成 · ${x.at || "待记录"}` : "未完成"}
-                  </small>
-                </li>
-              ))}
-            </ol>
-            {vClosed ? (
-              <Note>
-                复检已闭环（{vState.state}
-                {vState.overdue
-                  ? ` · 未反馈或超 ${VERIFY_DAYS} 天未闭环，系统自动判定`
-                  : " · 处置流程全部完成，系统判定"}
-                ）
-                {a.verify.closedAt ? ` · ${a.verify.closedAt}` : ""}
-                {a.verify.note ? ` · ${a.verify.note}` : ""}；闭环结果不可重复提交。
-              </Note>
-            ) : (
-              <>
-                <Field label="复检说明（可选）">
-                  <textarea
-                    value={vNote}
-                    onChange={(e) => VNOTE(e.target.value)}
-                    placeholder="例如：现场确认阀门已复位，复测读数恢复正常"
-                  />
-                </Field>
-                {/* 只有「保存」一个动作：闭环由系统判定（全部勾选 = 有效；未反馈 / 超 30 天 = 无效） */}
-                <div className="actions">
-                  <Btn
-                    primary
-                    onClick={() =>
-                      act({
-                        type: "ALARM_VERIFY",
-                        id: a.id,
-                        done: vDone,
-                        reason: vNote,
-                      })
-                    }
-                  >
-                    保存反馈
-                  </Btn>
-                  <span className="muted">
-                    已勾选 {vDone.length}/{a.verify.steps.length} 步 · 系统判定：处置流程全部勾选完成 =
-                    有效闭环；未反馈或受理起超过 {VERIFY_DAYS} 天 = 无效闭环
-                  </span>
-                </div>
-              </>
-            )}
-          </>
-          </Panel>
-        )}
         </div>
       </div>
       {sure && (

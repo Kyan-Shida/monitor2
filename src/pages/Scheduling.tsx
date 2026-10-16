@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { constraints } from "../data/engine";
-import { go, useViewState } from "../data/navigation";
+import { go, usePageSize, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note, Modal, Field } from "../components/UI";
-import { ObjectLink, Kpis } from "../components/Business";
+import { ObjectLink, Kpis, Pager } from "../components/Business";
 import { QueueStrip } from "../components/QueueStrip";
 import { mapVer } from "../data/versionLabel";
 import {
@@ -33,6 +33,9 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
     id && s.robots.some((r) => r.id === id) ? id : "R01",
   );
   const [q, Q] = useViewState(page + ".query", "");
+  const [dPn, DP] = useViewState("scheduling.dispatch.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [dSize, SETDSIZE] = usePageSize("scheduling.dispatch.size");
   const [modal, M] = useState(""),
     [reassign, RA] = useState("R02"),
     [mode, SETMODE] = useState<"queue" | "now">("queue");
@@ -47,6 +50,13 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
   /** 选中任务在该机器人队列里的位置（平台不估算耗时，只说先后） */
   const queuePos =
     t.id === cur?.id ? "执行中" : ix >= 0 ? `第 ${ix + 1} 位` : "未入列";
+  /** 派单记录（队列中 + 暂停的任务）：分页切片后交给表格 */
+  const dispatchList = s.tasks.filter(
+    (x) => queueStates.includes(x.state) || x.state === "暂停",
+  );
+  const dPages = Math.max(1, Math.ceil(dispatchList.length / dSize));
+  const dCur = Math.min(Math.max(1, dPn), dPages);
+  const dRows = dispatchList.slice((dCur - 1) * dSize, dCur * dSize);
   const canAssign = ["待调度", "已分配"].includes(t.state);
   // 一次派单：引擎侧将 分配→下发→接收→启动 收敛为原子动作，避免工作台逐点手动分步
   function dispatchTask() {
@@ -539,36 +549,42 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
         <Panel title="任务分配与接收记录">
           <Table
             heads={["任务", "机器人", "状态", "实际执行门槛", "操作"]}
-            rows={s.tasks
-              .filter(
-                (t) => queueStates.includes(t.state) || t.state === "暂停",
-              )
-              .map((t) => [
-                <ObjectLink type="task-detail" id={t.id}>
-                  {t.name}
-                </ObjectLink>,
-                <ObjectLink type="robot" id={t.robotId} />,
-                <Badge>{t.state}</Badge>,
-                t.robotId
-                  ? constraints(
-                      s,
-                      t,
-                      s.robots.find((r) => r.id === t.robotId)!,
-                      true,
-                    ).join("；") || "满足执行门槛"
-                  : "未分配",
-                <div className="actions">
-                  <Btn
-                    onClick={() => {
-                      SEL(t.id);
-                      R(t.robotId || "R01");
-                    }}
-                  >
-                    调度决策
-                  </Btn>
-                  <Btn onClick={() => go("queue", t.robotId)}>机器人队列</Btn>
-                </div>,
-              ])}
+            rows={dRows.map((t) => [
+              <ObjectLink type="task-detail" id={t.id}>
+                {t.name}
+              </ObjectLink>,
+              <ObjectLink type="robot" id={t.robotId} />,
+              <Badge>{t.state}</Badge>,
+              t.robotId
+                ? constraints(
+                    s,
+                    t,
+                    s.robots.find((r) => r.id === t.robotId)!,
+                    true,
+                  ).join("；") || "满足执行门槛"
+                : "未分配",
+              <div className="actions">
+                <Btn
+                  onClick={() => {
+                    SEL(t.id);
+                    R(t.robotId || "R01");
+                  }}
+                >
+                  调度决策
+                </Btn>
+                <Btn onClick={() => go("queue", t.robotId)}>机器人队列</Btn>
+              </div>,
+            ])}
+          />
+          <Pager
+            page={dCur}
+            count={dispatchList.length}
+            size={dSize}
+            onChange={DP}
+            onSize={(n) => {
+              SETDSIZE(n);
+              DP(1);
+            }}
           />
         </Panel>
       )}

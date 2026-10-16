@@ -9,7 +9,10 @@
 import { useState } from "react";
 import { Folder } from "lucide-react";
 import { useStore } from "../data/store";
+import { usePageSize, useViewState } from "../data/navigation";
 import { Badge, Btn, Empty, Field, Modal, Panel, Table } from "../components/UI";
+import { Pager } from "../components/Business";
+import { DeleteConfirm } from "../components/ListDelete";
 
 /** 新增能力参数弹窗 */
 type AddForm = { kindId: string; name: string };
@@ -25,6 +28,14 @@ export function RobotAbilities() {
   const [form, FORM] = useState<AddForm | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const total = kinds.reduce((n, k) => n + k.params.length, 0);
+  /** 当前能力类型的参数列表 + 分页切片（切换类型时页码回第 1 页） */
+  const params = kind?.params || [];
+  const [pn, PN] = useViewState("robotAbilities.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [pageSize, SETPAGESIZE] = usePageSize("robotAbilities.size");
+  const pages = Math.max(1, Math.ceil(params.length / pageSize));
+  const curPn = Math.min(Math.max(1, pn), pages);
+  const pageRows = params.slice((curPn - 1) * pageSize, curPn * pageSize);
 
   return (
     <>
@@ -43,7 +54,10 @@ export function RobotAbilities() {
                 key={k.id}
                 type="button"
                 className={"rab-side-item" + (k.id === kind?.id ? " on" : "")}
-                onClick={() => CUR(k.id)}
+                onClick={() => {
+                  CUR(k.id);
+                  PN(1);
+                }}
               >
                 <Folder size={14} />
                 <span>{k.name}</span>
@@ -74,7 +88,7 @@ export function RobotAbilities() {
           >
             <Table
               heads={["能力参数", "适用机型", "状态", "操作"]}
-              rows={(kind?.params || []).map((p) => [
+              rows={pageRows.map((p) => [
                 <b>{p.name}</b>,
                 <span className="muted">
                   {(p.models || []).join(" / ") || "不限机型"}
@@ -115,8 +129,19 @@ export function RobotAbilities() {
                 </div>,
               ])}
             />
-            {!kind?.params.length && (
+            {!params.length ? (
               <Empty>该能力类型下暂无参数。</Empty>
+            ) : (
+              <Pager
+                page={curPn}
+                count={params.length}
+                size={pageSize}
+                onChange={PN}
+                onSize={(n) => {
+                  SETPAGESIZE(n);
+                  PN(1);
+                }}
+              />
             )}
           </Panel>
         </div>
@@ -164,23 +189,8 @@ export function RobotAbilities() {
         </Modal>
       )}
 
-      {/* 删除二次确认 */}
-      {confirm && (
-        <Modal title={confirm.title} onClose={() => setConfirm(null)}>
-          <p>{confirm.text}</p>
-          <div className="modal-actions">
-            <Btn onClick={() => setConfirm(null)}>取消</Btn>
-            <Btn
-              primary
-              onClick={() => {
-                if (confirm.run() !== false) setConfirm(null);
-              }}
-            >
-              确认删除
-            </Btn>
-          </div>
-        </Modal>
-      )}
+      {/* 删除二次确认（通用组件） */}
+      <DeleteConfirm state={confirm} onClose={() => setConfirm(null)} />
     </>
   );
 }

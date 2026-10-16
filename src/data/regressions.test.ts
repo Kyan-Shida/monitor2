@@ -64,7 +64,3 @@ test("sidebar highlight follows explicit source page across directories", () => 
   assert.equal(activeGroupOf("replay-detail"), "资源与地图");
 });
 
-test("告警模板管理归入「告警管理」目录（原属后台管理）", () => {
-  assert.equal(activeMenuId("alarm-templates"), "alarm-templates");
-  assert.equal(activeGroupOf("alarm-templates"), "告警管理");
-});

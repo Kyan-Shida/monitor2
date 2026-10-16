@@ -9,9 +9,10 @@
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { useViewState } from "../data/navigation";
+import { usePageSize, useViewState } from "../data/navigation";
 import { Badge, Btn, Empty, Field, Modal, Panel, Table } from "../components/UI";
 import { Pager } from "../components/Business";
+import { FilterPanel } from "../components/FilterPanel";
 import { mapVer } from "../data/versionLabel";
 import {
   coordText,
@@ -22,9 +23,6 @@ import {
   type Vec3,
 } from "../data/geo";
 import type { MapAsset } from "../data/types";
-
-/** 巡检点全局坐标表每页条数 */
-const POINT_PAGE_SIZE = 8;
 
 /**
  * 求地图拓扑的连通分量
@@ -89,6 +87,36 @@ export function SpaceManage() {
   const [pointMapF, SETPMF] = useViewState("space.point.map", "全部");
   const [onlyMissing, SETONLY] = useViewState("space.point.missing", false);
   const [pointPage, SETPP] = useViewState("space.point.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [pointPageSize, SETPOINTPS] = usePageSize("space.point.size");
+  /** 巡检点全局坐标列表筛选：展开态 + 草稿条件（点「查询」才写回生效值，与设备台账同款） */
+  const [ptFilterOpen, SETPTFILTER] = useState(false);
+  const [ptDraft, PTDRAFT] = useState({
+    map: pointMapF,
+    missing: onlyMissing ? "是" : "否",
+  });
+  /** 已生效的筛选条件数（「筛选」按钮上的计数） */
+  const ptFilterCount = (pointMapF !== "全部" ? 1 : 0) + (onlyMissing ? 1 : 0);
+  /** 展开筛选面板：用当前生效值填充草稿 */
+  function togglePtFilter() {
+    if (!ptFilterOpen)
+      PTDRAFT({ map: pointMapF, missing: onlyMissing ? "是" : "否" });
+    SETPTFILTER(!ptFilterOpen);
+  }
+  /** 查询：草稿写回生效值并收起面板（列表回到第 1 页） */
+  function applyPtFilter() {
+    SETPMF(ptDraft.map);
+    SETONLY(ptDraft.missing === "是");
+    SETPP(1);
+    SETPTFILTER(false);
+  }
+  /** 重置：清空草稿并立即生效 */
+  function resetPtFilter() {
+    PTDRAFT({ map: "全部", missing: "否" });
+    SETPMF("全部");
+    SETONLY(false);
+    SETPP(1);
+  }
 
   /** 每张图的巡检点数量与已写入全局坐标的数量 */
   const pointStat = (mapId: string) => {
@@ -124,11 +152,11 @@ export function SpaceManage() {
       (pointMapF === "全部" || p.mapId === pointMapF) &&
       (!onlyMissing || !p.world),
   );
-  const pointPages = Math.max(1, Math.ceil(pointRows.length / POINT_PAGE_SIZE));
+  const pointPages = Math.max(1, Math.ceil(pointRows.length / pointPageSize));
   const curPointPage = Math.min(pointPage || 1, pointPages);
   const pagedPoints = pointRows.slice(
-    (curPointPage - 1) * POINT_PAGE_SIZE,
-    curPointPage * POINT_PAGE_SIZE,
+    (curPointPage - 1) * pointPageSize,
+    curPointPage * pointPageSize,
   );
 
   const cm = s.maps.find((x) => x.id === convMap) || s.maps[0];
@@ -221,30 +249,39 @@ export function SpaceManage() {
       </Panel>
 
       <Panel
+        className="panel-filters-wrap"
         title="巡检点全局坐标"
-        extra={<span>{pointRows.length} 个</span>}
+        extra={
+          <div className="actions">
+            <span className="panel-count">{pointRows.length} 个</span>
+            {/* 筛选：条件默认收起，点「筛选」才展开（与设备台账同款） */}
+            <Btn onClick={togglePtFilter}>
+              {ptFilterOpen ? "收起筛选" : "筛选"}
+              {ptFilterCount ? `（${ptFilterCount}）` : ""}
+            </Btn>
+          </div>
+        }
       >
-        <div className="filter-bar">
-          <label className="inline-filter">
-            <span>来源地图：</span>
-            <select value={pointMapF} onChange={(e) => SETPMF(e.target.value)}>
-              <option>全部</option>
-              {s.maps.map((m) => (
-                <option key={m.id}>{m.id}</option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-filter">
-            <span>仅看未写入全局坐标：</span>
-            <select
-              value={onlyMissing ? "是" : "否"}
-              onChange={(e) => SETONLY(e.target.value === "是")}
-            >
-              <option>否</option>
-              <option>是</option>
-            </select>
-          </label>
-        </div>
+        {ptFilterOpen && (
+          <FilterPanel
+            fields={[
+              {
+                key: "map",
+                label: "来源地图",
+                options: ["全部", ...s.maps.map((m) => m.id)],
+              },
+              {
+                key: "missing",
+                label: "仅看未写入全局坐标",
+                options: ["否", "是"],
+              },
+            ]}
+            value={ptDraft}
+            onChange={(next) => PTDRAFT({ ...ptDraft, ...next })}
+            onSearch={applyPtFilter}
+            onReset={resetPtFilter}
+          />
+        )}
         <Table
           heads={[
             "巡检点",
@@ -279,8 +316,12 @@ export function SpaceManage() {
         <Pager
           page={curPointPage}
           count={pointRows.length}
-          size={POINT_PAGE_SIZE}
+          size={pointPageSize}
           onChange={SETPP}
+          onSize={(n) => {
+            SETPOINTPS(n);
+            SETPP(1);
+          }}
         />
       </Panel>
 

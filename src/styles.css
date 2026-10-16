@@ -181,6 +181,33 @@ header {
   padding: 0 26px;
   flex-shrink: 0;
 }
+/* 顶栏侧边栏折叠开关：与铃铛等同级的图标按钮，用于显隐左侧导航 */
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-right: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: #4a5b6d;
+  cursor: pointer;
+  flex: none;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+}
+.sidebar-toggle:hover {
+  color: #2867a7;
+  border-color: #9dc4e8;
+  background: #f4f9ff;
+}
+.sidebar-toggle:active {
+  transform: translateY(1px);
+}
 /* 顶栏返回按钮：回到上一个访问页面（无轨迹时回落到父页面） */
 .back-btn {
   display: inline-flex;
@@ -276,6 +303,16 @@ main {
   padding: 25px 27px;
   flex: 1;
   min-width: 0;
+}
+/* 工作台专用（.main-fill）：main 改纵向 flex，内容区锁一屏；
+   正常情况下内容恰好填满不出现滚动条，极端矮屏时 overflow-y:auto 仍兜底可滚（不丢数据） */
+main.main-fill {
+  display: flex;
+  flex-direction: column;
+}
+main.main-fill > div {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .eyebrow {
   font-size: 10px;
@@ -403,6 +440,12 @@ h4 {
 .panel-head > .actions > input {
   width: 168px;
   flex: none;
+}
+/* 面板头计数（如「3 条」）：与标题同排、在按钮组左侧，弱化显示 */
+.panel-count {
+  margin-right: 2px;
+  font-size: 12px;
+  color: #8799aa;
 }
 /** 表格筛选器：label + select 紧贴排列，参考"租户: [全部▼]"横向排列样式 */
 .inline-filter {
@@ -558,6 +601,67 @@ h4 {
 /* 左窄右宽：层级树用弹性栏宽，窄屏不至于被压扁 */
 .template-layout {
   grid-template-columns: minmax(230px, 280px) 1fr;
+}
+/**
+ * 内置表单页（新增机器人）：整页一张大表 —— 左列字段名、右列录入控件，分区行做小标题。
+ * 说明：表格/表头带企业主题的全局样式（`.workspace main th/td`、斑马纹、行悬停），
+ *      这里统一用 `.robot-form` 前缀提升优先级，使样式只作用于本页。
+ */
+.robot-form .form-table {
+  font-size: 13px;
+}
+.robot-form .form-table th,
+.robot-form .form-table td {
+  padding: 11px 16px;
+  border-bottom: 1px solid #eef1f5;
+  background: #fff;
+  text-align: left;
+  vertical-align: middle;
+}
+.robot-form .form-table th {
+  width: 190px;
+  color: #5f7185;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* 悬停整行浅蓝：长表扫读时定位当前行 */
+.robot-form .form-table tbody tr:hover th,
+.robot-form .form-table tbody tr:hover td {
+  background: #f7fbff;
+}
+/* 分区行：跨两列的小标题（基础身份 / 机型与硬件 / 机型约束 / 采集能力） */
+.robot-form .form-table .form-sec th {
+  background: #eef4fb;
+  color: #2c3e55;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  border-bottom-color: #dfe9f5;
+}
+.robot-form .form-table tbody tr.form-sec:hover th {
+  background: #eef4fb;
+}
+/* 必填红星 */
+.robot-form .form-table .req {
+  color: #d93025;
+  font-style: normal;
+  margin-left: 4px;
+}
+/* 控件宽度：不铺满整格，避免超长输入框；勾选组保持自然宽度 */
+.robot-form .form-table td > input:not([type="checkbox"]):not([type="radio"]),
+.robot-form .form-table td > select {
+  width: 100%;
+  max-width: 420px;
+}
+.robot-form .form-table td > p {
+  margin: 6px 0 0;
+}
+/* 行内说明（如采集能力的作用） */
+.robot-form .form-row-note {
+  color: #8090a0;
+  font-size: 12px;
+  margin: 8px 0 0;
 }
 .dispatch-layout {
   grid-template-columns: 1fr 1.15fr 0.9fr;
@@ -1461,6 +1565,12 @@ textarea {
   font-size: 12px;
   margin-bottom: 8px;
 }
+/* 必填标识：标签后的红星 */
+.field .req {
+  color: #d93025;
+  font-style: normal;
+  margin-left: 4px;
+}
 .field > input,
 .field > select,
 .field > textarea {
@@ -1534,6 +1644,70 @@ textarea {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0 24px;
+}
+/* 新增设备弹窗：左参数表单 / 右安装位置地图选点 两栏（窄屏自动堆叠） */
+.device-form-split {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 0 26px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .device-form-split {
+    grid-template-columns: 1fr;
+  }
+}
+/* 安装位置：打点自动代入的厂区坐标（只读读数，与可编辑字段区分） */
+.device-form-map input[readonly] {
+  background: #f5f8fb;
+  color: var(--blue);
+  font-weight: 600;
+}
+/* 设备档案：摘要块 = 标题行（设备名 + 编辑）+ 只读字段网格（标签在上、值在下） */
+.object-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.object-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.object-head .btn {
+  margin-left: auto;
+  flex: none;
+}
+.object-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 24px;
+  margin: 0;
+}
+.object-facts dt {
+  margin-bottom: 4px;
+  color: #8a99ac;
+  font-size: 12px;
+}
+.object-facts dd {
+  margin: 0;
+  color: #243447;
+  font-size: 14px;
+  line-height: 1.5;
+}
+/* 台账多选删除：首列只放勾选框，压窄列宽 */
+.device-table-select th:first-child,
+.device-table-select td:first-child {
+  width: 34px;
+  padding-right: 0;
+}
+/* 列表通用删除（components/ListDelete）多选态：同样的首列收窄，全站统一 */
+.list-table-select th:first-child,
+.list-table-select td:first-child {
+  width: 34px;
+  padding-right: 0;
 }
 .note {
   background: #f0f5fc;
@@ -1829,6 +2003,36 @@ textarea {
   overflow: hidden;
   border: 1px solid var(--border);
   background: var(--panel);
+}
+/* 地图下方：机器控制（可见光 + 红外实时画面）与应急操控 */
+.map-navigate-machine {
+  margin-top: 16px;
+}
+.map-navigate-dpad {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.map-navigate-dpad-mid {
+  display: flex;
+  gap: 6px;
+}
+.map-navigate-dpad button {
+  width: 42px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.map-navigate-dpad button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
 }
 .map-navigate-overlay {
   position: absolute;
@@ -2687,12 +2891,6 @@ hr {
   max-width: 75vw;
   line-height: 1.7;
 }
-footer {
-  color: #a0acb9;
-  font-size: 10px;
-  padding: 15px 0 0;
-  text-align: center;
-}
 @media (min-width: 1600px) {
   main {
     padding: 30px 35px;
@@ -3309,6 +3507,53 @@ footer {
   gap: 8px;
 }
 /**
+ * 通用筛选面板（紧凑单行）：条件与「重置 / 查询」同排，控件统一 28px 高，
+ * 整体高度约为网格版（.filter-grid）的一半；条件多时自动换行
+ */
+.filter-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 0 0 12px;
+  padding: 7px 12px;
+  background: #f7fafd;
+  border: 1px solid #e6edf5;
+  border-radius: 6px;
+}
+.filter-panel .fp-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.filter-panel .fp-field > span {
+  color: #7a8795;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.filter-panel .fp-field select,
+.filter-panel .fp-field input {
+  height: 28px;
+  min-height: 0;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #1d2a37;
+}
+.filter-panel .fp-field input {
+  width: 200px;
+}
+.filter-panel .fp-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.filter-panel .fp-actions .btn {
+  min-height: 28px;
+  padding: 3px 12px;
+  font-size: 12px;
+}
+/**
  * 地图列表：卡片视图（点云底图 + 名称 + 导航 / 编辑 / 更多）
  * @description 地图与「地图数据包」共用同一卡片样式；数据包（还不是地图）名称用醒目色区分
  */
@@ -3393,58 +3638,6 @@ footer {
 .map-card-bound .outdated {
   color: #dc2626;
   font-weight: 600;
-}
-.map-card-rovers {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-  margin: 6px 0 8px;
-  min-height: 28px;
-  width: 100%;
-  padding: 3px 6px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s, background 0.15s;
-}
-.map-card-rovers:hover {
-  border-color: #94a3b8;
-  background: #f8fafc;
-}
-.map-card-rovers.empty {
-  border: 1px dashed #cbd5e1;
-  justify-content: center;
-}
-.rover-chip {
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 11px;
-  background: #ecfeff;
-  color: #0e7490;
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-  border: 1px solid #a5f3fc;
-}
-.rover-chip.outdated {
-  background: #fef2f2;
-  color: #b91c1c;
-  border-color: #fca5a5;
-}
-.rover-chip.muted {
-  background: #f1f5f9;
-  color: #64748b;
-  border-color: #cbd5e1;
-}
-.rover-chip.empty {
-  background: transparent;
-  color: #94a3b8;
-  border: none;
 }
 /* ── MapBindPicker 弹窗 ─────────────────────────────── */
 .mbp-head {
@@ -6066,7 +6259,7 @@ table th {
   padding-top: 11px;
   padding-bottom: 11px;
 }
-/* ── 告警：闭环阶段条 + 分级（分级只用一个小圆点区分，不做整块染色） ── */
+/* ── 告警：范围筛选芯片 + 分级（分级只用一个小圆点区分，不做整块染色） ── */
 .alarm-scope {
   display: flex;
   flex-wrap: wrap;
@@ -6124,27 +6317,6 @@ table th {
 .alarm-lv.lv-urgent { color: #b0463c; }
 .alarm-lv.lv-important { color: #a3762a; }
 .alarm-lv.lv-minor { color: #3a6ea8; }
-/* 闭环进度：5 段点阵 + 当前阶段 */
-.alarm-phase {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.alarm-phase i {
-  width: 16px;
-  height: 6px;
-  border-radius: 3px;
-  background: #e1e8f0;
-}
-.alarm-phase i.on { background: #4a86c8; }
-.alarm-phase em {
-  margin-left: 4px;
-  font-size: 12px;
-  font-style: normal;
-  color: #5f7287;
-  white-space: nowrap;
-}
-
 /* 告警分类角标：业务=蓝，机器人本体异常=紫 */
 .alarm-cat {
   display: inline-block;
@@ -8980,6 +9152,15 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
     linear-gradient(180deg, #0d1c30 0%, #0a1626 58%, #08111e 100%);
   border-right: 1px solid rgba(47, 168, 196, 0.16);
   box-shadow: 6px 0 24px rgba(4, 12, 22, 0.42);
+  transition: width 0.26s ease, box-shadow 0.26s ease, border-color 0.26s ease;
+}
+/* 折叠态：侧边栏收起为 0 宽并裁剪内容；工作区（flex:1）自动占满，无需改内容布局 */
+.app.sidebar-collapsed .sidebar {
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-right-color: transparent;
+  box-shadow: none;
 }
 /* 品牌区：渐变发光标记 + 底部渐变分隔线 */
 .sidebar .brand {
@@ -9479,14 +9660,15 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .wb-top {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-  gap: 14px;
+  gap: 12px;
+  flex-shrink: 0;
 }
 /* 左侧欢迎横幅：品牌蓝渐变底，3D 形象圆形头像收在右侧 */
 .wb-hero {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 22px 26px;
+  padding: 14px 24px;
   border-radius: 8px;
   background: linear-gradient(115deg, #2b6fd4 0%, #1f5cb8 55%, #174a99 100%);
   color: #fff;
@@ -9497,12 +9679,12 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   min-width: 0;
 }
 .wb-hero-text h2 {
-  margin: 0 0 7px;
-  font-size: 24px;
+  margin: 0 0 5px;
+  font-size: 22px;
   letter-spacing: 0.5px;
 }
 .wb-hero-text p {
-  margin: 0 0 9px;
+  margin: 0 0 6px;
   font-size: 14px;
   opacity: 0.92;
 }
@@ -9511,8 +9693,8 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   opacity: 0.75;
 }
 .wb-hero-avatar {
-  width: 108px;
-  height: 108px;
+  width: 84px;
+  height: 84px;
   margin-left: auto;
   flex-shrink: 0;
   border-radius: 50%;
@@ -9523,14 +9705,14 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 /* 右侧快捷入口：白卡 + 四宫格，图标块悬浮反色 */
 .wb-shortcuts {
-  padding: 14px 18px 10px;
+  padding: 10px 16px 8px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(24, 48, 72, 0.035);
 }
 .wb-sc-title {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
@@ -9544,8 +9726,8 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 12px 4px 10px;
+  gap: 6px;
+  padding: 8px 4px 7px;
   border: 0;
   border-radius: 6px;
   background: none;
@@ -9564,9 +9746,9 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 11px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
   background: #e9f1fb;
   color: var(--blue);
   transition:
@@ -9583,17 +9765,60 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   }
 }
 
-/* ── 工作台整屏填充：根容器撑满 main，子区块间距统一交给 flex gap ── */
+/* ── 工作台整屏填充：根容器撑满 main（锁一屏），子区块间距统一交给 flex gap ── */
 .workbench-root {
-  min-height: 100%;
+  /* height 而非 min-height：内容超出时由三栏内部消化（列表内滚动），不把整页撑出滚动条 */
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  min-height: 0;
 }
-/* 子区块自带的外下边距交给根容器 gap 统一，避免顶部到 KPI 间距翻倍 */
+/* 子区块自带的外下边距交给根容器 gap 统一，避免顶部到 KPI 间距翻倍；
+   欢迎横幅与 KPI 条高度固定不参与压缩，剩余高度全给三栏 */
 .workbench-root .wb-top,
 .workbench-root .workbench-kpis {
   margin-bottom: 0;
+  flex-shrink: 0;
+}
+/* 一屏紧凑版（仅工作台作用域）：KPI 条与三栏内距收紧，正常屏幕三栏自然塞满不出滚动条 */
+.workbench-root .workbench-kpis > *,
+.workbench-root .kpi-group {
+  padding: 8px 12px;
+}
+.workbench-root .kpi-group-name {
+  margin-bottom: 5px;
+}
+/* KPI 卡片：合并双层 padding（group + card），图标与数字同步收一号 */
+.workbench-root .workbench-kpis .kpi-card {
+  padding: 6px 8px;
+  gap: 9px;
+}
+.workbench-root .workbench-kpis .kpi-card .kpi-ico {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+.workbench-root .workbench-kpis b {
+  font-size: 20px;
+  margin-top: 4px;
+}
+.workbench-root .workbench-kpis .kpi-card .kpi-value {
+  font-size: 15px;
+  margin-top: 2px;
+}
+.workbench-root .wb-dash-col {
+  padding: 12px 14px;
+}
+.workbench-root .wb-dash-head {
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+.workbench-root .wb-robot-summary {
+  margin-bottom: 10px;
+}
+.workbench-root .wb-robot-row {
+  padding: 7px 9px;
 }
 /* 下方两栏实时面板：等分剩余高度，各自内部滚动 */
 .wb-panels {
@@ -9920,6 +10145,15 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 .alarm-panel-head button:hover { color: #334155; }
 
+/* 告警弹窗标签页（业务预警 / 机器人预警）：紧贴头部下方，按钮比页面内小一号 */
+.alarm-panel-tabs {
+  margin: 8px 8px 0;
+}
+.alarm-panel-tabs button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    通知中心 NotificationCenter：按钮 + 下拉面板 + Tab + 列表
    与 AlarmCenter 并列，风格参考但配色按类型分（system=蓝 / task=青 / approval=紫）
@@ -10225,7 +10459,7 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   accent-color: #246cba;
   cursor: pointer;
 }
-/* 处置流程步骤（引用自告警模板）：序号圆点 + 步骤文字，按执行顺序阅读 */
+/* 处置流程步骤：序号圆点 + 步骤文字，按执行顺序阅读 */
 .flow-steps {
   margin: 8px 0 0;
   padding-left: 0;
@@ -10260,74 +10494,7 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   line-height: 17px;
   text-align: center;
 }
-/* 复检（反馈）面板：头部状态 + 倒计时；步骤清单可勾选，已完成打勾并置灰文字 */
-.verify-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  background: #f4f8fd;
-  border: 1px solid #dde9f6;
-  border-radius: 6px;
-}
-.verify-steps {
-  margin: 0 0 12px;
-  padding-left: 0;
-  list-style: none;
-}
-.verify-steps li {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 9px 12px;
-  border-bottom: 1px dashed #e6edf5;
-}
-.verify-steps li:last-child {
-  border-bottom: 0;
-}
-.verify-steps li label {
-  display: inline-flex;
-  align-items: flex-start;
-  gap: 8px;
-  color: #2c3e50;
-  font-size: 13px;
-  line-height: 1.6;
-  cursor: pointer;
-}
-.verify-steps li input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
-  margin: 2px 0 0;
-  flex: none;
-  accent-color: #246cba;
-  cursor: pointer;
-}
-.verify-steps li small {
-  flex: none;
-  margin-top: 2px;
-  color: #93a4b6;
-  font-size: 11px;
-}
-.verify-steps li.done label {
-  color: #5f7287;
-}
-.verify-steps li.done small {
-  color: #2f8f6b;
-}
-/* 列表里的复检状态小字：待反馈 / 有效闭环 / 无效闭环 三色 */
-.verify-open {
-  color: #b07d22 !important;
-}
-.verify-ok {
-  color: #2f8f6b !important;
-}
-.verify-bad {
-  color: #c0453c !important;
-}
-/* 多选组（告警模板的"适用检测类型"）：换行排列，勾选框与文字基线对齐 */
+/* 多选组（如「适用目标类型」）：换行排列，勾选框与文字基线对齐 */
 .check-row {
   display: flex;
   flex-wrap: wrap;
@@ -10724,7 +10891,7 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   color: var(--ent-primary);
   font-weight: 650;
 }
-/* ── 9. 告警闭环阶段条：胶囊 + 计数 ── */
+/* ── 9. 告警范围筛选芯片：胶囊 + 计数 ── */
 .workspace main .alarm-scope {
   display: flex;
   flex-wrap: wrap;
@@ -12687,172 +12854,14 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   }
 }
 
-/* September customer review: task-first scheduling and shared controls. */
-.plan-binding {
-  padding: 16px;
-  border: 1px solid #c6d8e8;
-  background: #f3f8fc;
-  margin: 12px 0;
-}
-/* 计划绑定机器人：以模板需求为基准的候选人卡片（2026-09-29 优化，替换原原生下拉） */
-.pb-req h4 {
+/* 计划绑定执行机器人：级联选择器字段（服务区域 › 机器人），不可绑定的原因走弹窗 */
+.bind-reasons {
   margin: 0;
-  font-size: 13px;
-  color: #23476d;
-}
-.pb-req p {
-  margin: 6px 0 12px;
-  font-size: 12px;
-  color: #5f7287;
-}
-.pb-req p span {
-  color: #8694a2;
-}
-.pb-list {
+  padding-left: 18px;
   display: grid;
-  gap: 8px;
-}
-.pb-card {
-  display: flex;
-  gap: 10px;
-  padding: 11px 13px;
-  border: 1px solid #d9e4ee;
-  background: white;
-  transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease;
-}
-.pb-card:hover {
-  border-color: #a9c2dc;
-}
-.pb-card > input[type="radio"] {
-  flex: none;
-  margin-top: 2px;
-}
-/* 已选：主色描边；不可绑定：降透明度并禁用指针，但保留原因可见 */
-.pb-card.selected {
-  border-color: var(--blue);
-  background: #f7fbff;
-  /* 左侧主色条用 inset 阴影，避免 border-left 改动内容位置 */
-  box-shadow:
-    inset 3px 0 0 0 var(--blue),
-    0 0 0 2px rgba(35, 104, 189, 0.12);
-}
-.pb-card.blocked {
-  background: #fbfcfd;
-  cursor: not-allowed;
-}
-.pb-card.blocked .pb-main {
-  opacity: 0.78;
-}
-.pb-main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.pb-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.pb-title b {
+  gap: 6px;
   font-size: 12px;
-  font-weight: 550;
-  color: #24384f;
-}
-.pb-meta {
-  font-size: 11px;
-  color: #8694a2;
-}
-/* 选中标记：主色实底小标签，比只靠 radio 圆点更易识别当前选中项 */
-.pb-flag {
-  margin-left: auto;
-  font-size: 10px;
-  line-height: 1.6;
-  padding: 1px 7px;
-  border-radius: 3px;
-  background: var(--blue);
-  color: white;
-}
-.pb-caps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 7px;
-}
-/* 能力标签：具备 / 缺失 / 额外 / 可用性状态，四种语义色 */
-.pb-chip {
-  font-size: 11px;
-  line-height: 1.5;
-  padding: 2px 7px;
-  border: 1px solid #dbe4ee;
-  border-radius: 3px;
-  background: #f7fafd;
-  color: #5f7287;
-}
-.pb-chip.ok {
-  border-color: #bcdcc4;
-  background: #f1faf3;
-  color: #2f7a45;
-}
-.pb-chip.miss {
-  border-color: #e7c6c1;
-  background: #fdf3f2;
-  color: #b55249;
-}
-.pb-chip.warn {
-  border-color: #ecd9b0;
-  background: #fdf8ee;
-  color: #9a7628;
-}
-.pb-chip.off {
-  color: #9fadba;
-}
-.pb-chip.extra {
-  border-style: dashed;
-  background: transparent;
-  color: #8694a2;
-}
-.pb-ok,
-.pb-alert {
-  font-size: 11px;
-  margin: 7px 0 0;
-}
-.pb-ok {
-  color: #2f7a45;
-}
-.pb-alert {
-  color: #b55249;
-}
-/* 明细就地展开在被选中的卡片内：用虚线与卡片主体分隔，归属清晰 */
-.pb-detail {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed #cddbe8;
-}
-.pb-detail-title {
-  font-size: 11px;
-  color: #8694a2;
-  margin-bottom: 6px;
-}
-.pb-facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 10px;
-  margin: 9px 0;
-  font-size: 12px;
-}
-.pb-facts dt {
-  color: #8694a2;
-}
-.pb-facts dd {
-  margin: 0;
   color: #34495f;
-}
-.pb-avail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
 }
 .segmented {
   display: flex;
@@ -12998,6 +13007,123 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   gap: 12px;
   align-items: start;
 }
+/* 级联模式（cascade）：目录树与勾选表都收进浮层，只剩已选清单占满宽度 */
+.pick-cascade-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.pick-cascade {
+  position: relative;
+  margin-bottom: 8px;
+}
+.pick-cascade-trigger {
+  display: inline-flex;
+  min-width: 220px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid #d8e1ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #26384d;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pick-cascade-trigger:hover {
+  border-color: #9dbde0;
+}
+.pick-cascade-trigger i {
+  color: #8c9bac;
+  font-size: 10px;
+  font-style: normal;
+}
+.pick-cascade-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+/* 三列级联：区域 → 设备 → 巡检点（参考「巡检目标」选择器的列式形态）
+   定位用 fixed，不用 absolute：外层面板 .panel 是 overflow: hidden，
+   absolute 浮层会被裁掉（第三列巡检点只剩半行）。坐标与高度上限由组件按触发器实测位置写入 */
+.pick-cascade-panel {
+  position: fixed;
+  z-index: 41;
+  display: flex;
+  max-height: 340px;
+  padding: 6px;
+  border: 1px solid #d8e1ec;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15, 35, 60, 0.16);
+}
+/* 下方空间不足时向上展开：整体上移自身高度，锚点仍是触发器底 / 顶边 */
+.pick-cascade-panel.up {
+  transform: translateY(-100%);
+}
+.pick-cascade-panel .cascade-col {
+  width: 210px;
+  /* 列高跟着面板高度上限收敛（--pop-h 由组件按可用空间写入） */
+  max-height: calc(var(--pop-h, 340px) - 14px);
+  margin: 0;
+  padding: 2px;
+  overflow: auto;
+  list-style: none;
+  border-right: 1px solid #eef2f7;
+}
+.pick-cascade-panel .cascade-col:last-child {
+  border-right: 0;
+}
+.pick-cascade-panel .cascade-col li {
+  margin: 0;
+}
+.pick-cascade-panel .cascade-col button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #26384d;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.pick-cascade-panel .cascade-col button:hover {
+  background: #f2f7fd;
+}
+.pick-cascade-panel .cascade-col button.on {
+  background: #e8f1fc;
+  color: #1f5fa8;
+  font-weight: 600;
+}
+.pick-cascade-panel .cascade-col button i {
+  color: #a8b6c6;
+  font-style: normal;
+}
+.pick-cascade-panel .cascade-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: #26384d;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pick-cascade-panel .cascade-check:hover {
+  background: #f2f7fd;
+}
+.pick-cascade-panel .cascade-empty {
+  padding: 8px 10px;
+  color: #9aa9b8;
+  font-size: 12px;
+}
 .pick-picked {
   border: 1px solid #e1e8f1;
   border-radius: 8px;
@@ -13116,12 +13242,15 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 /* ── 巡检路线预览：底图 + 父线（浅灰虚线）+ 子线（蓝色带箭头与序号）── */
 .route-preview {
+  /* 折叠把手是绝对定位的，需要本区块作为定位参照 */
+  position: relative;
   margin: 12px 0;
   padding: 10px 12px;
   border: 1px solid #e1e8f1;
   border-radius: 10px;
   background: #fbfcfe;
 }
+/* 收起 / 展开左侧表单的把手本体样式在下方 .re-fold（两处布局共用同一条） */
 .route-preview-head {
   display: flex;
   flex-wrap: wrap;
@@ -13191,6 +13320,314 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .route-seg.off-road {
   stroke-dasharray: 6 5;
   opacity: 0.85;
+}
+/* 自定义路线工具区：与「显示父线」同排在预览头部右侧 */
+.route-preview-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.route-preview-tools .route-preview-toggle {
+  margin-left: 6px;
+}
+/* 自定义路线：自绘线路（绿色实线）与父子线（蓝色）区分开 */
+.route-seg.custom {
+  stroke: #16a34a;
+}
+.route-seg.custom + .route-arrow-head {
+  fill: #16a34a;
+}
+/* 自绘线路的路径锚点：白底绿环；吸附到巡检点的锚点实心（代表机器狗停靠点） */
+.route-node {
+  fill: #fff;
+  stroke: #16a34a;
+  stroke-width: 2;
+}
+.route-node.anchored {
+  fill: #16a34a;
+}
+/* 自定义模式：画布可点选，给个十字光标示意可落点 */
+.route-preview-body.picking .route-plate {
+  cursor: crosshair;
+}
+/* 画线工具（直线 / 曲线）：与「撤销 / 清空」同排，比页面内按钮小一号 */
+.route-draw-kind button {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+/* ── 路线编辑器：图面（左）+ 选中元素参数面板（右），与「地图标定工作台」同形 ──
+   用 flex-wrap 而非固定列宽：容器够宽（≥ 320 + 200 + gap）时两栏并排，
+   不够宽时参数面板自动换到图面下方，避免把底图挤成一条缝 */
+.route-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+.route-editor > .route-preview-body {
+  /* 地图至少 320px，剩余宽度都给图（收起左栏后即整幅宽） */
+  flex: 1 1 320px;
+  min-width: 0;
+}
+/* 只读预览（任务详情等）：没有参数面板，图面单独占满 */
+.route-editor.solo > .route-preview-body {
+  flex: 1 1 100%;
+}
+.route-param {
+  flex: 0 0 200px;
+  position: sticky;
+  top: 8px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #e1e8f1;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+}
+.route-param-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #eef3f9;
+}
+.route-param-head > b {
+  font-size: 13px;
+  color: #1f2d3d;
+}
+.route-param-clear {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #24588a;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.route-param-clear:hover {
+  text-decoration: underline;
+}
+.route-param-empty {
+  margin: 0;
+  color: #8c9bac;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+/* 参数键值表：左列字段名、右列取值（取值可换行，长坐标不会被裁掉） */
+.route-param-list {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+}
+.route-param-list dt {
+  color: #8c9bac;
+  white-space: nowrap;
+}
+.route-param-list dd {
+  margin: 0;
+  color: #2b3d4f;
+  word-break: break-all;
+}
+/* 编辑器工具条与预览头部之间不留额外上间距（.calib-tools 默认 margin-top:10px 给标定页用） */
+.route-editor-tools {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+/* 未进入自定义模式时，落点类工具按钮置灰（保留位置与说明，但不接受点击） */
+.calib-tool:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* 停靠点选中态：蓝环高亮（与标定工作台的选中色同源） */
+.route-stop.on {
+  border-color: #24588a;
+  color: #165da8;
+  box-shadow: 0 0 0 3px rgba(63, 141, 220, 0.3);
+}
+/* 「显示点名称」：停靠点旁跟一个名牌，向右下偏移避免压住序号圆点 */
+.route-stop-label {
+  position: absolute;
+  z-index: 1;
+  transform: translate(14px, -4px);
+  padding: 1px 6px;
+  border: 1px solid #d9e4ee;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #3c5165;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 元素选择模式：图面默认光标，指到停靠点上才变手型（与落点工具的十字光标区分） */
+.route-plate.select-mode .route-stop {
+  cursor: pointer;
+}
+/* 元素浏览：相对卡片悬浮的抽屉（父线线体在 SVG 里 pointer-events:none，只能从这里选） */
+.route-browse-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border-radius: 10px;
+  background: rgba(31, 45, 61, 0.16);
+}
+.route-browse {
+  position: absolute;
+  top: 46px;
+  right: 12px;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #e1e8f1;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgba(20, 60, 120, 0.16);
+  animation: calib-drawer-in 0.14s ease-out;
+}
+.route-browse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #eef3f9;
+}
+.route-browse-head > b {
+  font-size: 13px;
+  color: #1f2d3d;
+}
+.route-browse-head > button {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.route-browse-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #33475b;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.route-browse-row:hover {
+  background: #f4f8fd;
+}
+.route-browse-row.on {
+  background: #e7f1ff;
+  color: #165da8;
+}
+.route-browse-type {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #eef3f9;
+  color: #5f7287;
+  font-size: 11px;
+  line-height: 18px;
+}
+.route-browse-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ── 巡检路线编辑（内置页）：左「基础信息 + 选择巡检点」/ 右「地图展示与画线」── */
+.route-edit-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.route-edit-head b {
+  font-size: 15px;
+  color: #1f2d3d;
+}
+.route-edit-head .actions {
+  margin-left: auto;
+}
+.route-edit-grid {
+  display: grid;
+  /* 左栏要放「基础信息 + 巡检点」，给多一点宽度；右栏地图按剩余宽度等比缩放 */
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 12px;
+  align-items: start;
+}
+/* 左栏收起态：地图独占整幅宽度（把手留在地图左缘，再点一次还原左栏） */
+.route-edit-grid.collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+.route-edit-col {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+/* 右栏地图容器：左栏（巡检点列表）滚动时保持在视野内，画线不用来回滚 */
+.re-map {
+  position: sticky;
+  top: 8px;
+  min-width: 0;
+}
+/* 折叠把手：贴在地图左缘的竖条，点它收起 / 展开左侧表单（两态共用同一条，故不需要第二个按钮） */
+.re-fold {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  z-index: 2;
+  width: 14px;
+  height: 72px;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d9e4ee;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(31, 45, 61, 0.12);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+/* 箭头用纯 CSS 三角：展开态指向左（= 把左栏收起来），左栏收起后反向指右（= 放回来） */
+.re-fold::before {
+  content: "";
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-right: 6px solid var(--blue);
+}
+.re-fold:hover {
+  background: #f7fbff;
+  border-color: #a9c2dc;
+}
+.route-edit-grid.collapsed .re-fold::before {
+  border-right: 0;
+  border-left: 6px solid var(--blue);
+}
+@media (max-width: 1360px) {
+  .route-edit-grid {
+    grid-template-columns: 1fr;
+  }
+  .re-map {
+    position: relative;
+  }
 }
 /* 停靠点序号：白底红圈，在浅蓝底图上对比最强（与标定工作台的选中色同源） */
 .route-stop {
@@ -14673,14 +15110,11 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   .point-edit-split{grid-template-columns:1fr}
   .point-edit-side{position:static;max-height:none;overflow:visible}
 }
-.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;margin-bottom:16px}
-.detail-grid>div{display:flex;flex-direction:column;gap:3px}
-.detail-grid span{font-size:12px;color:#94a3b8}
-.detail-grid strong{font-size:14px;color:#0f172a;font-weight:600;word-break:break-all}
 .drawer-sub{margin:4px 0 8px;font-size:14px;color:#0f172a;font-weight:600}
 
-.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:13px;color:#475569;flex-wrap:wrap}
-.pagination .page-btns{display:flex;align-items:center;gap:8px}
+/* 分页条：左侧「共 N 条 / N 页」+「每页 N 条」，页码组固定贴最右（margin-left:auto），中间不留空档 */
+.pagination{display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:13px;color:#475569;flex-wrap:wrap}
+.pagination .page-btns{display:flex;align-items:center;gap:8px;margin-left:auto}
 .pagination .page-info{min-width:52px;text-align:center;color:#0f172a;font-weight:600}
 .pagination select{padding:4px 8px;border-radius:6px;border:1px solid #d1d5db;background:#fff}
 
@@ -15606,14 +16040,17 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .payload-abilities > div + div { margin-top: 4px; }
 
 /* ═══════════════════════════════════════════════════════════════
-   工作台仪表盘主区：三栏布局
-   —— 机器人状态总览 / 今日巡检概览 / 最近告警 ——
+   工作台仪表盘主区：两栏布局
+   —— 机器人状态总览 / 今日巡检概览 ——
    ═══════════════════════════════════════════════════════════════ */
 .wb-dashboard {
   display: grid;
-  grid-template-columns: 1.1fr 1fr 1fr;
+  grid-template-columns: 1.1fr 1fr;
   gap: 14px;
-  margin-bottom: 16px;
+  /* 吃掉固定区块（欢迎横幅 / KPI 条）之外的剩余高度，两栏等分行高 */
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-bottom: 0;
 }
 .wb-dash-col {
   background: #fff;
@@ -15621,8 +16058,10 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   border-radius: 8px;
   padding: 14px 16px;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .wb-dash-head {
   display: flex;
@@ -15688,6 +16127,11 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 兜底：截断后仍溢出（极端矮屏）时列表内部滚动，整页不滚 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 .wb-robot-row {
   display: flex;
@@ -15749,6 +16193,11 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   transition: width 0.3s;
 }
 .wb-battery.low { background: #f4b5b5; }
+/* 左栏余量提示：贴在列表下方，与「查看全部」同视觉 */
+.wb-robot-more {
+  margin-top: 8px;
+  flex-shrink: 0;
+}
 
 /* ── 中：今日巡检概览 ── */
 .wb-today-progress {
@@ -15836,6 +16285,11 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* 兜底：今日任务超量时列表内部滚动（正常情况 3 台机器并发撑不满，不触发） */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 .wb-today-list li {
   display: grid;
@@ -15862,89 +16316,6 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   font-family: ui-monospace, Consolas, monospace;
   color: #7b889a;
   font-size: 10px;
-}
-
-/* ── 右：最近告警 ── */
-.wb-alarm-badges {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-.wb-alarm-badge {
-  flex: 1;
-  text-align: center;
-  padding: 8px 4px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
-}
-.wb-alarm-badge:hover { transform: translateY(-1px); }
-.wb-alarm-badge b {
-  display: block;
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1;
-}
-.wb-alarm-badge small {
-  font-size: 11px;
-  color: #6b7c90;
-}
-.wb-alarm-badge.lv-一级 { background: #fde2e2; color: #c84a4a; }
-.wb-alarm-badge.lv-一级 b { color: #c84a4a; }
-.wb-alarm-badge.lv-二级 { background: #fdf1e2; color: #c97a24; }
-.wb-alarm-badge.lv-二级 b { color: #c97a24; }
-.wb-alarm-badge.lv-三级 { background: #eef1f5; color: #5f7185; }
-.wb-alarm-badge.lv-三级 b { color: #5f7185; }
-
-.wb-alarm-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.wb-alarm-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 8px 10px;
-  background: #f8fafd;
-  border-radius: 6px;
-  cursor: pointer;
-  border-left: 3px solid transparent;
-  transition: background 0.15s, border-color 0.15s;
-}
-.wb-alarm-item:hover { background: #eef5ff; }
-.wb-alarm-item.lv-一级 { border-left-color: #e05c5c; background: #fff1f1; }
-.wb-alarm-item.lv-一级:hover { background: #ffe4e4; }
-.wb-alarm-item.lv-二级 { border-left-color: #e08a2e; background: #fff8ef; }
-.wb-alarm-item.lv-二级:hover { background: #fbe9d1; }
-.wb-alarm-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #b7c6d6;
-  flex-shrink: 0;
-  margin-top: 5px;
-}
-.wb-alarm-item.lv-一级 .wb-alarm-dot { background: #e05c5c; box-shadow: 0 0 0 3px rgba(224,92,92,0.25); }
-.wb-alarm-item.lv-二级 .wb-alarm-dot { background: #e08a2e; }
-.wb-alarm-item > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.wb-alarm-item b {
-  font-size: 12px;
-  font-weight: 600;
-  color: #2c3e55;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.wb-alarm-item small {
-  font-size: 11px;
-  color: #7b889a;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -16269,6 +16640,107 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .bt-edit-page .bt-config-wide {
   max-width: 1180px;
 }
+/* 台账基本信息（巡检目标 / 台账名称 / 锚点 / 台账 ID）：一行放得下就一行，放不下自动换行 */
+.bt-edit-page .bt-basic {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 20px;
+  max-width: 1180px;
+  margin-bottom: 16px;
+}
+/* 配置 Tab 表格里的选择器铺满单元格，避免被压成窄条 */
+.bt-edit-page .bt-config-wide table select {
+  width: 100%;
+}
+/* 级联选择器（区域 › 设备 › 检测目标 / 算法能力类型 › 算法）：触发器 + 多列浮层 */
+.cascader {
+  position: relative;
+}
+.cascader-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: left;
+}
+.cascader-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 告警项「+ 告警等级配置」：触发器做成主按钮形态的动作选择器（选完即新增一行，不显示选中值） */
+.alarm-add-bar .cascader {
+  flex: none;
+  width: 168px;
+}
+.alarm-add-bar .cascader-trigger {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+  justify-content: center;
+  font-weight: 600;
+}
+.alarm-add-bar .cascader-trigger:hover:not(:disabled) {
+  background: #18569e;
+  border-color: #18569e;
+}
+/* 占位文案在蓝底上沿用按钮字色，别被 .muted 压成灰 */
+.alarm-add-bar .cascader-trigger .muted {
+  color: inherit;
+}
+/* 浮层 portal 到 body：fixed 定位（坐标由组件按触发器实时位置算），
+   不会被 .panel / 弹窗的 overflow: hidden 裁掉，也不会被后面的面板压住；
+   关闭靠 document 监听，不再铺全屏遮罩（遮罩会吞掉整页点击、每次开关重绘整个视口） */
+.cascader-pop {
+  position: fixed;
+  z-index: 1200;
+  display: flex;
+  max-width: calc(100vw - 16px);
+  /* 高度上限由组件按上下可用空间算出（--cascader-h），窗口矮时不会被底部截断 */
+  max-height: var(--cascader-h, 300px);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(20, 43, 69, 0.16);
+  overflow: hidden;
+}
+/* 触发器下方空间不够时改为向上展开：以触发器上沿为基准往回折 */
+.cascader-pop.up {
+  transform: translateY(-100%);
+}
+.cascader-col {
+  min-width: 210px;
+  /* 随浮层上限走，超出部分在本列内滚动 */
+  max-height: inherit;
+  overflow: auto;
+  padding: 4px;
+  border-right: 1px solid var(--border);
+}
+.cascader-col:last-child {
+  border-right: 0;
+}
+.cascader-col button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  text-align: left;
+}
+.cascader-col button:hover {
+  background: #eef4fc;
+}
+.cascader-col button.on {
+  background: #e3eefb;
+  color: var(--blue);
+}
 /* 步骤①三栏（树 / 列表 / 已选）给足高度，别被压成窄条 */
 .bt-edit-page .pick-3col {
   min-height: 420px;
@@ -16310,19 +16782,70 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   box-shadow: 0 -1px 4px rgba(24, 48, 72, 0.06);
 }
 
-/* ── 告警项表格（台账「3、告警规则」/ 告警设置弹窗共用）── */
-/* 列多且单元格里是输入框：给足列宽，容器装不下时由 .table-scroll 横向滑动，
-   而不是把「0.2」压成「(」这种只剩一个字符的输入框 */
-.alarm-item-table input[type="number"] {
-  width: 86px;
+/* ── 告警项清单（台账「告警设置」/ 告警设置弹窗共用）──
+   列表只读展示 + 删除（参数在弹窗里填）：一列一个字段用 fr 分配，
+   表格总宽恒等于容器宽 → 永远不会横向滚动；超长文本省略号 + 悬停看全 */
+.alarm-items {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
 }
-.alarm-item-table input:not([type="number"]) {
-  min-width: 116px;
+.ai-row {
+  display: grid;
+  /* 权重按内容长短分配：异常名称最宽、操作列要放得下删除按钮、等级最短 */
+  grid-template-columns: 1.1fr 0.85fr 0.8fr 0.95fr 0.55fr 1.1fr 1.5fr 1.15fr 0.8fr 0.9fr;
+  gap: 0 10px;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 13px;
 }
-.alarm-item-table select {
-  min-width: 104px;
+.ai-row + .ai-row {
+  border-top: 1px solid #eef2f7;
 }
-/* 「+ 告警等级配置」按钮与其右侧的新增方式下拉 */
+.ai-head {
+  background: #f6f8fb;
+  color: #6d7f92;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.ai-row:not(.ai-head) {
+  cursor: pointer;
+}
+.ai-row:not(.ai-head):hover {
+  background: #f6f9fc;
+}
+.ai-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 告警项弹窗：字段少而宽，两列就够（默认的 3 列会把"判断规则"挤变形） */
+.ai-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* 弹窗底栏里的校验提示：靠左，与右侧按钮分开 */
+.ai-err {
+  margin-right: auto;
+  color: #d93a3a;
+  font-size: 12px;
+}
+/* 一个字段里放多个控件（判断规则 / 触发逻辑）：下拉 + 数值框并排 */
+.ai-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-rule select {
+  flex: 1 1 auto;
+}
+.ai-rule input[type="number"] {
+  flex: 0 0 68px;
+}
+.ai-rule i {
+  font-style: normal;
+  color: #93a3b4;
+}
+/* 「+ 告警等级配置」入口 */
 .alarm-add-bar {
   gap: 8px;
 }
@@ -16545,4 +17068,430 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   font-size: 12px;
   line-height: 1.5;
 }
+/* ── 区域配置弹窗：宽版分栏（左参数填空 / 右全厂区 2D 地图画范围） ── */
+/* 页面布局：左树右表 */
+.admin-split {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+/* 区域树目录：纵向节点列表，整行可点 */
+.area-tree {
+  display: flex;
+  flex-direction: column;
+  max-height: 520px;
+  overflow: auto;
+}
+.area-tree-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 0;
+  background: none;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: #33475c;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.area-tree-node:hover {
+  background: #f0f5fc;
+}
+.area-tree-node.sel {
+  background: #eaf2fc;
+  color: #2f7fd0;
+  font-weight: 600;
+}
+.area-tree-root {
+  font-weight: 600;
+  color: #4a5f76;
+}
+.area-tree-node .tw {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7b8b9c;
+}
+.area-tree-node .tw.off {
+  visibility: hidden;
+}
+.area-tree-empty {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  color: #98a6b5;
+}
+/* 父级区域组合框：输入框 + 悬浮候选下拉 */
+.combo {
+  position: relative;
+}
+.combo-drop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(31, 55, 83, 0.14);
+  padding: 4px;
+}
+.combo-drop button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  background: none;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: #33475c;
+  text-align: left;
+  cursor: pointer;
+}
+.combo-drop button:hover {
+  background: #eef4fc;
+}
+.combo-drop button.new {
+  color: #2f7fd0;
+  font-weight: 600;
+  border-top: 1px dashed #dbe4ef;
+  border-radius: 0 0 6px 6px;
+  margin-top: 2px;
+}
+.combo-empty {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #98a6b5;
+}
+.area-split {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+/* 左栏：表单参数，纵向排布 */
+.area-form {
+  display: flex;
+  flex-direction: column;
+}
+/* 名称字数计数：叠在输入框右侧（0/32） */
+.area-form .field {
+  position: relative;
+}
+.f-count {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  font-style: normal;
+  font-size: 11px;
+  color: #9aa8b6;
+  pointer-events: none;
+}
+/* 右栏：全厂大地图（标题 + 画布，工具条 / 标绘列表以画布主体为定位参照） */
+.area-canvas {
+  position: relative;
+}
+.area-canvas-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2c3e55;
+}
+.area-canvas-body {
+  position: relative;
+}
+.area-canvas .map-image {
+  border-radius: 8px;
+}
+/* 绘制工具条：悬浮地图右上，图标按钮纵排（多边形/矩形/撤销/重做/清空） */
+.area-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: white;
+  border: 1px solid #cfdeec;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px #0d21381c;
+  padding: 4px;
+}
+.area-tools button {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  border-radius: 6px;
+  color: #57718d;
+  cursor: pointer;
+}
+.area-tools button:hover:not(:disabled) {
+  background: #f0f5fc;
+  color: #23476d;
+}
+.area-tools button.on {
+  background: #eaf2fc;
+  color: #2f7fd0;
+}
+.area-tools button:disabled {
+  color: #c3ceda;
+  cursor: not-allowed;
+}
+/* 标绘列表：悬浮地图右下，展示当前草稿 / 成品记录 */
+.area-plots {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 20;
+  width: 210px;
+  background: white;
+  border: 1px solid #cfdeec;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px #0d21381c;
+  overflow: hidden;
+}
+.area-plots-head {
+  padding: 7px 12px;
+  background: #f4f7fb;
+  border-bottom: 1px solid #e6ecf3;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5f76;
+}
+.area-plot-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.area-plot-item b {
+  color: #23476d;
+}
+.area-plot-item span {
+  color: #7b8b9c;
+  margin-left: auto;
+}
+.area-plot-item button {
+  flex: none;
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: #b0674a;
+  cursor: pointer;
+  padding: 2px;
+}
+.area-plot-item button:hover {
+  color: #d93025;
+}
+.area-plots-empty {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: #98a6b5;
+}
+/* ── 区域范围轮廓（全厂区 2D 底图上的闭合多边形） ── */
+/* SVG polygon 默认会被填成黑色，这里显式接管填色与描边 */
+.map-areas .area-shape polygon {
+  fill: rgba(47, 127, 208, 0.16);
+  stroke: #2f7fd0;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.map-areas .area-shape text {
+  fill: #23476d;
+  font-size: 3px;
+  font-weight: 600;
+  pointer-events: none;
+}
+/* 绘制中的草稿：虚线描边不填色，顶点用蓝色圆点提示可继续加点 */
+.map-areas .area-draft polygon {
+  fill: rgba(47, 127, 208, 0.08);
+  stroke: #2f7fd0;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  stroke-linejoin: round;
+}
 
+
+/*
+  巡检点详情（新增 / 编辑巡检点合并页）—— 整页锁一屏
+  顶栏：当前机器人 / 当前地图级联 + 居中标题 + 删除·保存
+  main 已是 main-fill：pd-page 用 flex 把高度分给「顶栏(auto) / 基本信息(auto) / 机器控制(剩余)」
+  右栏同构：巡检项清单或详情占满剩余高度，超长在面板内滚动，尽量不出现整页滚动条
+*/
+.pd-page{display:flex;flex-direction:column;gap:12px;height:100%;min-height:0;overflow:hidden}
+.pd-topbar{flex:0 0 auto;gap:12px}
+.pd-topbar-left{display:flex;gap:8px;align-items:center;min-width:0}
+.pd-title{flex:1;text-align:center}
+.pd-split{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:minmax(0,1.06fr) minmax(0,0.94fr);gap:12px}
+.pd-col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
+/* 面板高度分配：固定面板按内容，增长面板吃掉剩余高度并在面板内滚动 */
+.pd-col > .panel{margin:0;display:flex;flex-direction:column;min-height:0}
+.pd-col > .panel.pd-fixed{flex:0 0 auto}
+.pd-col > .panel.pd-grow{flex:1 1 auto}
+.pd-col > .panel.pd-grow > .panel-body{min-height:0;overflow:auto}
+/* 基本信息：所属区域 / 巡检点名称 / 巡检点坐标 一行三格 */
+.pd-basic{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:end}
+.pd-page .panel-body{padding:12px}
+.pd-page .field > span{font-size:12px}
+.pd-coord-line{margin:8px 0 0;font-size:12px}
+/* 机器控制：视频吃掉剩余高度，不再按 16:9 把页面撑高 */
+.pd-page .cockpit{display:flex;flex-direction:column;min-height:0}
+.pd-page .cockpit-video-row{flex:1 1 auto;min-height:150px;margin-bottom:10px}
+.pd-page .video-pane{min-height:0}
+.pd-page .video-placeholder{height:100%}
+.pd-page .cockpit-block{margin-top:0}
+/* 巡检项详情：名称 / 目标台账 / 所需能力列表 / 当前巡检项记录参 */
+.pd-detail{display:flex;flex-direction:column;gap:10px}
+.pd-block{display:flex;flex-direction:column;gap:8px}
+.pd-block > b,
+.pd-block-head > b{font-size:13px;color:#1d2a37}
+.pd-block-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.pd-block-head > .btn{flex:none}
+.pd-block-head .req{color:#d93025;font-style:normal;margin-left:4px}
+.pd-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+/* 巡检项清单：一行 = 排序手柄 + 名称 + 编辑（卡片化：白底描边 + 悬停反馈 + 拖拽落位提示） */
+.pd-items{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.pd-items > li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 12px;border:1px solid #e2e8f0;border-radius:9px;background:#fff;font-size:13px;transition:border-color .15s,box-shadow .15s,background .15s}
+.pd-items > li:hover{border-color:#c8d8ea;box-shadow:0 2px 8px rgba(29,42,55,.06)}
+.pd-items > li.dragging{opacity:.75;border-style:dashed;border-color:#8fb8e2;background:#f4f9ff;box-shadow:none}
+.pd-grip{display:flex;align-items:center;justify-content:center;flex:none;width:26px;height:26px;margin-left:-4px;border-radius:6px;color:#94a3b8;cursor:grab;transition:background .15s,color .15s}
+.pd-grip:hover{background:#eef4fb;color:#4b7bab}
+.pd-grip:active{cursor:grabbing;background:#e2edf9;color:#33689e}
+.pd-item-name{text-align:center;font-weight:600;color:#1d2a37;overflow-wrap:anywhere}
+.pd-edit{display:flex;align-items:center}
+@media (max-width: 1180px){
+  .pd-split{grid-template-columns:1fr;overflow:auto}
+  .pd-basic{grid-template-columns:1fr}
+}
+/* 增长面板的内容区参与 flex：机器控制的视频吃满剩余高度 */
+.pd-page .panel.pd-grow > .panel-body{display:flex;flex-direction:column;min-height:0;overflow:auto}
+.pd-page .cockpit{flex:1 1 auto;min-height:0}
+/* 详情底部的取消 / 保存：贴到面板底边 */
+.pd-foot{margin-top:auto}
+/* 巡检点详情：压掉默认留白 —— 字段自带的 16px 下边距 + 面板头/身留白，省下的高度全给机器控制 */
+.pd-page .field{margin-bottom:0}
+.pd-page .field > span{margin-bottom:4px;font-size:12px;line-height:1.4}
+.pd-page .field > input,
+.pd-page .field > select,
+.pd-page .field > textarea{padding:5px 8px;font-size:13px}
+.pd-page .panel-head{min-height:36px;padding:7px 12px}
+.pd-page .panel-body{padding:10px 12px}
+.pd-page .panel-head > h3{font-size:14px}
+.pd-basic{gap:8px}
+.pd-page .panel.pd-fixed .panel-body > .muted:last-child{margin-bottom:0}
+/* 放不下时的兜底：允许整页上下滚动，绝不裁切内容（前面若写了 overflow:hidden 以这里为准） */
+.pd-page{overflow:visible}
+/* 增长面板只涨不缩：内容比一屏高时由 main 滚动承载，不被压扁 */
+.pd-col > .panel.pd-grow{flex:1 0 auto}
+.pd-col > .panel.pd-grow > .panel-body{overflow:visible}
+/* 视频吃掉富余高度，但不无限拉高 */
+.pd-page .cockpit-video-row{flex:1 1 auto;min-height:150px;max-height:320px}
+/* 采集坐标回显：默认 line-height 1.9 太散，收一行 */
+.pd-coord-line{line-height:1.6}
+.pd-page .pd-col > .panel.pd-grow > .panel-body{display:flex;flex-direction:column;min-height:0;overflow:visible}
+
+
+/*
+  机器人详情 › 机器能力 —— 卡片栅格化
+  原：5 个面板纵向堆叠，每条主数据独占一整行（全局 dl 是 90px + 1fr），右半边大片留白
+  新：① 面板排成 2 列栅格，同排等高；关键块 .cap-span2 通栏
+      ② 标签—值改为多列自适应网格 .cap-kv，取值不再各占一整行
+      ③ .cap-sub 作为面板内子块小标题（只做标签，不加说明）
+*/
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+/* 通栏面板：机型与硬件 */
+.cap-grid > .panel.cap-span2 {
+  grid-column: 1 / -1;
+}
+/* 同排等高：面板撑满栅格单元，内容仍自顶排列 */
+.cap-grid > .panel {
+  height: 100%;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cap-grid > .panel > .panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* 标签—值：多列自适应，一类信息一眼看完 */
+.cap-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 20px;
+  margin: 0;
+  font-size: 12px;
+}
+.cap-kv > div {
+  min-width: 0;
+}
+/* 取值较长的项（如机型约束）：独占一整行，不与短项挤在一排 */
+.cap-kv > div.wide {
+  grid-column: 1 / -1;
+}
+.cap-kv dt {
+  color: var(--ent-ink-4);
+  font-size: 11.5px;
+}
+.cap-kv dd {
+  margin: 3px 0 0;
+  color: var(--ent-ink);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+/* 组件状态：一张大表，一行一组件；状态按健康度着色（绿=正常 / 红=未接入·低电量） */
+.comp-table th:first-child {
+  width: 70%;
+}
+.comp-table .comp-status {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.comp-table .comp-status.ok {
+  background: #e6f4ee;
+  color: #30876a;
+}
+.comp-table .comp-status.bad {
+  background: #fbe9e9;
+  color: #c84a4a;
+}
+/* 面板内小标题：把子块从上一块里分出来 */
+.cap-sub {
+  margin: 16px 0 10px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--ent-line);
+  color: var(--ent-ink-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+/* 窄屏（投影 / 分屏）退回单列，避免两列被压得过扁 */
+@media (max-width: 1180px) {
+  .cap-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

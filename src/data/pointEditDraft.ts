@@ -1,16 +1,26 @@
 /**
  * @file pointEditDraft.ts
- * @description 「添加 / 编辑巡检点」与「添加 / 编辑巡检项」（内置页）之间的**会话草稿**：
- *              两页共用同一组 `useViewState` 键（sessionStorage），
- *              跳去巡检项内置页再返回时，巡检点表单（名称 / 地图 / 定位点 / 巡检项）不丢。
- * @interaction pages/PointEdit.tsx、pages/InspectItemEdit.tsx
+ * @description 「巡检点详情」（新增 / 编辑巡检点合并页）的**会话草稿**：
+ *              表单与巡检项都走同一组 `useViewState` 键（sessionStorage），
+ *              刷新或切页回来时名称 / 地图 / 坐标 / 巡检项不丢。
+ * @interaction pages/PointEdit.tsx
  */
 
 /** 会话草稿键前缀（`useViewState` 内部会补 "view:" 前缀，清理时需带上） */
 export const pointDraftKey = (id?: string) => `pe.${id || "new"}`;
 
-/** 一次巡检点编辑会话用到的全部键后缀 */
-const SUFFIXES = [".name", ".map", ".target", ".items", ".draft"] as const;
+/** 一次巡检点编辑会话用到的全部键后缀（点「保存」成功或「取消」时整组清掉） */
+const SUFFIXES = [
+  ".name",
+  ".map",
+  ".target",
+  ".items",
+  ".draft",
+  ".robot",
+  ".recAct",
+  ".picked",
+  ".poseSaved",
+] as const;
 
 /**
  * 清掉某次巡检点编辑会话的全部草稿

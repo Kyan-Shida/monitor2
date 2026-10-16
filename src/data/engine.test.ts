@@ -36,15 +36,18 @@ function dispatch(s: State, id: string) {
 // 2026-10-10：新增「资源与地图 › 空间 › 空间管理」页（全局坐标系配准 / 跨图拓扑）→ 41 → 42
 // 2026-10-14：空间管理菜单收起（页面与路由保留，`#/resources/space` 可直达）→ 42 → 41
 // 2026-10-14：「告警管理」升为一级目录，新增「告警类别」「告警设置」「告警推送」三页 → 41 → 44
-test("44 unique phase-one pages", () => {
-  assert.equal(pages.length, 44);
-  assert.equal(new Set(pages.map((p) => p.id)).size, 44);
+// 2026-10-15：「算法模板管理」并入「巡检要求管理」→ 合并为「后台管理 › 算法模板」一页 → 44 → 43
+// 2026-10-16：告警模板概念废止（告警项全部手填）→ 下线「告警模板管理」页 → 43 → 42
+test("42 unique phase-one pages", () => {
+  assert.equal(pages.length, 42);
+  assert.equal(new Set(pages.map((p) => p.id)).size, 42);
 });
 
-test("巡检要求管理：管理员可维护，需填齐判定口径", () => {
+test("算法模板：管理员可维护，需填齐编码与判定口径", () => {
   let s = seed();
   const base = {
     id: "",
+    code: "ALG-11",
     name: "看管道振动",
     kind: "声音判别" as const,
     description: "沿锚点声纹采样判别异常振动",
@@ -53,6 +56,8 @@ test("巡检要求管理：管理员可维护，需填齐判定口径", () => {
     detectKind: "声纹" as const,
     algorithm: "管道振动识别 v1.0",
     judge: "等级评分" as const,
+    deploy: "本体" as const,
+    state: "启用" as const,
     cycle: "每班",
   };
   // 非管理员被拦截
@@ -68,6 +73,15 @@ test("巡检要求管理：管理员可维护，需填齐判定口径", () => {
         requirement: { ...base, judge: "数值范围" },
       }),
     /单位|下限/,
+  );
+  // 编码被占用时拦截（seed 里已有 ALG-01）
+  assert.throws(
+    () =>
+      run(s, {
+        type: "SAVE_REQUIREMENT",
+        requirement: { ...base, code: "ALG-01" },
+      }),
+    /占用/,
   );
   // 管理员正常保存：自动生成 REQ- id 且版本为 1
   const next = run(s, { type: "SAVE_REQUIREMENT", requirement: base });
@@ -115,18 +129,44 @@ test("map import → annotation → sync → validation → publication", () => 
     requirement: "表盘清晰",
   });
   // 单级定版：只校验原始资料与点位齐备；状态按"当前版本是否已下发给机器"派生
-  // 新图还没有机器持有、也从未下发 → 未发布
+  // 新图还没有机器持有、也从未下发 → 未同步
   s = run(s, { type: "PUBLISH", id: m.id });
-  assert.equal(s.maps[0].state, "未发布");
+  assert.equal(s.maps[0].syncState, "未同步");
   s = sync(s, m.id, "R02");
-  // 下发给机器后即"下发到位"→ 已发布（不要求对方已完成激活）
-  assert.equal(s.maps[0].state, "已发布");
+  // 下发给机器后即"下发到位"→ 已同步（不要求对方已完成激活）
+  assert.equal(s.maps[0].syncState, "已同步");
   const p = s.points.at(-1)!;
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02", fail: true });
   assert.match(s.points.find(x => x.id === p.id)!.validationFailure!, /目标身份未确认/);
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02" });
   assert.equal(s.points.find(x => x.id === p.id)!.validationFailure, undefined);
   assert.equal(s.points.find(x => x.id === p.id)!.state, "已启用");
+});
+test("更新地图：重新上传 SLAM 底图 → 版本+1、回退未同步", () => {
+  let s = seed();
+  s = run(s, {
+    type: "IMPORT",
+    name: "测试地图",
+    file: "sample.map",
+    cloud: "cloud.pcd",
+    video: "video.mp4",
+  });
+  const m = s.maps[0];
+  const v0 = m.version;
+  // 重新上传底图（不传 cloud/video，保留既有点云资料）
+  s = run(s, {
+    type: "IMPORT",
+    id: m.id,
+    name: "测试地图V2",
+    file: "new.map",
+    image: "data:image/updated",
+  });
+  const u = s.maps.find((x) => x.id === m.id)!;
+  assert.equal(u.version, v0 + 1, "版本自增");
+  assert.equal(u.syncState, "未同步", "重新上传后需重新下发");
+  assert.equal(u.image, "data:image/updated", "底图被新上传覆盖");
+  assert.equal(u.name, "测试地图V2", "名称可随更新改写");
+  assert.equal(u.cloud, "cloud.pcd", "未提供的点云资料保留原值");
 });
 test("missing archive blocks publishing", () => {
   let s = seed();

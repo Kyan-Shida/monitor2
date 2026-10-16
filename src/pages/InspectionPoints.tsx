@@ -13,19 +13,19 @@
  *              （列表操作列**不再提供「详情」入口**，避免与编辑页重复）；
  *              巡检点统一到全局坐标系（`p.world`：X/Y/Z），列表筛选**不设地图维度**；
  *              从地图详情带 mapId 进入只用于预选「巡检点导入」的归属地图，不影响列表结果；
- *              筛选（区域 / 设备 / 状态 / 关键词）在「巡检点列表」面板头部；筛选值无效时回退「全部」；
- *              「区域」选项来自「后台管理 › 区域配置」主数据（`areaOptions`），
- *              点的区域按其覆盖设备的归属（`areaNameOf`）判定，无设备时回退该点所在地图区域
+ *              本页**不再挂左侧区域 › 设备树**：列表筛选走项目通用 `components/FilterPanel`
+ *              （巡检点名称 / 巡检项名称 / 关联设备 / 状态），「筛选」触发按钮与
+ *              「现场采集新增 / 批量导入」同排在「巡检点列表」面板头部**右侧**；
+ *              筛选值无效时回退「全部」；列内「区域」仍按其覆盖设备的归属（`areaNameOf`）判定，
+ *              无设备时回退该点所在地图区域
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { go, useViewState } from "../data/navigation";
+import { go, usePageSize, useViewState } from "../data/navigation";
 import { Badge, Btn, Empty, Modal, Note, Panel, Table } from "../components/UI";
 import { Pager } from "../components/Business";
 import { PointCalibration } from "../components/PointCalibration";
-import { GlobalMapOverview } from "../components/GlobalMapOverview";
-import { DeviceTree, deviceTreeRegions } from "../components/DeviceTree";
-import { targetsOf } from "../data/mapCalibration";
+import { FilterPanel } from "../components/FilterPanel";
 import {
   actionsOfPoint,
   areaNameOf,
@@ -34,38 +34,49 @@ import {
 } from "../data/deviceMaster";
 import type { Point } from "../data/types";
 
-/** 列表每页条数 */
-const PAGE_SIZE = 10;
 
 export function InspectionPoints({ id }: { id?: string }) {
   const { s, act } = useStore();
   /** 巡检点导入抽屉：先选数据来源机器人，再拉取 / 上传表格文件（与「地图管理」并列的第二个模块） */
   const [calOpen, SETCAL] = useState(false);
-  const [regionF0, REGION] = useViewState("ip.region", "全部"),
-    [devF0, DEV] = useViewState("ip.dev", "全部"),
-    [stateF0, ST] = useViewState("ip.state", "全部"),
-    [kw, KW] = useViewState("ip.q", ""),
-    [pager, PG] = useViewState("ip.page", 1),
-    /** 全局地图总览面板折叠态：会话内记住，避免每次进来都被大画布占满首屏 */
-    [ovOpen, SETOV] = useViewState("ip.overview.open", true);
-
+  /** 筛选面板展开态：展开时才显示 FilterPanel（触发按钮在「巡检点列表」面板头部） */
+  const [filterOpen, SETFILTEROPEN] = useState(false);
+  /** 筛选草稿：字段与 FilterPanel 的 fields 一一对应（点「查询」才写回生效值） */
+  const [draft, DRAFT] = useState({
+    name: "",
+    item: "",
+    dev: "全部",
+    state: "全部",
+  });
   /**
-   * 区域选项取自「后台管理 › 区域配置」的区域主数据（`areaOptions`：区域清单 ∪ 设备实际归属），
-   * 不再从地图数据反推——地图只是底图，不承担区域字典的职责。
+   * 列表筛选（生效值）：巡检点名称 / 巡检项名称 / 关联设备 / 状态。
+   * 视图键用 `ip.filter.*` 新前缀：老的 `ip.q` / `ip.state` 已被本页废弃，
+   * 若继续复用，sessionStorage 里的残留值会在没有对应控件的情况下把列表隐式筛空。
    */
-  const regions = ["全部", ...deviceTreeRegions(s)];
-  const deviceNames = ["全部", ...Array.from(new Set((s.devices || []).map((d) => d.name)))];
+  const [nameF, NAMEF] = useViewState("ip.filter.name", ""),
+    [itemF, ITEMF] = useViewState("ip.filter.item", ""),
+    [devF0, DEVF] = useViewState("ip.filter.dev", "全部"),
+    [stateF0, ST] = useViewState("ip.filter.state", "全部"),
+    [pager, PG] = useViewState("ip.page", 1),
+    /** 每页条数：全站统一走 usePageSize（默认 5 条） */
+    [pageSize, SETPAGESIZE] = usePageSize("ip.size");
+
   /** 巡检点状态只有两态：已启用 / 停用（原「待验证 / 待重新验证」过渡态已下线，不再作为筛选维度） */
   const stateNames = ["全部", "已启用", "停用"];
+  /** 关联设备候选：设备台账里的设备名去重（本页已无区域树，直接取全量设备名） */
+  const devNames = [
+    "全部",
+    ...Array.from(new Set((s.devices || []).map((d) => d.name))),
+  ];
   /**
    * 筛选值兜底：筛选态存在 sessionStorage（`view:ip.*`），可能残留已不存在的选项
    * （如旧版本存过的状态值「待验证」）。无效值匹配不到任何 option 时，下拉只会显示
    * 第一项「全部」，过滤却仍按它执行 → 列表被筛空。这里统一回退「全部」。
    */
-  const regionF = regions.includes(regionF0) ? regionF0 : "全部";
-  const devF = deviceNames.includes(devF0) ? devF0 : "全部";
   const stateF = stateNames.includes(stateF0) ? stateF0 : "全部";
-  const keyword = kw.trim();
+  const devF = devNames.includes(devF0) ? devF0 : "全部";
+  const nameKw = nameF.trim();
+  const itemKw = itemF.trim();
   /**
    * 巡检点所属区域：按**覆盖设备**的区域归属（与「后台管理 › 设备台账」同一口径 `areaNameOf`）；
    * 一个点覆盖多个区域时返回多个；无设备主数据时回退该点所在地图的区域，避免历史数据丢区域。
@@ -83,52 +94,53 @@ export function InspectionPoints({ id }: { id?: string }) {
     return m?.region ? [m.region] : [];
   };
   const list = s.points.filter((p) => {
-    if (regionF !== "全部" && !areasOfPoint(p).includes(regionF)) return false;
     if (stateF !== "全部" && p.state !== stateF) return false;
     const devs = devicesOfPoint(s, p);
     if (devF !== "全部" && !devs.some((d) => d.name === devF)) return false;
-    // 巡检点来自独立标定数据（与地图分开放）
-    const mp = targetsOf(s, p.mapId).find((t) => t.id === p.targetId);
-    const text =
-      p.id +
-      p.name +
-      (mp?.externalId || "") +
-      (p.inspectItems || []).map((sp) => sp.name).join("") +
-      devs.map((d) => d.name).join("");
-    return !keyword || text.includes(keyword);
+    if (nameKw && !p.name.includes(nameKw)) return false;
+    if (
+      itemKw &&
+      !(p.inspectItems || []).some((sp) => (sp.name || "").includes(itemKw))
+    )
+      return false;
+    return true;
   });
-  const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(list.length / pageSize));
   const cur = Math.min(pager || 1, pages);
-  const rows = list.slice((cur - 1) * PAGE_SIZE, cur * PAGE_SIZE);
+  const rows = list.slice((cur - 1) * pageSize, cur * pageSize);
   const specCount = s.points.reduce(
     (n, p) => n + (p.inspectItems?.length || 0),
     0,
   );
-  /** 树选中值 ← 页面筛选（设备优先于区域），保证树高亮与列表口径一致 */
-  const treeSel =
-    devF !== "全部"
-      ? "d:" + ((s.devices || []).find((d) => d.name === devF)?.id || "")
-      : regionF !== "全部"
-        ? "r:" + regionF
-        : "";
-  /**
-   * 树选中 → 页面筛选
-   * @description 区域与设备是同一组筛选维度（区域决定设备候选），故一次写两个：
-   *              点区域 = 该区域下全部设备；点设备 = 该设备所属区域 + 单台设备
-   * @param next 树选中值
-   */
-  function onTree(next: string) {
-    if (next.startsWith("d:")) {
-      const d = (s.devices || []).find((x) => x.id === next.slice(2));
-      REGION(d ? areaNameOf(s, d) : "全部");
-      DEV(d?.name || "全部");
-    } else if (next.startsWith("r:")) {
-      REGION(next.slice(2));
-      DEV("全部");
-    } else {
-      REGION("全部");
-      DEV("全部");
-    }
+  /** 已生效的筛选条件数（「筛选」按钮上的计数） */
+  const filterCount =
+    (nameKw ? 1 : 0) +
+    (itemKw ? 1 : 0) +
+    (devF !== "全部" ? 1 : 0) +
+    (stateF !== "全部" ? 1 : 0);
+  /** 展开筛选面板：用当前生效值填充草稿（草稿值用未兜底的原始值，避免丢用户填的内容） */
+  function toggleFilter() {
+    if (!filterOpen)
+      DRAFT({ name: nameF, item: itemF, dev: devF0, state: stateF0 });
+    SETFILTEROPEN(!filterOpen);
+  }
+  /** 查询：草稿写回生效值、回到第 1 页并收起面板 */
+  function applyFilter() {
+    NAMEF(draft.name);
+    ITEMF(draft.item);
+    DEVF(draft.dev);
+    ST(draft.state);
+    PG(1);
+    SETFILTEROPEN(false);
+  }
+  /** 重置：草稿与生效值一起清空，立即生效（不再要求再点一次「查询」） */
+  function resetFilter() {
+    const empty = { name: "", item: "", dev: "全部", state: "全部" };
+    DRAFT(empty);
+    NAMEF(empty.name);
+    ITEMF(empty.item);
+    DEVF(empty.dev);
+    ST(empty.state);
     PG(1);
   }
 
@@ -156,64 +168,53 @@ export function InspectionPoints({ id }: { id?: string }) {
         </Note>
       )}
       <div className="device-layout">
-        {/* 左侧区域 › 设备树：与设备台账同一棵树，选中即落到页面既有的区域 / 设备筛选维度 */}
-        <DeviceTree value={treeSel} onChange={onTree} ariaLabel="巡检点树" />
         <div className="device-main">
-          <div className="toolbar" style={{ justifyContent: "flex-end" }}>
-            <div className="actions">
-              <Btn primary onClick={() => go("point-onsite")}>
-                现场采集新增
-              </Btn>
-              <Btn onClick={() => SETCAL(true)}>
-                批量导入
-              </Btn>
-            </div>
-          </div>
-          <Panel
-            title="全局地图总览"
-            extra={
-              <div className="actions">
-                <Btn
-                  onClick={() => SETOV((v) => !v)}
-                  title={ovOpen ? "收起总览画布" : "展开总览画布"}
-                >
-                  {ovOpen ? "收起" : "展开"}
-                </Btn>
-              </div>
-            }
-          >
-            {/* 总览画布展示的是**全厂所有巡检点**在统一坐标系下的位置，不随列表筛选收敛 */}
-            {ovOpen && <GlobalMapOverview points={s.points} />}
-          </Panel>
           <Panel
             className="panel-filters-wrap"
             title="巡检点列表"
             extra={
-              <div className="actions">
-                <label className="inline-filter">
-                  <span>状态：</span>
-                  <select value={stateF} onChange={(e) => ST(e.target.value)}>
-                    {stateNames.map((x) => (
-                      <option key={x}>{x}</option>
-                    ))}
-                  </select>
-                </label>
-                <input
-                  placeholder="搜索巡检点名称 / 定位ID / 巡检项 / 设备"
-                  value={kw}
-                  onChange={(e) => KW(e.target.value)}
-                />
-                <span>{list.length} 条</span>
+              <div className="actions" style={{ justifyContent: "flex-end" }}>
+                {/* 关键词搜索并入「筛选」面板：巡检点名称 / 巡检项名称 / 关联设备 / 状态 */}
+                <Btn onClick={toggleFilter}>
+                  {filterOpen ? "收起筛选" : "筛选"}
+                  {filterCount ? `（${filterCount}）` : ""}
+                </Btn>
+                <Btn primary onClick={() => go("point-onsite")}>
+                  现场采集新增
+                </Btn>
+                <Btn onClick={() => SETCAL(true)}>批量导入</Btn>
               </div>
             }
           >
+            {filterOpen && (
+              <FilterPanel
+                fields={[
+                  {
+                    key: "name",
+                    label: "巡检点名称",
+                    placeholder: "名称关键字",
+                  },
+                  {
+                    key: "item",
+                    label: "巡检项名称",
+                    placeholder: "巡检项关键字",
+                  },
+                  { key: "dev", label: "关联设备", options: devNames },
+                  { key: "state", label: "状态", options: stateNames },
+                ]}
+                value={draft}
+                onChange={(next) => DRAFT({ ...draft, ...next })}
+                onSearch={applyFilter}
+                onReset={resetFilter}
+              />
+            )}
             <Table
               heads={[
                 "巡检点名称",
                 "统一坐标（米）",
                 "区域",
                 "巡检项名称",
-                "操作内容",
+                "ID 点",
                 "覆盖设备",
                 "状态",
                 "操作",
@@ -227,7 +228,7 @@ export function InspectionPoints({ id }: { id?: string }) {
                   w ? `X ${w.x} · Y ${w.y} · Z ${w.z}` : "未写入统一坐标",
                   areasOfPoint(p).join(" / ") || "—",
                   specs.map((sp) => sp.name).join(" / ") || "—",
-                  actionsOfPoint(s, p).join(" / ") || "—",
+                  p.id,
                   devs.map((d) => d.name).join(" / ") || "—",
                   <Badge tone={p.state === "已启用" ? "green" : "amber"}>{p.state}</Badge>,
                   <div className="actions">
@@ -248,7 +249,16 @@ export function InspectionPoints({ id }: { id?: string }) {
                 没有符合条件的巡检点，点「巡检点导入」绑定标定点并配置巡检项。
               </Empty>
             )}
-            <Pager page={cur} count={list.length} size={PAGE_SIZE} onChange={PG} />
+            <Pager
+              page={cur}
+              count={list.length}
+              size={pageSize}
+              onChange={PG}
+              onSize={(n) => {
+                SETPAGESIZE(n);
+                PG(1);
+              }}
+            />
           </Panel>
         </div>
       </div>

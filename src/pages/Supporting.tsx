@@ -2,9 +2,10 @@
 import { rulesOf } from "../data/alarmRules";
 import { SystemAlarmParameters } from "../components/SystemAlarmParameters";
 import { ObjectLink, Pager } from "../components/Business";
+import { FilterPanel } from "../components/FilterPanel";
 import { useState } from "react";
 import { useStore } from "../data/store";
-import { go, pages, useViewState } from "../data/navigation";
+import { go, pages, usePageSize, useViewState } from "../data/navigation";
 import {
   Btn,
   Badge,
@@ -29,6 +30,45 @@ export function Supporting({ page }: { page: string }) {
     [pMap, PM] = useViewState("supporting.points.map", "全部"),
     [pState, PS] = useViewState("supporting.points.state", "全部"),
     [pPage, PP] = useViewState("supporting.points.page", 1);
+  // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
+  const [pSize, SETPSIZE] = usePageSize("supporting.points.size");
+  /** 巡检点列表筛选：展开态 + 草稿条件（点「查询」才写回生效值，与设备台账同款） */
+  const [pFilterOpen, SETPFILTEROPEN] = useState(false);
+  const [pDraft, PDRAFT] = useState({
+    dev: pDev,
+    map: pMap,
+    state: pState,
+    q,
+  });
+  /** 已生效的筛选条件数（「筛选」按钮上的计数） */
+  const pFilterCount =
+    (pDev !== "全部" ? 1 : 0) +
+    (pMap !== "全部" ? 1 : 0) +
+    (pState !== "全部" ? 1 : 0) +
+    (q.trim() ? 1 : 0);
+  /** 展开筛选面板：用当前生效值填充草稿 */
+  function togglePointFilter() {
+    if (!pFilterOpen) PDRAFT({ dev: pDev, map: pMap, state: pState, q });
+    SETPFILTEROPEN(!pFilterOpen);
+  }
+  /** 查询：草稿写回生效值并收起面板（列表回到第 1 页） */
+  function applyPointFilter() {
+    PD(pDraft.dev);
+    PM(pDraft.map);
+    PS(pDraft.state);
+    Q(pDraft.q);
+    PP(1);
+    SETPFILTEROPEN(false);
+  }
+  /** 重置：清空草稿并立即生效 */
+  function resetPointFilter() {
+    PDRAFT({ dev: "全部", map: "全部", state: "全部", q: "" });
+    PD("全部");
+    PM("全部");
+    PS("全部");
+    Q("");
+    PP(1);
+  }
   /** 点位明细表列头：巡检点列表与设备「对象与检测项」弹窗共用（已去掉无数据来源的「必检」列） */
   const POINT_HEADS = [
     "业务点位",
@@ -172,8 +212,7 @@ export function Supporting({ page }: { page: string }) {
       if (pState !== "全部" && p.state !== pState) return false;
       return true;
     });
-    const size = 10;
-    const pages = Math.max(1, Math.ceil(list.length / size));
+    const pages = Math.max(1, Math.ceil(list.length / pSize));
     const cur = Math.min(pPage, pages);
     return (
       <Panel
@@ -181,67 +220,49 @@ export function Supporting({ page }: { page: string }) {
         title="业务巡检点与版本"
         extra={
           <div className="actions">
-            <label className="inline-filter">
-              <span>设备：</span>
-              <select
-                value={pDev}
-                onChange={(e) => {
-                  PD(e.target.value);
-                  PP(1);
-                }}
-              >
-                {deviceOpts.map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-filter">
-              <span>地图：</span>
-              <select
-                value={pMap}
-                onChange={(e) => {
-                  PM(e.target.value);
-                  PP(1);
-                }}
-              >
-                {mapOpts.map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-filter">
-              <span>状态：</span>
-              <select
-                value={pState}
-                onChange={(e) => {
-                  PS(e.target.value);
-                  PP(1);
-                }}
-              >
-                {stateOpts.map((o) => (
-                  <option key={o}>{o}</option>
-                ))}
-              </select>
-            </label>
-            <input
-              placeholder="搜索点位名称 / 编号 / 检测项"
-              value={q}
-              onChange={(e) => {
-                Q(e.target.value);
-                PP(1);
-              }}
-            />
+            {/* 筛选：设备 / 地图 / 状态 / 关键词都收进筛选面板，默认收起（与设备台账同款） */}
+            <Btn onClick={togglePointFilter}>
+              {pFilterOpen ? "收起筛选" : "筛选"}
+              {pFilterCount ? `（${pFilterCount}）` : ""}
+            </Btn>
             <Btn primary onClick={() => go("annotation")}>
               巡检点管理
             </Btn>
           </div>
         }
       >
+        {pFilterOpen && (
+          <FilterPanel
+            fields={[
+              { key: "dev", label: "关联设备", options: deviceOpts },
+              { key: "map", label: "来源地图", options: mapOpts },
+              { key: "state", label: "状态", options: stateOpts },
+              {
+                key: "q",
+                label: "搜索点位",
+                placeholder: "名称 / 编号 / 检测项",
+              },
+            ]}
+            value={pDraft}
+            onChange={(next) => PDRAFT({ ...pDraft, ...next })}
+            onSearch={applyPointFilter}
+            onReset={resetPointFilter}
+          />
+        )}
         <Table
           heads={POINT_HEADS}
-          rows={pointRows(list.slice((cur - 1) * size, cur * size))}
+          rows={pointRows(list.slice((cur - 1) * pSize, cur * pSize))}
         />
-        <Pager page={cur} count={list.length} size={size} onChange={PP} />
+        <Pager
+          page={cur}
+          count={list.length}
+          size={pSize}
+          onChange={PP}
+          onSize={(n) => {
+            SETPSIZE(n);
+            PP(1);
+          }}
+        />
         {rulePoint && (
           <Modal
             title={`当前生效的判定与告警规则 · ${s.points.find((p) => p.id === rulePoint)?.name}`}
@@ -482,7 +503,7 @@ export function Supporting({ page }: { page: string }) {
           />
           {page === "roles" && (
             <Note>
-              权限配置为原型演示数据。当前演示账号为巡检管理员，具备地图发布、任务调度、遥控、结果复核和告警关闭权限。
+              权限配置为原型演示数据。当前演示账号为巡检管理员，具备地图发布、任务调度、遥控和告警关闭权限。
             </Note>
           )}
           {page === "services" && (

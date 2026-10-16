@@ -67,15 +67,25 @@ export const Panel = ({
     <div className="panel-body">{children}</div>
   </section>
 );
+/**
+ * 表单字段
+ * @param required 必填项：标签后追加红色星号标识
+ */
 export const Field = ({
   label,
+  required = false,
   children,
 }: {
   label: string;
+  /** 必填：标签后加红星标识 */
+  required?: boolean;
   children: ReactNode;
 }) => (
   <label className="field">
-    <span>{label}</span>
+    <span>
+      {label}
+      {required && <em className="req">*</em>}
+    </span>
     {children}
   </label>
 );

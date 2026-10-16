@@ -15,6 +15,8 @@ export const groups = [
   ["工作台", "workbench:速览"],
   [
     "巡检执行",
+    // 2026-10-16：本一级中心已按产品要求从侧边栏收起（组内页面全部标记 hidden，见 hiddenIds）；
+    // 页面、路由与权限保留，仍可由工作台「执行中任务」、调度台「监控」、机器人详情等入口进入
     "execution:实时执行监控::执行",
     // 人工接管与遥控属"执行"动作（现场接管机器人继续任务），故归入「巡检执行 › 执行」
     "manual:人工操作与遥控::执行",
@@ -36,11 +38,9 @@ export const groups = [
     "告警管理",
     // 原「结果与异常 › 告警管理」升为一级目录：告警记录（事件） / 告警类别（分类主数据） / 告警设置（台账告警规则）
     "alarms:告警记录",
-    "alarm-classes:告警分类",
+   
     "alarm-settings:告警设置",
-    // 告警模板管理：告警触发逻辑（模板 = 触发条件 + 处理流程）的唯一维护入口；
-    // 原属「后台管理」，按产品要求移到告警管理目录下（与告警设置同域：都是告警判定口径）
-    "alarm-templates:告警模板",
+     "alarm-classes:告警分类",
     // 告警推送：预留子目录，先做「推送人员名单」维护
     "alarm-push:推送设置",
     "alarm:告警详情 / 处理",
@@ -64,17 +64,7 @@ export const groups = [
     // 全局↔局部坐标转换、地图拓扑与跨图切换点、版本绑定与校验
     // "space:空间管理::空间",
   ],
-  [
-    "后台管理",
-    "admin:工厂基础数据",
-    // 算法模板管理：平台 AI 能力（算法）清单的唯一维护入口；被目标台账 / 巡检要求按名称引用
-    "algo-templates:算法模板管理",
-    // 巡检要求管理：平台「看什么、怎么判」的标准表达（模板库）的唯一维护入口，
-    // 巡检目标台账 = 仪表 / 区域 + 一条巡检要求 + 算法 + 阈值 + 判定；被台账按目标类型与采集方式匹配引用
-    "requirements:巡检要求管理",
-    // 机器人能力（两级：能力类型 → 能力参数）：巡检项能力项的候选来源
-    "payloads:机器人能力",
-  ],
+
   [
     "机器人管理",
     // ROB-03：「机器人管理」收口为「机器台账」单一菜单入口 ——
@@ -91,8 +81,17 @@ export const groups = [
     "metrics:分析报表",
     "analytics:基础分析",
     // 巡检结果（按任务 / 巡检点查询）与巡检结果报表同属「巡检报表」目录
-    "results:巡检结果::巡检报表",
-    "report:巡检结果报表::巡检报表",
+    "results:任务结果::巡检报表",
+    "report:巡检报表::巡检报表",
+  ],
+    [
+    "后台管理",
+    "admin:工厂基础数据",
+    // 算法模板（原「算法模板管理」+「巡检要求管理」合并）：平台维护
+    //「看什么 / 怎么采 / 拿什么算 / 怎么判」的唯一入口；台账选一条模板即带出算法与判定口径
+    "requirements:算法模板",
+    // 机器人能力（两级：能力类型 → 能力参数）：巡检项能力项的候选来源
+    "payloads:机器人能力",
   ],
   [
     "系统设置",
@@ -129,6 +128,10 @@ const hiddenIds = [
   "archive",
   // EXE-03：人工接管与遥控降为「实时执行监控」的内置页（从现场态势 / 机器人详情进入）；路由保留，仅隐藏菜单
   "manual",
+  // 2026-10-16：实时执行监控同样收起菜单入口 —— 本页是「巡检执行」一级中心下
+  // 最后一个可见页面，隐藏后整组不再出现在侧边栏（组内无可见页面即整组不渲染）；
+  // 页面与路由保留，仍可由工作台「执行中任务」、调度台「监控」、机器人详情等入口进入
+  "execution",
   // ROB-03：运行监测 / 新增机器人 / 机器人能力 降为「机器台账」的内置页
   // （分别由台账行「机器人名」、顶部「＋ 新增机器人」按钮、行「能力摘要」进入）；路由保留，仅隐藏菜单
   "robot",
@@ -163,11 +166,11 @@ const paths: Record<string, string> = {
   manual: "execution/manual",
   device: "robots/device",
   equipment: "resources/equipment",
+  /** 设备巡检目标（内置页）：设备台账行内「巡检目标」进入，按设备维护检测项 */
+  "device-targets": "resources/equipment/targets",
   /** 后台管理：工厂已有基础数据（区域 / 设备 / 仪表）配置 */
   admin: "admin",
-  /** 后台管理：算法模板管理（AI 能力清单；target 台账按名称引用） */
-  "algo-templates": "admin/algo-templates",
-  /** 后台管理：巡检要求管理（平台「看什么、怎么判」的标准表达，台账按目标类型与采集方式匹配引用） */
+  /** 后台管理：算法模板（模板库；台账按目标类型与采集方式匹配引用） */
   requirements: "admin/requirements",
   /** 后台管理：机器人能力（两级清单：能力类型 → 能力参数） */
   payloads: "admin/payloads",
@@ -182,11 +185,13 @@ const paths: Record<string, string> = {
   "point-annotate": "resources/points/annotate",
   /** 巡检目标台账 › 添加 / 编辑（内置页）：台账设置弹窗装不下，改为独立页面 */
   "business-target-edit": "resources/points/target-edit",
-  /** 巡检项编辑（内置页）：由「添加 / 编辑巡检点」页进入 */
-  "inspect-item-edit": "resources/points/item-edit",
   /** 巡检点管理（菜单页）：已配置巡检点列表 + 添加巡检点 */
   annotation: "resources/annotation",
   templates: "resources/templates",
+  /** 巡检路线编辑（内置页）：由路线列表「新建 / 编辑」进入，页面自带表单 + 巡检点选择 + 地图画线 */
+  "route-edit": "resources/templates/edit",
+  /** 路线导航（内置页）：由路线列表「导航」进入，挂在「巡检路线」下，不切到地图管理目录 */
+  "route-navigate": "resources/templates/navigate",
   plans: "planning/plans",
   "plan-edit": "planning/plan-edit",
   tasks: "planning/tasks",
@@ -217,9 +222,7 @@ const paths: Record<string, string> = {
   "alarm-classes": "alarms/classes",
   /** 告警设置：一个台账一个告警设置（可含多个告警项），与巡检目标台账同一份数据 */
   "alarm-settings": "alarms/settings",
-  /** 告警模板管理：触发条件 + 处理流程（原属「后台管理」，移到告警管理目录下） */
-  "alarm-templates": "alarms/templates",
-  /** 告警推送：告警按等级 + 区域 / 属地 / 设备范围推送给对应人员的名单 */
+  /** 告警推送：告警按等级 + 区域 / 设备范围推送给对应人员的名单 */
   "alarm-push": "alarms/push",
   alarm: "alarms/detail",
   metrics: "analytics/metrics",
@@ -264,13 +267,14 @@ const parents: Record<string, string> = {
    *  ③ 「返回」按钮回到设备台账（而非置灰）。
    */
   archive: "equipment",
+  /** 设备巡检目标（内置页）：与设备档案同为「设备台账」的行内入口，归属同一父级 */
+  "device-targets": "equipment",
   /** 添加 / 编辑巡检点、现场采集新增、地图标注工作台、巡检点详情都归属「巡检点管理」 */
   "point-edit": "annotation",
   "point-onsite": "annotation",
   "point-annotate": "annotation",
-  /** 台账编辑内置页归属「巡检目标台账」；巡检项编辑内置页从巡检点编辑页进入 */
+  /** 台账编辑内置页归属「巡检目标台账」 */
   "business-target-edit": "points",
-  "inspect-item-edit": "point-edit",
   "plan-edit": "plans",
   review: "results",
   "result-detail": "archive",
@@ -281,6 +285,9 @@ const parents: Record<string, string> = {
   /** 巡检点详情：归属「巡检点管理」（原挂在已下线的「巡检点列表」内置页下） */
   point: "annotation",
   "task-detail": "tasks",
+  /** 巡检路线编辑 / 路线导航：都挂在「巡检路线」列表下（返回即回列表） */
+  "route-edit": "templates",
+  "route-navigate": "templates",
 };
 /**
  * 取页面的上级页面 ID
@@ -313,7 +320,7 @@ const isLeaf = (id: string) =>
   visiblePages.some((p) => p.id === id && !p.parent);
 /**
  * 取侧边栏应高亮的页面 ID
- * 详情页 / 内置子页（任务详情、巡检点详情、告警详情、结果复核…）不在侧边栏叶子中，
+ * 详情页 / 内置子页（任务详情、巡检点详情、告警详情…）不在侧边栏叶子中，
  * 逐级回落到其列表父页，保证打开这些页面时侧边栏仍保持高亮，不会丢失选中态
  * @param page 当前页面 ID
  * @returns 侧边栏叶子页面 ID；无可用父级时返回原页面 ID
@@ -348,14 +355,6 @@ export const routeMeta = [
     parent: "points",
   },
   {
-    // 巡检项编辑（内置页）：从「添加 / 编辑巡检点」页的巡检项列表进入（原弹窗改为整页）
-    ...pages.find((x) => x.id === "annotation")!,
-    id: "inspect-item-edit",
-    name: "添加 / 编辑巡检项",
-    path: paths["inspect-item-edit"],
-    parent: "point-edit",
-  },
-  {
     // 现场采集（跑图）新增巡检点（内置页）：巡检点新增的唯一入口，从「巡检点管理」工具条进入
     ...pages.find((x) => x.id === "annotation")!,
     id: "point-onsite",
@@ -384,6 +383,22 @@ export const routeMeta = [
     name: "任务详情",
     path: paths["task-detail"],
     parent: "tasks",
+  },
+  {
+    // 巡检路线编辑（内置页）：原为列表内的弹窗，2026-10-16 改为内置页（左表单 + 右地图画线）
+    ...pages.find((x) => x.id === "templates")!,
+    id: "route-edit",
+    name: "编辑巡检路线",
+    path: paths["route-edit"],
+    parent: "templates",
+  },
+  {
+    // 路线导航（内置页）：复用地图导航页，但归属「巡检路线」，不切到地图管理目录
+    ...pages.find((x) => x.id === "templates")!,
+    id: "route-navigate",
+    name: "路线导航",
+    path: paths["route-navigate"],
+    parent: "templates",
   },
   {
     // 单任务现场态势（内置页）：由「实时执行监控」执行总览行内「监控」进入
@@ -418,6 +433,14 @@ export const routeMeta = [
     parent: "archive",
   },
   {
+    // 设备巡检目标内置页：无侧边栏入口，挂在设备台账目录下，由台账行内「巡检目标」进入（原抽屉改为整页）
+    ...pages.find((x) => x.id === "equipment")!,
+    id: "device-targets",
+    name: "设备巡检目标",
+    path: paths["device-targets"],
+    parent: "equipment",
+  },
+  {
     // 巡检结果详情内置页：无侧边栏入口，挂在「巡检结果」下（入口为结果查询任务行「详情」）
     ...pages.find((x) => x.id === "results")!,
     id: "result-view",
@@ -434,7 +457,7 @@ export const routeMeta = [
     parent: "maps",
   },
   {
-    // 地图标定工作台（内置页）：无侧边栏入口，由地图卡片「编辑」进入
+    // 地图标定工作台（内置页）：无侧边栏入口（地图卡片上的「编辑」入口已下线）
     ...pages.find((x) => x.id === "maps")!,
     id: "map-calibrate",
     name: "地图标定工作台",
@@ -442,7 +465,7 @@ export const routeMeta = [
     parent: "maps",
   },
   {
-    // 地图导航实时监控页（内置页）：无侧边栏入口，由地图卡片「导航」进入
+    // 地图导航实时监控页（内置页）：无侧边栏入口，由「巡检路线」列表的行内「导航」进入
     ...pages.find((x) => x.id === "maps")!,
     id: "map-navigate",
     name: "地图导航",
@@ -574,8 +597,9 @@ export function parentTargetOf(page: string): string | undefined {
   return "workbench";
 }
 /**
- * 返回操作：沿导航目录逐级向上，不依赖点击历史
- * @description 内置页 → 二级列表页（终点）；驾驶舱 → 工作台
+ * 返回操作：优先回到「来时的页面」，无轨迹时沿导航目录逐级向上
+ * @description 详情页 → 显式来源页（from）→ 应用内访问轨迹 → 目录父级；
+ *              轨迹让「列表 → 内置页」返回时落回进入前的页面（含其筛选 / 选中态）
  */
 export function back() {
   const r = parse();
@@ -584,12 +608,59 @@ export function back() {
     go(r.from.page, r.from.id);
     return;
   }
+  // 其次回到来时的页面（应用内轨迹）
+  const prev = trail.pop();
+  if (prev && prev !== location.hash) {
+    location.hash = prev;
+    return;
+  }
+  // 兜底：按导航目录层级向上（刷新后无轨迹，或来处即当前页时）
   const target = parentTargetOf(r.page);
   if (target) go(target);
 }
 export function goCenter(page: string) {
   location.hash = href(page);
 }
+/** 应用内访问轨迹：每次跳转前压入上一页 hash，供「返回」回到来时的页面 */
+const trail: string[] = [];
+let lastHash = "";
+/**
+ * 初始化访问轨迹（在应用外壳挂载时调用一次）
+ * @description 只记录形如 `#/xxx` 的应用内页面，最多留最近 50 步；
+ *              刷新后轨迹清空，此时「返回」回落到按导航目录逐级向上
+ * @returns 解绑函数
+ */
+export function initTrail() {
+  lastHash = location.hash;
+  const onHash = () => {
+    const next = location.hash;
+    if (lastHash.startsWith("#/") && next !== lastHash) {
+      trail.push(lastHash);
+      if (trail.length > 50) trail.splice(0, trail.length - 50);
+    }
+    lastHash = next;
+  };
+  window.addEventListener("hashchange", onHash);
+  return () => window.removeEventListener("hashchange", onHash);
+}
+/**
+ * 来时的页面 ID（轨迹栈顶）：无轨迹时返回空串
+ * @description 供顶栏返回按钮判断「能否返回」并展示返回目标名
+ */
+export function backTrailPage(): string {
+  const h = trail.length ? trail[trail.length - 1] : "";
+  return h ? parse(h).page : "";
+}
+/**
+ * 列表「每页条数」的会话状态（全站列表页共用，默认 5 条）
+ * @description 与 `Pager` 组件配套：`size` 传本值、`onSize` 传本 setter
+ * @param key 视图状态键（各页面唯一，如 "maps.size"）
+ * @param initial 初始条数
+ * @returns [每页条数, 设置函数]
+ */
+export const usePageSize = (key: string, initial = 5) =>
+  useViewState<number>(key, initial);
+
 export function useViewState<T>(
   key: string,
   fallback: T,
