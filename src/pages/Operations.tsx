@@ -119,6 +119,8 @@ export function Operations({
           )}
           <Table
             heads={[
+              "机器人编码",
+              "机器人编号（SN）",
               "机器名称",
               "当前状态",
               "电量",
@@ -126,6 +128,8 @@ export function Operations({
               "操作",
             ]}
             rows={rows.slice((pn - 1) * pageSize, pn * pageSize).map((r) => [
+              r.id,
+              r.sn || <span className="muted">—</span>,
               <ObjectLink type="robot" id={r.id}>
                 {r.name}
               </ObjectLink>,
@@ -707,6 +711,7 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
       <Panel className="cap-span2" title="机型与硬件">
         <Note>{profile.summary}</Note>
         <dl className="cap-kv">
+          {kv("机器人编号（SN）", r.sn || "—")}
           {kv("机型", r.deviceType)}
           {kv("所属区域", r.region || "未分配区域")}
           {kv("固件版本", r.firmware)}

@@ -99,10 +99,9 @@ export const groups = [
 
     "roles:角色 / 权限::组织权限",
     "users:组织 / 用户::组织权限",
-    "audit:审计日志::组织权限",
-    "integration:上层任务服务 / 接口配置::系统与集成",
-    "interface-log:接口日志::系统与集成",
-    "settings:字典 / 参数::系统与集成",
+    "audit:日志中心::系统与集成",
+    "settings:参数配置中心::系统与集成",
+    "tenants:租户管理::租户配置",
   ],
 ];
 /**
@@ -228,11 +227,11 @@ const paths: Record<string, string> = {
   metrics: "analytics/metrics",
   analytics: "analytics/overview",
   report: "analytics/report",
-  integration: "integration/services",
-  "interface-log": "integration/logs",
   users: "system/users",
   roles: "system/roles",
   settings: "system/settings",
+  /** 租户管理：平台级租户清单（名称 / 编码 / 启用停用），停用后顶部切换器不可选 */
+  tenants: "system/tenants",
   audit: "system/audit",
   point: "resources/points/detail",
   "task-detail": "planning/tasks/detail",

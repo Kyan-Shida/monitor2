@@ -1,7 +1,16 @@
 import { useContext, useState, useEffect, useRef, type ReactNode } from "react";
 import { StoreContext as C } from "./storeContext";
 import { advanceAutomation } from "./automation";
-import { seed, TENANTS } from "./seed";
+import { seed } from "./seed";
+import { loadTenants, saveTenants, tenantEnabled } from "./tenants";
+import {
+  authenticate,
+  clearSession,
+  isSuper,
+  loadSession,
+  saveSession,
+  type AuthAccount,
+} from "./auth";
 import { SAMPLE_MAP_IMAGE } from "./sampleMap";
 import { publishStateOf, transition, type Action } from "./engine";
 import { roleOf } from "./roles";
@@ -83,7 +92,7 @@ function keyOf(tid: string): string {
   return tid === DEFAULT_TENANT ? BASE_KEY : `${BASE_KEY}:${tid}`;
 }
 /** 当前数据模型版本，须与 types.ts 的 State.schema 一致 */
-const SCHEMA = 10;
+const SCHEMA = 12;
 /**
  * 老缓存升级：schema 1 → 2 时补齐接管/反馈等新增集合，
  * 并按序回填机型、约束、健康度、固件字段、已激活的地图版本号，
@@ -98,7 +107,7 @@ export function migrate(raw: unknown): State | null {
   if (!raw || typeof raw !== "object") return null;
   const old = raw as Record<string, any>;
   if (old.schema === SCHEMA) return old as State;
-  if ([1, 2, 3, 4, 5, 6, 7, 8, 9].includes(old.schema)) {
+  if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(old.schema)) {
     const base = seed();
     const merged = { ...base, ...old, schema: SCHEMA } as State;
     // 告警处理口径 6→7：老缓存的告警带废弃的 validity 且缺处理时间，整体改用 seed
@@ -126,6 +135,22 @@ export function migrate(raw: unknown): State | null {
       ...t,
       state: t.state === "停用" ? "停用" : "启用",
     }));
+    /**
+     * 10 → 11：参数条目新增「类型 / 数据字典键值对」。
+     * 老缓存里的参数缺 type 就从种子同 id 补，种子新条目（如 DIC01）也一并补进来
+     */
+    const oldExtras = (old.extras as any[]) || [];
+    merged.extras = [
+      ...oldExtras.map((x) => ({
+        ...base.extras.find((b) => b.id === x.id),
+        ...x,
+      })),
+      ...base.extras.filter((b) => !oldExtras.some((x) => x.id === b.id)),
+    ].map((x) => {
+      // 数据字典是系统口径（值来自状态枚举），升级时以种子为准，避免老缓存的旧枚举残留
+      const sys = base.extras.find((b) => b.id === x.id && b.type === "数据字典");
+      return sys || x;
+    });
     return merged;
   }
   return null;
@@ -599,16 +624,53 @@ function withSeedDefaults(s: State): State {
     maps: merged.maps.map((m) => ({ ...m, state: publishStateOf(merged, m) })),
   };
 }
+/**
+ * 会话可用性：租户管理员的租户被停用时视为未登录（需要重新选择账号）
+ * @returns 可用会话；无会话 / 会话失效返回 null
+ */
+function activeSession(): AuthAccount | null {
+  const acc = loadSession();
+  if (!acc) return null;
+  if (acc.level === "tenant") {
+    const t = loadTenants().find((x) => x.id === acc.tenantId);
+    if (!tenantEnabled(t)) {
+      clearSession();
+      return null;
+    }
+  }
+  return acc;
+}
+/**
+ * 登录落点租户：租户管理员固定所属租户；超级管理员沿用上次租户，失效则取第一个启用租户
+ * @param acc 登录账号
+ */
+function entryTenantId(acc: AuthAccount): string {
+  const tenants = loadTenants();
+  if (acc.level === "tenant") return acc.tenantId;
+  const last = getTenant();
+  return (
+    tenants.find((t) => t.id === last && t.status !== "停用")?.id ||
+    tenants.find((t) => t.status !== "停用")?.id ||
+    DEFAULT_TENANT
+  );
+}
 function initial() {
-  const tid = getTenant();
+  const acc = activeSession();
+  const tid = acc ? entryTenantId(acc) : getTenant();
   try {
     const raw = migrate(JSON.parse(localStorage.getItem(keyOf(tid)) || "null")) as State | null;
     const s = withSeedDefaults(raw || seed(tid));
-    if (!s.tenants) s.tenants = TENANTS;
+    // 租户清单是平台级数据：一律以独立存储为准（跨租户同一份），不跟随各租户缓存
+    s.tenants = loadTenants();
     if (!s.tenantId) s.tenantId = tid;
+    // 登录态以会话为准：避免沿用该租户缓存里上一次的角色
+    if (acc) s.roleId = acc.roleId;
     return s;
   } catch {
-    return seed(tid);
+    const s = seed(tid);
+    s.tenants = loadTenants();
+    if (acc) s.roleId = acc.roleId;
+    return s;
   }
 }
 /**
@@ -619,6 +681,8 @@ function initial() {
  */
 export function persist(n: State) {
   try {
+    // 租户清单是平台级数据：单独一份，不随租户缓存（新增 / 停用后切租户仍可见）
+    saveTenants(n.tenants || loadTenants());
     localStorage.setItem(keyOf(n.tenantId || DEFAULT_TENANT), JSON.stringify(n));
   } catch {
     /* 存储不可用：本次浏览改为纯内存态，刷新即回到初始演示数据 */
@@ -626,7 +690,9 @@ export function persist(n: State) {
 }
 export function Store({ children }: { children: ReactNode }) {
   const [s, set] = useState<State>(initial),
-    [message, msg] = useState("");
+    [message, msg] = useState(""),
+    /** 登录会话：null = 未登录，App 渲染登录页 */
+    [account, SETACCOUNT] = useState<AuthAccount | null>(activeSession);
   const latest = useRef(s);
   latest.current = s;
   useEffect(() => {
@@ -704,16 +770,86 @@ export function Store({ children }: { children: ReactNode }) {
     setTimeout(() => msg(""), 3000);
   }
   /**
+   * 登录：校验账号密码 → 锁定租户 → 整份载入该租户数据 → 落会话
+   * @description 租户管理员只能进入所属租户（租户停用则拒绝登录）；
+   *              登录时把 `roleId` 强制设为账号的权限档位，不沿用该租户缓存里的旧角色
+   * @param username 登录账号
+   * @param password 密码
+   * @returns 登录成功返回 true
+   */
+  function signIn(username: string, password: string) {
+    const acc = authenticate(username, password);
+    if (!acc) {
+      msg("账号或密码不正确");
+      setTimeout(() => msg(""), 3000);
+      return false;
+    }
+    const tenants = loadTenants();
+    const tid = entryTenantId(acc);
+    const tenant = tenants.find((t) => t.id === tid);
+    if (!tenantEnabled(tenant)) {
+      msg(`租户「${tenant?.name || tid}」已停用，请联系平台管理员`);
+      setTimeout(() => msg(""), 4000);
+      return false;
+    }
+    const n = withSeedDefaults(
+      migrate(JSON.parse(localStorage.getItem(keyOf(tid)) || "null")) ||
+        seed(tid, tenants),
+    );
+    n.tenants = tenants;
+    n.tenantId = tid;
+    n.roleId = acc.roleId;
+    saveSession(acc);
+    try {
+      localStorage.setItem("inspection-tenant", tid);
+    } catch {}
+    latest.current = n;
+    set(n);
+    persist(n);
+    SETACCOUNT(acc);
+    msg(`欢迎回来，${acc.name} · ${tenant!.name}`);
+    setTimeout(() => msg(""), 3000);
+    try {
+      location.hash = "#/workbench";
+    } catch {}
+    return true;
+  }
+  /** 退出登录：清会话并回到登录页（业务数据保留在各租户缓存里） */
+  function signOut() {
+    clearSession();
+    SETACCOUNT(null);
+    msg("");
+    try {
+      location.hash = "#/login";
+    } catch {}
+  }
+  /**
    * 切换演示租户：整份换数据（不同缓存键），并回到当前角色落地页
-   * @param tid 租户 ID，见 seed.ts 的 TENANTS
+   * @description 仅超级管理员可切；租户管理员锁定所属租户（顶栏已禁用，这里再挡一次）
+   * @param tid 租户 ID，见 data/tenants.ts 的 TENANTS
    */
   function setTenant(tid: string) {
+    if (!isSuper(account)) {
+      msg("当前账号仅限所属租户，不能切换租户");
+      setTimeout(() => msg(""), 4000);
+      return;
+    }
+    const tenant = (latest.current.tenants || loadTenants()).find((t) => t.id === tid);
+    // 停用校验：停用租户不可进入（切换器已禁用，这里再挡一次，避免直接调用）
+    if (!tenantEnabled(tenant)) {
+      msg(`租户「${tenant?.name || tid}」已停用，请先在「系统设置 › 租户管理」启用`);
+      setTimeout(() => msg(""), 4000);
+      return;
+    }
     try {
       localStorage.setItem("inspection-tenant", tid);
     } catch {}
     const n = withSeedDefaults(
       migrate(JSON.parse(localStorage.getItem(keyOf(tid)) || "null")) || seed(tid),
     );
+    n.tenants = loadTenants();
+    // 角色以登录账号为准：避免目标租户缓存里的旧角色覆盖当前会话档位
+    if (account) n.roleId = account.roleId;
     latest.current = n;
     set(n);
     persist(n);
@@ -731,6 +867,9 @@ export function Store({ children }: { children: ReactNode }) {
         message,
         setRole,
         setTenant,
+        account,
+        signIn,
+        signOut,
         reset: () => {
           const n = seed(latest.current.tenantId || DEFAULT_TENANT);
           latest.current = n;

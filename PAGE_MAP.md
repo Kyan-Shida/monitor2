@@ -18,6 +18,7 @@
 | 二级叶子页面图标（按 page ID） | `src/App.tsx` → `pageIcons` 对象 |
 | 全局搜索关键词 → 页面 | `src/App.tsx` → `keywordPages` 对象 |
 | 角色能看到哪些中心 / 页面 / 权限点 | `src/data/roles.ts` → 各角色 `centers` / `pages` / `perms` + `PERMS` |
+| 登录账号 / 会话 / 租户锁定 | `src/data/auth.ts`（`ACCOUNTS` · `authenticate` · 会话）→ `src/data/store.tsx` 的 `signIn` / `signOut`；未登录时 `App.tsx` 直接渲染 `pages/Login.tsx` |
 | page → 组件路由分发 | `src/App.tsx` 的 `body = ...` if/else 链 |
 | 种子数据（机器人/任务/结果/告警/地图…） | `src/data/seed.ts` → `seed()`，由 `src/data/store.tsx` 注入 Context |
 | 状态机（所有 `act` 动作的效果） | `src/data/engine.ts` → `transition()`（未知动作会抛错） |
@@ -143,6 +144,7 @@
 | `audit` | `#/system/audit` | `src/pages/Supporting.tsx` 日志分支 | 审计日志 |
 | `integration` | `#/integration/services` | `src/pages/Supporting.tsx`（`page="integration"`） | 上层任务服务 / 接口配置 |
 | `interface-log` | `#/integration/logs` | `src/pages/Supporting.tsx` 日志分支 | 接口日志 |
+| `tenants` | `#/system/tenants` | `src/pages/Tenants.tsx` | **租户管理**（平台级清单，`data/tenants.ts` 独立存储）：新增 / 改名称编码 / 启用停用；停用校验 = 当前使用的租户不可停用 + 至少保留一个启用租户；停用的租户在顶栏切换器禁用。引擎动作 `ADD_TENANT` / `UPDATE_TENANT` |
 | `settings` | `#/system/settings` | `src/pages/Supporting.tsx` 兜底 | 字典 / 参数 |
 | `media` | `#/media/library` | `src/pages/Supporting.tsx`（`page="media"`） | 资源库，侧边栏已隐藏 |
 
@@ -793,3 +795,26 @@
 | **选择巡检点改级联选择器** | `PointPicker` 新增 `cascade` 模式：目录树收进**三列级联浮层**（区域 → 设备 → 巡检点），第三列巡检点**多选**（勾选即入已选清单）；点区域 / 设备切换列、点空白处收起。容器由 `pick-3col` 改为 `pick-2col`（勾选表 + 已选清单占满） |
 | **勾选表列精简** | 级联模式下表格只保留「选择 / 巡检点名称」两列（原「地图·标定点 / 巡检项 / 机器操作内容 / 覆盖设备 / 版本·状态」不再展示）；列头与单元格由 `cascade` 参数决定，非级联场景（临时任务等）保持原七列 |
 | **验证** | `tsc -b` 0 错误 · 测试全绿（105 项）；路由核对：`#/resources/templates/navigate/MAP01?tab=R01` → `route-navigate` + id + tab，侧边栏高亮仍为「巡检路线」 |
+
+## 2026-10-19 多租户落地（系统设置 › 租户管理）
+
+| 变更 | 说明 |
+|---|---|
+| **新增页面 `tenants`** | `pages/Tenants.tsx`（`#/system/tenants`，「系统设置 › 系统与集成」）：列表 租户名称 / 编码 / 状态 / 当前使用 / 更新时间 + 「＋ 添加租户」；编码创建后只读（数据名称前缀，如 `HD·` / `XB·`） |
+| **租户清单升级为平台级数据** | 新增 `data/tenants.ts`：`DEFAULT_TENANT` / `TENANTS`（从 seed 迁出并再导出）+ `loadTenants` / `saveTenants` / `tenantEnabled`，清单独立存 `inspection-tenants` 键 —— 此前清单跟着各租户缓存走，A 租户新增的租户切到 B 就看不见 |
+| **引擎动作** | `ADD_TENANT` / `UPDATE_TENANT`（仅管理员）：名称与编码各自唯一，编码 `^[A-Z0-9]{2,6}$` 且自动大写；新增自动生成 `T-` 前缀 id 并写 `updatedAt` |
+| **停用校验（引擎把关）** | ① 当前正在使用的租户不能停用（否则当前会话数据来源失效）；② 至少保留一个启用租户；③ 停用后顶栏 `TenantSwitcher` 该项禁用（`.ts-item:disabled` + 「已停用」标记），`store.setTenant` 再做一次拦截 |
+| **seed 兼容新增租户** | `seed(tenantId, tenants = loadTenants())`：清单里的租户按 `code` 加名称前缀；清单查不到时不再 `!` 断言崩溃，按「不加前缀」处理 |
+| **页面数** | 40 → **41**（`engine.test.ts` 断言同步） |
+| **验证** | `npx tsc -b` 仅剩既有 1 处外部错误（`AlarmSettings.tsx:108` `set.main`，非本次改动）· `npm test` 全绿 **113 项**（新增 `tenant.test.ts` 6 项） |
+
+## 2026-10-19（第二轮）登录页 + 三级账号（超级管理员 / 租户管理员）
+
+| 变更 | 说明 |
+|---|---|
+| **登录页** | `pages/Login.tsx`（`#/login`，不在菜单里）：品牌区 + 账号密码 + 登录按钮 + 演示账号列表（点击填充）。未登录时 `App.tsx` 直接渲染本页，不套侧边栏 / 顶栏 / 页签 |
+| **账号与会话** | 新增 `data/auth.ts`：`AuthAccount`（username / password / name / title / tenantId / level / roleId）+ `authenticate` + 会话（`inspection-session` 只存账号 id）。演示账号：`superadmin / Super@2026`（王姐 · 超级管理员）、`hd.admin / Hd@2026`（李工 · 华东炼化）、`xb.admin / Xb@2026`（赵敏 · 西部管道） |
+| **数据隔离落地** | `store.signIn` 按账号定位租户：租户管理员固定 `tenantId`，超级管理员沿用上次租户（失效则取首个启用租户）；载入该租户缓存（无则 `seed(tid, tenants)`）后**强制** `roleId = account.roleId`。`setTenant` 对非超管直接拒绝 |
+| **页面可见性** | 租户管理员的有效角色 = 全路由减去 `tenants`（租户管理页仅超级管理员可见），侧边栏 / 中心序号 / 权限守卫 / 页签清理共用同一份 `role.pages`，hidden 页（执行监控等）不受影响 |
+| **顶栏身份** | `TenantSwitcher` 改为按账号级别判定可切（非超管锁定并显示当前租户）；用户菜单显示登录账号与数据范围，角色切换仅超管保留，「退出登录」改为真实 `signOut`（清会话回登录页） |
+| **验证** | `npx tsc -b` 仅剩既有 1 处外部错误 · `npm test` 全绿 **117 项**（新增 `auth.test.ts` 4 项） |

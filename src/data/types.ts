@@ -1186,6 +1186,8 @@ export interface Robot {
   health: number;
   /** 固件版本 */
   firmware: string;
+  /** 机器人编号（SN）：出厂硬件序列号，与内部编码 id 一一对应 */
+  sn?: string;
 }
 /**
  * 任务快照：继承 `Point`（含统一坐标系 `world`）；任务下发时以 `world` 为巡检点权威坐标，
@@ -1526,6 +1528,10 @@ export interface Extra {
   category: string;
   status: string;
   detail: string;
+  /** 参数类型（参数配置中心）：业务参数走单值，数据字典走键值对 */
+  type?: "业务参数" | "数据字典";
+  /** 数据字典的枚举项（键 = 存储值，值 = 显示名） */
+  values?: { key: string; value: string }[];
 }
 /**
  * 租户（多租户演示级）
@@ -1538,6 +1544,8 @@ export interface Tenant {
   /** 编码前缀：给该租户的数据命名加标，便于演示隔离 */
   code: string;
   status: "启用" | "停用";
+  /** 最后更新时间（租户管理列表展示） */
+  updatedAt?: string;
 }
 
 export interface State {
@@ -1561,7 +1569,7 @@ export interface State {
   tenants?: Tenant[];
   /** 当前租户 id：切换即换一份数据（缓存键 inspection-v14-prototype:<tenantId>） */
   tenantId?: string;
-  schema: 10;
+  schema: 12;
   maps: MapAsset[];
   points: Point[];
   robots: Robot[];
@@ -1575,7 +1583,6 @@ export interface State {
   sessions: Session[];
   logs: Log[];
   extras: Extra[];
-  requests: { businessId: string; taskId: string }[];
   /** ↓ 以下为 schema 2 新增集合 */
   takeovers: Takeover[];
   feedbacks: Feedback[];

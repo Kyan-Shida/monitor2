@@ -12,17 +12,10 @@
  *              右侧全厂区 2D 地图 + 绘制工具条（多边形 / 矩形 / 撤销 / 重做 / 清空）与标绘列表
  */
 import { useState } from "react";
-import {
-  Pentagon,
-  Square,
-  Undo2,
-  Redo2,
-  Trash2,
-  ChevronRight,
-  FolderTree,
-} from "lucide-react";
+import { Pentagon, Square, Undo2, Redo2, Trash2 } from "lucide-react";
 import { useStore } from "../data/store";
 import { usePageSize, useViewState } from "../data/navigation";
+import { CatalogTree, type CatalogNode } from "../components/CatalogTree";
 import { Btn, Panel, Table, Field, Note, Modal } from "../components/UI";
 import { Pager } from "../components/Business";
 import { MapImageCanvas } from "../components/MapImageCanvas";
@@ -137,8 +130,6 @@ export function Admin() {
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   /** 树选中节点：空串 = 全部区域；选中后右侧表格只显示该节点子树 */
   const [treeSel, setTreeSel] = useState("");
-  /** 树展开状态：默认全部展开 */
-  const [openSet, setOpenSet] = useState<Record<string, boolean>>({});
 
   /** 打开区域弹窗（新增 / 编辑）：已有范围轮廓则回显到全厂区 2D 底图上 */
   const openForm = (a?: {
@@ -165,10 +156,6 @@ export function Admin() {
       history: [],
       future: [],
     });
-
-  /** 展开/收起：未记录的节点按「有子节点默认展开」处理 */
-  const isOpen = (id: string, hasKids: boolean) =>
-    openSet[id] ?? hasKids;
 
   /** 子区域列表（按 parentId 归组） */
   const kidsOf = (pid: string) =>
@@ -206,17 +193,13 @@ export function Admin() {
     areaCur * pageSize,
   );
 
-  /** 树可见行：从固定根「全厂区」DFS 展开（id / 名称 / 深度 / 有无子节点） */
-  const treeRows: { id: string; name: string; depth: number; hasKids: boolean }[] = [];
-  const walkTree = (pid: string, depth: number) => {
-    kidsOf(pid).forEach((a) => {
-      const hasKids = kidsOf(a.id).length > 0;
-      treeRows.push({ id: a.id, name: a.name, depth, hasKids });
-      if (isOpen(a.id, hasKids)) walkTree(a.id, depth + 1);
-    });
-  };
-  walkTree(ROOT_AREA_ID, 0);
-  const rootHasKids = treeRows.length > 0;
+  /** 树数据：从固定根「全厂区」递归展开（展开 / 收起由通用目录树内部管理） */
+  const areaNodes = (pid: string): CatalogNode[] =>
+    kidsOf(pid).map((a) => ({
+      key: a.id,
+      label: a.name,
+      children: areaNodes(a.id),
+    }));
 
   /** 弹窗父级区域候选：排除自身及后代（防环由前端先挡一道，引擎再兜底）；根正常可选 */
   const parentOptions = (selfId?: string) => {
@@ -311,72 +294,15 @@ export function Admin() {
   return (
     <>
       <div className="admin-split">
-        {/* 左：区域树目录（点击节点筛选右侧表格；再次点击取消筛选） */}
-        <Panel title="区域目录" className="area-tree-panel">
-          <div className="area-tree">
-            {/* 固定根「全厂区」：不可删 / 不可改名，只能在其下新增区域 */}
-            <div
-              className={`area-tree-node area-tree-root${
-                treeSel === "" ? " sel" : ""
-              }`}
-              onClick={() => setTreeSel("")}
-            >
-              <i
-                className={`tw${rootHasKids ? "" : " off"}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!rootHasKids) return;
-                  setOpenSet({
-                    ...openSet,
-                    [ROOT_AREA_ID]: !isOpen(ROOT_AREA_ID, true),
-                  });
-                }}
-              >
-                <ChevronRight
-                  size={13}
-                  style={{
-                    transform: isOpen(ROOT_AREA_ID, rootHasKids)
-                      ? "rotate(90deg)"
-                      : "none",
-                  }}
-                />
-              </i>
-              <FolderTree size={14} />
-              <span>{ROOT_AREA_NAME}</span>
-            </div>
-            {treeRows.map((r) => (
-              <div
-                key={r.id}
-                className={`area-tree-node${treeSel === r.id ? " sel" : ""}`}
-                style={{ paddingLeft: 26 + r.depth * 18 }}
-                onClick={() => setTreeSel(treeSel === r.id ? "" : r.id)}
-              >
-                {/* 展开箭头：无子节点的占位对齐 */}
-                <i
-                  className={`tw${r.hasKids ? "" : " off"}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!r.hasKids) return;
-                    setOpenSet({ ...openSet, [r.id]: !isOpen(r.id, true) });
-                  }}
-                >
-                  <ChevronRight
-                    size={13}
-                    style={{
-                      transform: isOpen(r.id, r.hasKids)
-                        ? "rotate(90deg)"
-                        : "none",
-                    }}
-                  />
-                </i>
-                <span>{r.name}</span>
-              </div>
-            ))}
-            {!treeRows.length && (
-              <p className="area-tree-empty">暂无下级区域，可在右侧「＋ 新增区域」创建</p>
-            )}
-          </div>
-        </Panel>
+        {/* 左：区域树目录（与设备台账同一套目录树；点击节点筛选右侧表格，再点取消） */}
+        <CatalogTree
+          ariaLabel="区域目录"
+          rootLabel={ROOT_AREA_NAME}
+          rootCount={editableAreas.length}
+          nodes={areaNodes(ROOT_AREA_ID)}
+          value={treeSel}
+          onChange={(v) => setTreeSel(treeSel === v ? "" : v)}
+        />
 
         {/* 右：区域配置表格（随树选中节点筛选） */}
         <Panel

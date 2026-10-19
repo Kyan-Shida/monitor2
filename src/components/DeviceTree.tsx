@@ -8,7 +8,7 @@
  *              区域清单统一由 deviceTreeRegions 提供，各页不再各写一套
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Folder, FolderOpen } from "lucide-react";
+import { TreeGroup, TreeLeaf, TreeRoot } from "./CatalogTree";
 import { useStore } from "../data/store";
 import { areaNameOf, areaOptions } from "../data/deviceMaster";
 import type { DeviceAsset, State } from "../data/types";
@@ -120,81 +120,50 @@ export function DeviceTree({
   const total =
     rootCount ??
     all.reduce((n, d) => n + (countOf ? cntOf(d) : 1), 0);
-  /** 节点尾部附加内容：包一层挡住冒泡，避免勾选时连带切换树的选中节点 */
-  const extra = (node: ReactNode) =>
-    node ? (
-      <span className="tree-extra" onClick={(e) => e.stopPropagation()}>
-        {node}
-      </span>
-    ) : null;
   return (
     <aside className="device-tree" aria-label={ariaLabel}>
-      <div
-        className={"tree-node root" + (value === "" ? " sel" : "")}
+      <TreeRoot
+        label={rootLabel}
+        count={total}
+        selected={value === ""}
         onClick={() => onChange("")}
-      >
-        <span className="tree-icon tree-folder">
-          <Folder size={14} />
-        </span>
-        <span className="tree-label">{rootLabel}</span>
-        <span className="tree-count">{total}</span>
-        {extra(rootExtra)}
-      </div>
+        extra={rootExtra}
+      />
       {regions.map((rg) => {
         const inRg = devicesIn(rg);
         // 附加分组承担了同名区域的展示（该分组里的对象不挂设备），区域节点不再重复占位
         if (extraGroup?.replaceArea && rg === extraGroup.name) return null;
         // 传了计数口径时，空区域不占位（如"该区域下没有巡检点"）
         if (hideEmpty && countOf && !inRg.length) return null;
-        const isExpanded = expanded.has(rg);
         const rgCount = countOf
           ? groupCountOf
             ? groupCountOf(inRg)
             : inRg.reduce((n, d) => n + cntOf(d), 0)
           : inRg.length;
         return (
-          <div key={rg} className="tree-group">
-            <div
-              className={"tree-node group" + (value === "r:" + rg ? " sel" : "")}
-              onClick={() => {
-                onChange("r:" + rg);
-                toggleRegion(rg);
-              }}
-            >
-              <span className="tree-chevron">
-                {isExpanded ? (
-                  <ChevronDown size={14} />
-                ) : (
-                  <ChevronRight size={14} />
-                )}
-              </span>
-              <span className="tree-icon tree-folder">
-                {isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />}
-              </span>
-              <span className="tree-label">{rg}</span>
-              <span className="tree-count">{rgCount}</span>
-              {extra(regionExtra?.(inRg))}
-            </div>
-            {isExpanded &&
-              inRg.map((d) => (
-                <div
-                  key={d.id}
-                  className={
-                    "tree-node leaf" + (value === "d:" + d.id ? " sel" : "")
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onChange("d:" + d.id);
-                  }}
-                  title={d.name}
-                >
-                  <span className="tree-dot" />
-                  <span className="tree-label">{d.name}</span>
-                  {countOf && <span className="tree-count">{cntOf(d)}</span>}
-                  {extra(deviceExtra?.(d))}
-                </div>
-              ))}
-          </div>
+          <TreeGroup
+            key={rg}
+            label={rg}
+            count={rgCount}
+            selected={value === "r:" + rg}
+            expanded={expanded.has(rg)}
+            onClick={() => {
+              onChange("r:" + rg);
+              toggleRegion(rg);
+            }}
+            extra={regionExtra?.(inRg)}
+          >
+            {inRg.map((d) => (
+              <TreeLeaf
+                key={d.id}
+                label={d.name}
+                count={countOf ? cntOf(d) : undefined}
+                selected={value === "d:" + d.id}
+                onClick={() => onChange("d:" + d.id)}
+                extra={deviceExtra?.(d)}
+              />
+            ))}
+          </TreeGroup>
         );
       })}
       {/*
@@ -202,50 +171,26 @@ export function DeviceTree({
         分组节点 = 看全部（g:<分组名>），叶子 = 单个对象（值由调用方给）
       */}
       {extraGroup && (
-        <div className="tree-group">
-          <div
-            className={
-              "tree-node group" +
-              (value === "g:" + extraGroup.name ? " sel" : "")
-            }
-            onClick={() => {
-              onChange("g:" + extraGroup.name);
-              toggleRegion(extraGroup.name);
-            }}
-          >
-            <span className="tree-chevron">
-              {expanded.has(extraGroup.name) ? (
-                <ChevronDown size={14} />
-              ) : (
-                <ChevronRight size={14} />
-              )}
-            </span>
-            <span className="tree-icon tree-folder">
-              {expanded.has(extraGroup.name) ? (
-                <FolderOpen size={14} />
-              ) : (
-                <Folder size={14} />
-              )}
-            </span>
-            <span className="tree-label">{extraGroup.name}</span>
-            <span className="tree-count">{extraGroup.leaves.length}</span>
-          </div>
-          {expanded.has(extraGroup.name) &&
-            extraGroup.leaves.map((l) => (
-              <div
-                key={l.value}
-                className={"tree-node leaf" + (value === l.value ? " sel" : "")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onChange(l.value);
-                }}
-                title={l.title || l.label}
-              >
-                <span className="tree-dot" />
-                <span className="tree-label">{l.label}</span>
-              </div>
-            ))}
-        </div>
+        <TreeGroup
+          label={extraGroup.name}
+          count={extraGroup.leaves.length}
+          selected={value === "g:" + extraGroup.name}
+          expanded={expanded.has(extraGroup.name)}
+          onClick={() => {
+            onChange("g:" + extraGroup.name);
+            toggleRegion(extraGroup.name);
+          }}
+        >
+          {extraGroup.leaves.map((l) => (
+            <TreeLeaf
+              key={l.value}
+              label={l.label}
+              title={l.title}
+              selected={value === l.value}
+              onClick={() => onChange(l.value)}
+            />
+          ))}
+        </TreeGroup>
       )}
     </aside>
   );

@@ -38,9 +38,10 @@ function dispatch(s: State, id: string) {
 // 2026-10-14：「告警管理」升为一级目录，新增「告警类别」「告警设置」「告警推送」三页 → 41 → 44
 // 2026-10-15：「算法模板管理」并入「巡检要求管理」→ 合并为「后台管理 › 算法模板」一页 → 44 → 43
 // 2026-10-16：告警模板概念废止（告警项全部手填）→ 下线「告警模板管理」页 → 43 → 42
-test("42 unique phase-one pages", () => {
-  assert.equal(pages.length, 42);
-  assert.equal(new Set(pages.map((p) => p.id)).size, 42);
+// 2026-10-19：新增「系统设置 › 租户管理」页（平台级租户清单）→ 40 → 41
+test("41 unique phase-one pages", () => {
+  assert.equal(pages.length, 41);
+  assert.equal(new Set(pages.map((p) => p.id)).size, 41);
 });
 
 test("算法模板：管理员可维护，需填齐编码与判定口径", () => {
@@ -275,12 +276,8 @@ test("bounded retry and mandatory skipped item do not count as success", () => {
   assert.equal(s.tasks[0].state, "部分完成");
   assert.equal(s.tasks[0].done.length, 2);
 });
-test("external task idempotency and result audit preserve raw evidence", () => {
-  let s = seed();
-  s = run(s, { type: "EXTERNAL", businessId: "B1" });
-  const count = s.tasks.length;
-  s = run(s, { type: "EXTERNAL", businessId: "B1" });
-  assert.equal(s.tasks.length, count);
+test("result audit preserves raw evidence", () => {
+  const s = seed();
   // 采集结果保留原始证据与识别值，且不再产生复核记录（人工复核已下线）
   const r = s.results[0];
   assert.equal(r.raw, r.recognized);

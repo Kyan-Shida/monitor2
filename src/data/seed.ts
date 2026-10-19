@@ -24,6 +24,7 @@ import type {
   AlarmItem,
 } from "./types";
 import { defaultRangeOfUnit } from "./alarmRules";
+import { DEFAULT_TENANT, TENANTS, loadTenants } from "./tenants";
 import {
   defaultRequirementOfInstrument,
   defaultCategoryOfTarget,
@@ -31,6 +32,7 @@ import {
 import { captureAction } from "./types";
 import { SAMPLE_MAP_IMAGE } from "./sampleMap";
 import { withAlarmSetting, type AlarmSettingHost } from "./alarmSettings";
+import { TASK_STATUSES } from "./taskStatus";
 import type { AlarmPushStaff } from "./types";
 const points: Point[] = [
   {
@@ -1287,13 +1289,8 @@ const deriveBusinessTargets = (
     };
   });
 };
-/** 默认租户：沿用老缓存键 inspection-v14-prototype，老数据零迁移 */
-export const DEFAULT_TENANT = "T-DEFAULT";
-/** 演示用租户清单：切换即整份换数据 */
-export const TENANTS: Tenant[] = [
-  { id: "T-DEFAULT", name: "华东炼化", code: "HD", status: "启用" },
-  { id: "T-XB", name: "西部管道", code: "XB", status: "启用" },
-];
+/** 租户清单与默认租户：定义在 tenants.ts（平台级独立存储），此处再导出保持既有引用路径 */
+export { DEFAULT_TENANT, TENANTS };
 /**
  * 给非默认租户的数据加租户前缀（仅改 name/label，不动 id，避免引用断裂）
  * @description 演示级隔离：切租户后左侧树、设备、机器人、台账名称整体变化，一眼可辨
@@ -1319,7 +1316,11 @@ function retagForTenant(s: State, t: Tenant): State {
     businessTargets: (s.businessTargets || []).map(tag),
   };
 }
-export function seed(tenantId: string = DEFAULT_TENANT): State {
+export function seed(
+  tenantId: string = DEFAULT_TENANT,
+  /** 平台租户清单：默认取独立存储的清单，新增的租户也能正确加名称前缀 */
+  tenants: Tenant[] = loadTenants(),
+): State {
   // 逻辑点由「设备主数据 + 点位」派生，避免两处手工维护导致口径漂移；
   // 并把派生结果回写到点位 logicalIds（一物理点可承载多条逻辑点）
   const pts = structuredClone(points);
@@ -1467,8 +1468,8 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
   });
   const _s: State = {
     tenantId,
-    tenants: TENANTS,
-    schema: 10,
+    tenants,
+    schema: 12,
     points: pts,
     maps: [
       {
@@ -1699,6 +1700,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         constraints: { minBattery: 40, needChargingPlan: true },
         health: 92,
         firmware: "DOG-2.4.1",
+        sn: "SN-DOG-2411-0007",
       },
       {
         id: "R02",
@@ -1716,6 +1718,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         constraints: { minBattery: 25, needChargingPlan: true, maxSpeed: 1.5 },
         health: 88,
         firmware: "AGV-1.9.0",
+        sn: "SN-AGV-2508-0132",
       },
       {
         id: "R03",
@@ -1736,6 +1739,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         },
         health: 95,
         firmware: "RAIL-3.0.2",
+        sn: "SN-RAIL-2306-0045",
       },
     ],
     templates: [
@@ -2733,7 +2737,6 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         "P001 出口压力超上限，已处置",
       ),
     ],
-    requests: [],
     extras: [
       {
         id: "STD01",
@@ -2790,6 +2793,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         name: "自主失败最大重试次数",
         status: "启用",
         detail: "2 次",
+        type: "业务参数",
       },
       {
         id: "PAR02",
@@ -2797,6 +2801,17 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
         name: "任务生成提前量",
         status: "启用",
         detail: "15 分钟",
+        type: "业务参数",
+      },
+      {
+        id: "DIC01",
+        category: "settings",
+        name: "任务执行状态",
+        status: "启用",
+        // 直接取任务状态全集，保证字典与任务列表的状态口径一致
+        detail: TASK_STATUSES.join(", "),
+        type: "数据字典",
+        values: TASK_STATUSES.map((s) => ({ key: s, value: s })),
       },
     ],
     // ── schema 2 新增集合（接管 / 反馈 / 现场 / 资产 / 排班 / 通知）──
@@ -3014,7 +3029,7 @@ export function seed(tenantId: string = DEFAULT_TENANT): State {
     ],
     roleId: "admin",
   };
-  return tenantId !== DEFAULT_TENANT
-    ? retagForTenant(_s, TENANTS.find((t) => t.id === tenantId)!)
-    : _s;
+  // 新增租户的编码由「租户管理」保证非空；清单里查不到时按「不加前缀」处理，避免 undefined 崩溃
+  const t = tenants.find((x) => x.id === tenantId);
+  return tenantId !== DEFAULT_TENANT && t ? retagForTenant(_s, t) : _s;
 }

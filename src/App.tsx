@@ -72,6 +72,9 @@ import {
 } from "./data/navigation";
 import { useStore } from "./data/store";
 import { canSee, roleOf, roles } from "./data/roles";
+import { isSuper } from "./data/auth";
+import { Login } from "./pages/Login";
+import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { Maps } from "./pages/Maps";
 import { MapDetail } from "./pages/MapDetail";
 import { MapCalibrate } from "./pages/MapCalibrate";
@@ -90,6 +93,7 @@ import { Results, Alarms } from "./pages/Results";
 import { AlarmClasses } from "./pages/AlarmClasses";
 import { AlarmSettings } from "./pages/AlarmSettings";
 import { AlarmPush } from "./pages/AlarmPush";
+import { Tenants } from "./pages/Tenants";
 import { Operations } from "./pages/Operations";
 import { Supporting } from "./pages/Supporting";
 import { Btn, Modal, Note } from "./components/UI";
@@ -171,8 +175,7 @@ const pageIcons: Record<string, LucideIcon> = {
   space: Layers,
   roles: ShieldHalf,
   audit: ScrollText,
-  integration: Plug,
-  "interface-log": Terminal,
+  tenants: Boxes,
   settings: SlidersHorizontal,
 };
 /**
@@ -185,6 +188,7 @@ const keywordPages: Record<string, string[]> = {
   失败: ["alarms", "execution"],
   离线: ["robots"],
   低电量: ["robots"],
+  租户: ["tenants"],
   接管: ["manual"],
   验收: ["results"],
   分析: ["metrics"],
@@ -223,8 +227,28 @@ export default function App() {
     setReviewEnabled(next);
     try { localStorage.setItem("inspection-review-enabled", String(next)); } catch { /* memory only */ }
   }
-  const { message, reset: resetData, s, setRole, setTenant } = useStore();
-  const role = roleOf(s.roleId);
+  const {
+    message,
+    reset: resetData,
+    s,
+    setRole,
+    setTenant,
+    account,
+    signOut,
+  } = useStore();
+  const baseRole = roleOf(s.roleId);
+  /**
+   * 实际生效的角色：租户管理员在管理员档位上去掉「租户管理」页（仅超级管理员可见），
+   * 侧边栏 / 中心序号 / 权限守卫 / 页签清理共用同一口径
+   */
+  const role =
+    isSuper(account) || baseRole.pages !== "*"
+      ? baseRole
+      : {
+          ...baseRole,
+          // 全路由减去「租户管理」：等价于原来的 "*"，但 hidden 页（执行监控 / 机器人详情等）不受影响
+          pages: routeMeta.map((p) => p.id).filter((id) => id !== "tenants"),
+        };
   /** 用户菜单容器：点击菜单外区域自动收起 */
   const userRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -253,13 +277,14 @@ export default function App() {
   }, []);
   /** 访问轨迹：让「返回」回到来时的页面而非死板的目录父级 */
   useEffect(() => initTrail(), []);
-  // 首次进入按当前角色落地页跳转：角色决定默认工作台（原型阶段代替真实登录）
+  // 登录后按当前角色落地页跳转：未登录时不跳（登录页不依赖路由）
   useEffect(() => {
+    if (!account) return;
     if (!location.hash || location.hash === "#" || location.hash === "#/")
       go(roleOf(s.roleId).landing);
-    // 仅在首次挂载时执行
+    // 仅在登录态变化时执行
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [account]);
   const meta = routeMeta.find((p) => p.id === route.page) || routeMeta[0];
   const { page, id, tab } = route;
   /**
@@ -298,6 +323,8 @@ export default function App() {
   const backName = backTarget
     ? routeMeta.find((x) => x.id === backTarget)?.name || backTarget
     : "";
+  // 未登录：只渲染登录页（不套侧边栏 / 顶栏 / 页签）
+  if (!account) return <Login />;
   // 大屏：独立窗口形态，不套用后台外壳（侧边栏 / 顶栏 / 中心 Tab）
   if (["bigscreen","overview","screen","video"].includes(page)) return <CockpitScreen key={page} initial={page === "screen" ? "screen" : page === "video" ? "video" : "overview"} />;
   /** 权限守卫：页面不在当前角色可见范围时不渲染内容 */
@@ -394,6 +421,8 @@ export default function App() {
   else if (page === "alarm-settings") body = <AlarmSettings />;
   // 告警管理 › 推送设置：推送人员名单 + 区域 / 设备绑定范围
   else if (page === "alarm-push") body = <AlarmPush />;
+  // 系统设置 › 租户管理：平台级租户清单（新增 / 改编码 / 启用停用，停用由引擎校验）
+  else if (page === "tenants") body = <Tenants />;
   else if (page === "replay") body = <ObjectDetails page="replay" id={id} />;
   else body = <Supporting page={page} />;
   /** 搜索关键词命中的业务页面 */
@@ -575,6 +604,8 @@ export default function App() {
         </div>
       </aside>
       <div className="workspace">
+        {/* 角色模拟横幅：模拟期间常驻顶部，退出按钮恢复真实身份 */}
+        <ImpersonationBanner />
         <header>
           <button
             className="sidebar-toggle"
@@ -683,48 +714,60 @@ export default function App() {
             <NotificationCenter />
             {/* 顶栏常驻租户切换（多租户省事版）：仿 SaaS 组织上下文切换 */}
             <TenantSwitcher />
-            {/* 用户下拉菜单：头像 + 姓名角色，点击展开角色切换与退出登录（原型阶段代替真实登录） */}
+            {/* 用户下拉菜单：登录账号 + 数据范围 + 退出登录 */}
             <div className="user-menu-wrap" ref={userRef}>
               <button
                 className={"user-btn" + (userMenu ? " open" : "")}
                 aria-label="用户菜单"
                 onClick={() => SETUSER(!userMenu)}
               >
-                <span className="user-avatar">{role.person.charAt(0)}</span>
+                <span className="user-avatar">{account.name.charAt(0)}</span>
                 <span className="user-name">
-                  {role.person}
-                  <small>{role.name}</small>
+                  {account.name}
+                  <small>{account.level === "super" ? "超级管理员" : "租户管理员"}</small>
                 </span>
                 <ChevronDown size={14} />
               </button>
               {userMenu && (
                 <div className="user-menu" role="menu">
                   <div className="user-menu-head">
-                    <span className="user-avatar lg">{role.person.charAt(0)}</span>
+                    <span className="user-avatar lg">{account.name.charAt(0)}</span>
                     <div className="user-menu-info">
-                      <b>{role.person} · {role.name}</b>
-                      <small>数据范围：{role.scope}</small>
+                      <b>
+                        {account.name} · {account.title}
+                      </b>
+                      <small>
+                        数据范围：
+                        {account.level === "super"
+                          ? `全部租户（${s.tenants?.length || 0} 个）`
+                          : s.tenants?.find((t) => t.id === s.tenantId)?.name || "所属租户"}
+                      </small>
                     </div>
                   </div>
-                  <div className="user-menu-sep" />
-                  {roles.map((r) => (
-                    <button
-                      key={r.id}
-                      role="menuitem"
-                      className={"user-menu-item" + (r.id === role.id ? " active" : "")}
-                      onClick={() => {
-                        if (r.id !== role.id) {
-                          setRole(r.id);
-                          go(r.landing);
-                        }
-                        SETUSER(false);
-                      }}
-                    >
-                      <ShieldCheck size={15} />
-                      切换为 {r.person}（{r.name}）
-                      {r.id === role.id && <Check size={14} className="user-menu-check" />}
-                    </button>
-                  ))}
+                  {/* 角色切换仅超级管理员保留（演示便利）；租户管理员身份由账号锁定 */}
+                  {isSuper(account) && (
+                    <>
+                      <div className="user-menu-sep" />
+                      {roles.map((r) => (
+                        <button
+                          key={r.id}
+                          role="menuitem"
+                          className={"user-menu-item" + (r.id === role.id ? " active" : "")}
+                          onClick={() => {
+                            if (r.id !== role.id) {
+                              setRole(r.id);
+                              go(r.landing);
+                            }
+                            SETUSER(false);
+                          }}
+                        >
+                          <ShieldCheck size={15} />
+                          切换为 {r.person}（{r.name}）
+                          {r.id === role.id && <Check size={14} className="user-menu-check" />}
+                        </button>
+                      ))}
+                    </>
+                  )}
                   <div className="user-menu-sep" />
                   <button
                     role="menuitem"
@@ -769,11 +812,20 @@ export default function App() {
       )}
       {logoutOpen && (
         <Modal title="退出登录" onClose={() => SETLOGOUT(false)}>
-          <Note>
-            演示环境用「角色切换」代替真实登录，无需退出。如需更换身份，请使用用户菜单中的
-            「切换为…」选项。
-          </Note>
-          <Btn onClick={() => SETLOGOUT(false)}>知道了</Btn>
+          <Note>退出后需要重新输入账号密码，当前租户数据仍保留在本机。</Note>
+          <div className="modal-actions">
+            <Btn onClick={() => SETLOGOUT(false)}>取消</Btn>
+            <Btn
+              danger
+              onClick={() => {
+                SETLOGOUT(false);
+                SETUSER(false);
+                signOut();
+              }}
+            >
+              确认退出
+            </Btn>
+          </div>
         </Modal>
       )}
       {reset && (

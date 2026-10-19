@@ -1,4 +1,3 @@
-import { SystemAlarmParameters } from "../components/SystemAlarmParameters";
 import { go } from "../data/navigation";
 import { useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
@@ -145,7 +144,6 @@ export function AlarmConfiguration({
         </Field>
         {rule ? <RuleTrial key={`${rule.id}-${rule.version}-${rule.type}`} rule={rule} /> : <p className="muted">暂无可试算的规则，请先配置巡检点规则。</p>}
       </Panel>
-      {!pointId && <SystemAlarmParameters />}
       {!readOnly && edit && (
         <Editor title="告警规则 · 保存为新版本" onClose={() => E(undefined)}>
           <div className="form-grid">

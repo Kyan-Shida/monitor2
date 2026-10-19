@@ -10794,7 +10794,7 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .workspace main .panel-body > .table-scroll:last-child {
   margin-bottom: -16px;
 }
-/* ── 6. 表格：表头矮化 + 斑马纹 + 悬停高亮 + 数字等宽 ── */
+/* ── 6. 表格：表头矮化 + 悬停高亮 + 数字等宽 ── */
 .workspace main table {
   font-size: 12.5px;
   color: var(--ent-ink-2);
@@ -10812,9 +10812,6 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   padding: 12px 14px;
   border-bottom: 1px solid var(--ent-line-soft);
   vertical-align: middle;
-}
-.workspace main tbody tr:nth-child(even) {
-  background: #fbfcfe;
 }
 .workspace main tbody tr:hover {
   background: #f1f6fd;
@@ -11991,6 +11988,146 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 .ts-item.active {
   color: var(--accent, #4f8cff);
+}
+/* 停用租户：置灰不可选（在「系统设置 › 租户管理」里重新启用） */
+.ts-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+/* 登录页：独立于后台外壳（无侧边栏 / 顶栏 / 页签） */
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(360px, 520px);
+  background: var(--canvas, #f3f6fa);
+}
+.login-aside {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 48px 44px;
+  color: #eaf1f9;
+  background: linear-gradient(160deg, #142b45, #1f4f7a 60%, #2368bd);
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.login-brand b {
+  font-size: 18px;
+  letter-spacing: 0.5px;
+}
+.login-brand small {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: #9fc0e0;
+}
+.login-mark {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.login-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.login-tags span {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  font-size: 12px;
+  color: #d7e6f5;
+}
+.login-main {
+  display: grid;
+  place-items: center;
+  padding: 32px 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 28px 26px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(19, 45, 73, 0.14);
+}
+.login-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 18px;
+  font-size: 16px;
+  color: var(--text);
+}
+.login-card .field {
+  margin-bottom: 12px;
+}
+.login-error {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: #b3251c;
+}
+.login-submit {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.login-accounts {
+  display: grid;
+  gap: 6px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.login-accounts button {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.login-accounts button:hover {
+  border-color: var(--blue);
+  background: #f2f7fd;
+}
+.login-accounts b {
+  font-size: 12px;
+}
+.login-accounts span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.login-accounts code {
+  font-size: 11px;
+  color: var(--blue);
+}
+@media (max-width: 860px) {
+  .login-page {
+    grid-template-columns: 1fr;
+  }
+  .login-aside {
+    gap: 14px;
+    padding: 28px 24px;
+  }
+}
+.ts-off {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
 }
 .ts-check {
   margin-left: auto;
@@ -16907,135 +17044,6 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   color: var(--blue);
 }
 
-/* ── 机器人能力树（能力类型 → 能力参数） ── */
-.rab-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.rab-kind {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-}
-.rab-kind:hover {
-  background: #f4f7fb;
-}
-.rab-kind.on {
-  background: #eef4fc;
-}
-.rab-toggle {
-  display: flex;
-  align-items: center;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: #7b8c9b;
-  cursor: pointer;
-}
-.rab-kind .actions,
-.rab-param .actions {
-  margin-left: auto;
-}
-.rab-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: #eef1f6;
-  color: #6e8093;
-  font-size: 11px;
-}
-.rab-params {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0 0 6px 30px;
-  padding-left: 12px;
-  border-left: 1px solid #e6ecf3;
-}
-.rab-param {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 6px;
-}
-.rab-param:hover {
-  background: #f8fafd;
-}
-.rab-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #b7c4d2;
-}
-.rab-name {
-  color: #25384c;
-  font-size: 13px;
-}
-.rab-empty {
-  margin: 4px 10px 8px;
-  font-size: 12px;
-}
-
-/* 机器人能力：左侧能力类型目录（与「设备台账」同款「左树 + 右表」版式） */
-.rab-side {
-  align-self: start;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(24, 48, 72, 0.035);
-  overflow: hidden;
-}
-.rab-side-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--border);
-  color: #22405f;
-  font-size: 13px;
-  font-weight: 600;
-}
-.rab-side-list {
-  display: flex;
-  flex-direction: column;
-  padding: 6px;
-  max-height: 620px;
-  overflow: auto;
-}
-.rab-side-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: #25384c;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-.rab-side-item:hover {
-  background: #f4f7fb;
-}
-.rab-side-item.on {
-  background: #eef4fc;
-  color: var(--blue);
-  font-weight: 600;
-}
-.rab-side-item .rab-count {
-  margin-left: auto;
-}
-
 /* 地图标定工作台：右栏「实时位姿」——开关行与坐标字段区分开 */
 .calib-live-row {
   display: flex;
@@ -17072,60 +17080,9 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 /* 页面布局：左树右表 */
 .admin-split {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 240px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
-}
-/* 区域树目录：纵向节点列表，整行可点 */
-.area-tree {
-  display: flex;
-  flex-direction: column;
-  max-height: 520px;
-  overflow: auto;
-}
-.area-tree-node {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border: 0;
-  background: none;
-  border-radius: 6px;
-  font-size: 12.5px;
-  color: #33475c;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-}
-.area-tree-node:hover {
-  background: #f0f5fc;
-}
-.area-tree-node.sel {
-  background: #eaf2fc;
-  color: #2f7fd0;
-  font-weight: 600;
-}
-.area-tree-root {
-  font-weight: 600;
-  color: #4a5f76;
-}
-.area-tree-node .tw {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #7b8b9c;
-}
-.area-tree-node .tw.off {
-  visibility: hidden;
-}
-.area-tree-empty {
-  margin: 0;
-  padding: 12px;
-  font-size: 12px;
-  color: #98a6b5;
 }
 /* 父级区域组合框：输入框 + 悬浮候选下拉 */
 .combo {
@@ -17495,3 +17452,330 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ── 角色 / 权限（重设计）：角色列表 · 权限抽屉 · 模拟横幅 ── */
+/* 页面内 tab 统一使用 .segmented（见 components/Segmented.tsx） */
+/* 抽屉：从右侧滑出，占满工作区高度
+   层级需高于全站告警胶囊（95）与通知面板（96），否则底部按钮被悬浮件遮挡 */
+.overlay.drawer-overlay {
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+  z-index: 100;
+}
+.drawer {
+  width: min(940px, 96vw);
+  height: 100%;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -10px 0 45px #0d213840;
+  animation: drawer-in 0.22s ease;
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(48px);
+    opacity: 0.5;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.drawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid #e5ebf1;
+}
+.drawer-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.drawer-head small {
+  color: #7d8b9a;
+  font-size: 12px;
+}
+.drawer-head button {
+  border: 0;
+  background: none;
+  color: #7d8b9a;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.drawer-tabs {
+  flex: none;
+  display: flex;
+  gap: 24px;
+  padding: 0 22px;
+  border-bottom: 1px solid #e5ebf1;
+}
+.drawer-tabs button {
+  padding: 12px 0;
+  border: 0;
+  background: none;
+  color: #6f7f90;
+  font-size: 13px;
+  cursor: pointer;
+}
+.drawer-tabs button.active {
+  color: var(--blue);
+  border-bottom: 2px solid var(--blue);
+  font-weight: 600;
+}
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 22px;
+}
+.drawer-foot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid #e5ebf1;
+  background: #fafcfe;
+}
+/* 参数配置中心：编辑抽屉与字典键值对录入 */
+.param-drawer {
+  width: min(560px, 96vw);
+}
+.kv-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kv-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+}
+/* 功能权限：左树 + 右侧联动按钮 */
+.perm-menu {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+.perm-tree {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 6px 0;
+  max-height: calc(100vh - 280px);
+  overflow: auto;
+}
+/* 角色侧边栏：基本信息表单宽度收敛，避免整行拉满 */
+.role-drawer .role-basic {
+  max-width: 560px;
+  padding-top: 4px;
+}
+.perm-group + .perm-group {
+  border-top: 1px dashed #e8eef5;
+}
+.perm-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+.perm-group-head b {
+  font-size: 13px;
+  color: #1d2a37;
+}
+.perm-group-head span {
+  margin-left: auto;
+  color: #8fa0b2;
+  font-size: 11.5px;
+}
+.perm-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 0 8px 34px;
+}
+.perm-page {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  color: #41536a;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.perm-page:hover {
+  background: #f3f8fe;
+}
+.perm-page.active {
+  background: #e9f2fd;
+  color: #1f67b5;
+  font-weight: 600;
+}
+.perm-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.perm-actions-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #e8eef5;
+}
+.perm-actions-head small {
+  color: #8fa0b2;
+  font-size: 11.5px;
+}
+.perm-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #41536a;
+  font-size: 12.5px;
+}
+.perm-action small {
+  color: #8fa0b2;
+}
+.role-members {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 全局模拟横幅：高饱和红底，任何页面都压不住 */
+.impersonation-banner {
+  flex: none;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 22px;
+  background: linear-gradient(90deg, #b3261e, #d93f33);
+  color: #fff;
+  font-size: 12.5px;
+}
+.impersonation-banner b {
+  font-weight: 700;
+}
+.impersonation-banner .ib-meta {
+  margin-left: auto;
+  opacity: 0.85;
+  font-size: 11.5px;
+}
+.impersonation-banner button {
+  border: 1px solid #ffffff80;
+  border-radius: 6px;
+  background: #ffffff1a;
+  color: #fff;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.impersonation-banner button:hover {
+  background: #ffffff33;
+}
+
+/* ── 日志中心：筛选区 · 可拖拽列宽表格 · 详情抽屉 ── */
+.log-filter {
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.log-filter .fp-field {
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  gap: 4px;
+}
+.log-filter .fp-field > span {
+  font-size: 11.5px;
+}
+.log-filter .fp-field input,
+.log-filter .fp-field select {
+  width: 100%;
+}
+.log-filter .fp-field input[type="datetime-local"] {
+  width: 210px;
+}
+.log-filter .fp-field select {
+  width: 132px;
+}
+.log-filter .fp-wide {
+  flex: 1 1 240px;
+  min-width: 240px;
+}
+.log-filter .fp-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-self: flex-end;
+}
+/* 表格：固定布局才能让 colgroup 宽度生效；列宽由表头右缘拖拽 */
+.log-table-wrap {
+  overflow: auto;
+}
+.log-table {
+  table-layout: fixed;
+  border-collapse: collapse;
+  /* 宽度由内联样式设为 100%，列宽只作比例权重：既不右侧留白，也不横向溢出 */
+}
+.log-table th {
+  position: relative;
+  white-space: nowrap;
+}
+.log-table td {
+  overflow: hidden;
+  /* 日志行比业务表格更紧凑 */
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+/* 日志表：纯展示，无整行点击 */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 2;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+}
+.col-resizer:hover,
+body.col-resizing .col-resizer {
+  background: var(--blue);
+  opacity: 0.45;
+}
+body.col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.cell-ellipsis {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 长文本气泡：fixed 定位，避免被表格滚动容器裁剪 */
+.cell-tip {
+  position: fixed;
+  z-index: 120;
+  max-width: 520px;
+  padding: 8px 11px;
+  border-radius: 7px;
+  background: #16324e;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 8px 24px #0d213840;
+  pointer-events: none;
+}
+

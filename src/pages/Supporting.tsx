@@ -1,6 +1,6 @@
 ﻿import { AlarmConfiguration } from "./AlarmConfiguration";
+import { ParamCenter } from "./ParamCenter";
 import { rulesOf } from "../data/alarmRules";
-import { SystemAlarmParameters } from "../components/SystemAlarmParameters";
 import { ObjectLink, Pager } from "../components/Business";
 import { FilterPanel } from "../components/FilterPanel";
 import { useState } from "react";
@@ -15,7 +15,8 @@ import {
   Note,
   Modal,
 } from "../components/UI";
-import { RoleMatrix } from "../components/RoleMatrix";
+import { RoleAdmin } from "../components/RoleAdmin";
+import { LogCenter } from "./LogCenter";
 export function Supporting({ page }: { page: string }) {
   const { s, act } = useStore();
   const [rulePoint, setRulePoint] = useState("");
@@ -25,7 +26,6 @@ export function Supporting({ page }: { page: string }) {
     [modal, M] = useState(false),
     [name, N] = useState(""),
     [detail, D] = useState(""),
-    [bid, B] = useState("BIZ-20260922-001"),
     [pDev, PD] = useViewState("supporting.points.device", "全部"),
     [pMap, PM] = useViewState("supporting.points.map", "全部"),
     [pState, PS] = useViewState("supporting.points.state", "全部"),
@@ -131,37 +131,19 @@ export function Supporting({ page }: { page: string }) {
         <Btn onClick={() => go("point-edit", p.id)}>编辑巡检点</Btn>
       </div>,
     ]);
-  // 角色权限矩阵：管理员 / 非管理员 × 权限五要素，替代原通用配置表
-  if (page === "roles")
-    return (
-      <>
-        {/* SYS-02：安全性列为长期规划项，本轮记录不占工期 */}
-        <Note>
-          <b>安全性（SYS-02，长期规划）</b>：认证 / 密钥管理 / 高权限接管收敛与攻击测试为长远规划项。
-          本轮<b>把接管权限收敛到高权限角色并全程留痕</b>，不占用本轮工期（当前主要矛盾是机器人稳定性与业务闭环）。
-        </Note>
-        <RoleMatrix />
-      </>
-    );
+  // 角色 / 权限：角色列表 + 权限配置抽屉 + 角色模拟 + 审计日志
+  if (page === "roles") return <RoleAdmin />;
 
-  if (["audit", "interface-log", "dispatch-log", "replay"].includes(page)) {
+  // 日志中心：系统操作 / 任务运行 / 机器人操作（页内页签切换）
+  if (page === "audit") return <LogCenter />;
+
+  if (["dispatch-log", "replay"].includes(page)) {
     const logs = s.logs.filter(
       (l) =>
-        page === "audit" ||
         page === "replay" ||
-        (page === "interface-log" &&
-          ["EXTERNAL", "SYNC", "SYNC_STEP", "DISPATCH", "RECEIPT"].includes(
-            l.action,
-          )) ||
-        (page === "dispatch-log" &&
-          [
-            "ASSIGN",
-            "DISPATCH",
-            "PREEMPT",
-            "WITHDRAW",
-            "REORDER",
-            "RECEIPT",
-          ].includes(l.action)),
+        ["ASSIGN", "DISPATCH", "PREEMPT", "WITHDRAW", "REORDER", "RECEIPT"].includes(
+          l.action,
+        ),
     );
     return (
       <Panel
@@ -283,73 +265,6 @@ export function Supporting({ page }: { page: string }) {
   }
   // 设备主数据（阶段③）已独立成页：见 pages/DeviceMaster.tsx（沿用 equipment 路由），
   // 本文件中不再保留"由点位反推设备"的第二套口径
-  if (page === "integration")
-    return (
-      <>
-        <div className="grid two">
-          <Panel title="上层任务服务 · 演示调用方">
-            <Field label="来源系统">
-              <input readOnly value="企业巡检系统 DEMO" />
-            </Field>
-            <Field label="业务编号（幂等键）">
-              <input value={bid} onChange={(e) => B(e.target.value)} />
-            </Field>
-            <Note>
-              相同来源和业务编号返回同一任务，不重复生成。目标引用默认巡检路线。
-            </Note>
-            <Btn
-              primary
-              onClick={() => act({ type: "EXTERNAL", businessId: bid })}
-            >
-              模拟提交业务任务
-            </Btn>
-            <Btn onClick={() => go("dispatch")}>统一调度</Btn>
-          </Panel>
-          <Panel title="标准接口契约">
-            <pre>
-              {JSON.stringify(
-                {
-                  sourceSystem: "DEMO",
-                  businessId: bid,
-                  templateId: s.templates[0].id,
-                  priority: "普通",
-                  callback: "Mock 本地回调",
-                },
-                null,
-                2,
-              )}
-            </pre>
-            <p>提交 / 查询 / 取消任务 · 状态回传 · 结果回传</p>
-            <Badge>演示占位 · 不连接真实系统</Badge>
-          </Panel>
-        </div>
-        <div className="grid two">
-          {/* INT-01：多厂商标准化接口约定（方案项，先行登记） */}
-          <Panel title="多厂商标准化接口（INT-01）">
-            <Note>
-              平台 → 机器人标准化指令集：地图下发 · 巡检点 / 业务数据下发 · 任务下发 · 状态回报 ·
-              接管与会话 · 结果回传。
-            </Note>
-            <p className="muted">
-              厂商差异（固件 / 云台参数 / 镜头能力 / 导航栈）用<b>适配层 + 能力声明</b>隔离，不写进业务表；
-              该约定反向约束巡检点与上装参数的数据结构（与 DATA-01 同批确定）。
-            </p>
-          </Panel>
-        </div>
-        <Panel title="业务编号映射">
-          <Table
-            heads={["来源", "业务编号", "平台任务", "状态", "操作"]}
-            rows={s.requests.map((x) => [
-              "DEMO",
-              x.businessId,
-              x.taskId,
-              s.tasks.find((t) => t.id === x.taskId)?.state,
-              <Btn onClick={() => go("tasks", x.taskId)}>查询任务</Btn>,
-            ])}
-          />
-        </Panel>
-      </>
-    );
   if (page === "analytics" || page === "archive") {
     const completed = s.tasks.filter((t) => t.state === "完成").length;
     const stats = [
@@ -447,13 +362,15 @@ export function Supporting({ page }: { page: string }) {
       </>
     );
   }
+  // 参数配置中心：独立的双 Tab 页面（事件告警参数 / 字典与业务参数）
+  if (page === "settings") return <ParamCenter />;
+
   const extras = s.extras.filter(
     (x) => x.category === page && (x.name + x.detail).includes(q),
   );
   return (
     <>
       <div>
-        {page === "settings" && <SystemAlarmParameters />}
         <Panel
           title={pages.find((p) => p.id === page)?.name || page}
           extra={

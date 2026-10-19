@@ -16,7 +16,10 @@ import type { DeviceType } from "../data/types";
 
 export function RobotNew() {
   const { s, act } = useStore();
+  /** 机器人编码：平台内部主键（任务 / 日志 / 告警都按它关联） */
   const [rid, RID] = useState("");
+  /** 机器人编号（SN）：厂商出厂的硬件序列号，资产与售后口径 */
+  const [sn, SN] = useState("");
   const [name, NAME] = useState("");
   /** 所属区域：取自「后台管理 › 区域配置」，留空则首次「地图下发」时自动归属 */
   const [region, REGION] = useState("");
@@ -29,7 +32,8 @@ export function RobotNew() {
   const [railSection, RAIL] = useState("");
   const [firmware, FW] = useState("");
   const [err, ERR] = useState("");
-  const idTaken = s.robots.some((r) => r.id === rid.trim());
+  const idTaken = !!rid.trim() && s.robots.some((r) => r.id === rid.trim());
+  const snTaken = !!sn.trim() && s.robots.some((r) => r.sn === sn.trim());
   /**
    * 可选采集能力：取自「后台管理 › 机器人上装能力」中**启用**的上装，
    * 上装停用后这里就不再可选；后台尚未配置上装时退回内置采集方式，避免无能力可选。
@@ -42,7 +46,13 @@ export function RobotNew() {
     ),
   ];
   const capOptions = enabledKinds.length ? enabledKinds : captureKinds;
-  const valid = rid.trim() && !idTaken && name.trim() && caps.length > 0;
+  const valid =
+    !!rid.trim() &&
+    !idTaken &&
+    !!sn.trim() &&
+    !snTaken &&
+    !!name.trim() &&
+    caps.length > 0;
 
   /** 提交新增：校验通过后写入台账并回到机器台账 */
   function save() {
@@ -50,6 +60,7 @@ export function RobotNew() {
     const ok = act({
       type: "ADD_ROBOT",
       id: rid.trim(),
+      sn: sn.trim(),
       name: name.trim(),
       region: region || undefined,
       deviceType,
@@ -89,7 +100,7 @@ export function RobotNew() {
               </tr>
               <tr>
                 <th>
-                  机器人编码（唯一）<em className="req">*</em>
+                  机器人编码<em className="req">*</em>
                 </th>
                 <td>
                   <input
@@ -99,7 +110,24 @@ export function RobotNew() {
                   />
                   {idTaken && (
                     <p role="alert" className="reference-upload-error">
-                      编码 {rid} 已存在，请更换。
+                      编码 {rid.trim()} 已存在，请更换。
+                    </p>
+                  )}
+                </td>
+              </tr>
+              <tr>
+                <th>
+                  机器人编号（SN）<em className="req">*</em>
+                </th>
+                <td>
+                  <input
+                    value={sn}
+                    placeholder="例如 SN-AGV-2026-001"
+                    onChange={(e) => SN(e.target.value)}
+                  />
+                  {snTaken && (
+                    <p role="alert" className="reference-upload-error">
+                      编号 {sn.trim()} 已存在，请更换。
                     </p>
                   )}
                 </td>

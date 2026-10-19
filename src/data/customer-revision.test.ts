@@ -190,7 +190,7 @@ test("point rules treat inclusive bounds as normal; empty/disabled rules record 
 
 test("customer history additions retain task snapshots and original active task scope", () => {
   const s = seed();
-  assert.equal(s.schema, 10);
+  assert.equal(s.schema, 12);
   assert.equal(s.tasks.find(t=>t.id==="T009")!.items.length,3);
   const history=s.tasks.find(t=>t.id==="T040")!;
   assert.equal(history.index,history.items.length);

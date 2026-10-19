@@ -35,15 +35,21 @@ export const Badge = ({
   tone?: Tone;
 }) => {
   const text = String(children);
+  /**
+   * 无显式 tone 时按语义着色：
+   * 红 = 异常结束，绿 = 正常结束，黄 = 待处理 / 人工介入，蓝 = 进行中
+   */
   const cls =
     tone ??
-    (/失败|异常|歧义|离线|超限|待确认|已驳回|一级|紧急/.test(text)
+    (/失败|异常|歧义|离线|超限|待确认|已驳回|超期|取消|一级|紧急/.test(text)
       ? "red"
-      : /已启用|已同步|完成|空闲|已恢复|已确认|已通过|通过|正常|已落位/.test(text)
+      : /已启用|已同步|完成|空闲|已恢复|已确认|已通过|通过|正常|已落位/.test(
+            text,
+          )
         ? "green"
         : /待|暂停|草稿|未发布|接管|维护|孤立|二级|重要/.test(text)
           ? "amber"
-          : /三级|一般|普通/.test(text)
+          : /执行中|已分配|下发中|三级|一般|普通/.test(text)
             ? "blue"
             : "");
   return <span className={"badge " + cls}>{children}</span>;

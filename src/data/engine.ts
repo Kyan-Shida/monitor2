@@ -31,6 +31,8 @@ import type {
   AlarmPushStaff,
   RouteMode,
   RouteNode,
+  Extra,
+  Tenant,
 } from "./types";
 import {
   stages,
@@ -412,6 +414,33 @@ function algoFields(a: Action) {
   adapt.forEach((k) => must(algoKinds.includes(k), `检测类型「${k}」不合法`));
   return { deploy, adapt };
 }
+/** 租户编码：2–6 位大写字母 / 数字（作为数据名称前缀，如 HD· / XB·） */
+const TENANT_CODE = /^[A-Z0-9]{2,6}$/;
+/**
+ * 租户字段归一化 + 校验（新增 / 编辑共用）
+ * @description 名称与编码各自唯一：名称是界面识别口径，编码是数据名称前缀
+ * @param s 状态
+ * @param t 待保存租户（新增时 id 为空）
+ * @returns 归一化后的租户字段
+ * @throws 名称 / 编码缺失、格式非法或与现有租户重名 / 重码
+ */
+function tenantFields(s: State, t: Tenant): Tenant {
+  const name = String(t?.name || "").trim();
+  const code = String(t?.code || "").trim().toUpperCase();
+  must(name, "请填写租户名称");
+  must(code, "请填写租户编码");
+  must(TENANT_CODE.test(code), "租户编码为 2–6 位大写字母或数字（如 HD / XB）");
+  const list = s.tenants || [];
+  must(
+    !list.some((x) => x.name === name && x.id !== t.id),
+    `已存在同名租户「${name}」`,
+  );
+  must(
+    !list.some((x) => x.code === code && x.id !== t.id),
+    `已存在相同编码的租户「${code}」`,
+  );
+  return { ...t, name, code, status: t.status === "停用" ? "停用" : "启用" };
+}
 export function transition(state: State, a: Action): State {
   const s = structuredClone(state);
   let object = a.id || a.robotId || a.mapId || "平台";
@@ -592,6 +621,57 @@ export function transition(state: State, a: Action): State {
       s.alarmClasses = (s.alarmClasses || []).filter((x) => x.id !== a.id);
       object = gone!.id;
       detail = `告警类别「${gone!.name}」已删除`;
+      break;
+    }
+    /**
+     * 租户新增（系统设置 › 租户管理）
+     * @description 清单是平台级数据（跨租户同一份）；新租户默认启用，
+     *              首次切换进入时由 seed 生成一份带编码前缀的演示数据
+     */
+    case "ADD_TENANT": {
+      must(s.roleId === "admin", "仅管理员可维护租户");
+      const t = tenantFields(s, a.tenant as Tenant);
+      const next: Tenant = {
+        ...t,
+        id: id("T-"),
+        updatedAt: new Date().toLocaleString("zh-CN"),
+      };
+      s.tenants = (s.tenants || []).concat(next);
+      object = next.id;
+      detail = `租户「${next.name}」已创建（编码 ${next.code}）`;
+      break;
+    }
+    /**
+     * 租户修改（系统设置 › 租户管理）：名称 / 编码 / 启用停用
+     * @description 停用校验两条硬约束：
+     *              ① 当前正在使用的租户不能停用（否则当前会话的数据来源直接失效）；
+     *              ② 至少保留一个启用租户（否则顶部切换器无项可选）；
+     *              停用后的租户在顶部切换器中禁用，只能由管理员在此重新启用
+     */
+    case "UPDATE_TENANT": {
+      must(s.roleId === "admin", "仅管理员可维护租户");
+      const list = s.tenants || [];
+      const old = list.find((x) => x.id === a.tenant?.id);
+      must(old, "租户不存在");
+      const t = tenantFields(s, a.tenant as Tenant);
+      if (t.status === "停用") {
+        must(
+          old!.id !== s.tenantId,
+          "当前正在使用的租户不能停用，请先切换到其他租户",
+        );
+        must(
+          list.some((x) => x.id !== old!.id && x.status !== "停用"),
+          "至少要保留一个启用状态的租户",
+        );
+      }
+      const next: Tenant = {
+        ...old!,
+        ...t,
+        updatedAt: new Date().toLocaleString("zh-CN"),
+      };
+      s.tenants = list.map((x) => (x.id === next.id ? next : x));
+      object = next.id;
+      detail = `租户「${next.name}」已保存（${next.status} · 编码 ${next.code}）`;
       break;
     }
     /**
@@ -2823,31 +2903,34 @@ export function transition(state: State, a: Action): State {
       detail = `告警 ${al.id} 已处理为「${a.result}」`;
       break;
     }
-    case "EXTERNAL": {
-      must(a.businessId, "请输入业务编号");
-      const old = s.requests.find((r) => r.businessId === a.businessId);
-      if (old) {
-        object = old.taskId;
-        detail = "同一调用方+业务编号幂等命中";
-        break;
-      }
-      const t = createTask(
-        "上层业务任务 " + a.businessId,
-        s.templates[0].points,
-        "上层业务平台",
-      );
-      s.requests.push({ businessId: a.businessId, taskId: t.id });
-      break;
-    }
     case "EXTRA_SAVE": {
       must(a.name, "名称不能为空");
       const old = s.extras.find((x) => x.id === a.id);
-      const x = {
-        id: old?.id || id("CFG"),
+      const type: Extra["type"] =
+        a.paramType === "数据字典" ? "数据字典" : "业务参数";
+      // 数据字典：枚举项即「配置值」，列表详情统一由枚举项拼出，避免两处口径不一致
+      const values = Array.isArray(a.values)
+        ? (a.values as { key: string; value: string }[]).filter(
+            (v) => String(v.key || "").trim(),
+          )
+        : [];
+      // 编号：新增时可手填，必须全表唯一；编辑沿用原编号
+      const wantId = String(a.id || "").trim();
+      must(
+        !wantId || !!old || !s.extras.some((x) => x.id === wantId),
+        `编号 ${wantId} 已存在`,
+      );
+      const x: Extra = {
+        id: old?.id || wantId || id("CFG"),
         category: a.category,
         name: a.name,
         status: a.status || "启用",
-        detail: a.detail || "",
+        detail:
+          type === "数据字典"
+            ? values.map((v) => v.value || v.key).join(", ") || "—"
+            : a.detail || "",
+        type,
+        values,
       };
       s.extras = old
         ? s.extras.map((y) => (y.id === old.id ? x : y))
@@ -2939,6 +3022,12 @@ export function transition(state: State, a: Action): State {
       must(rid, "请填写机器人编码");
       must(!s.robots.some((r) => r.id === rid), `机器人编码 ${rid} 已存在`);
       must(String(a.name || "").trim(), "请填写机器人名称");
+      // 硬件序列号（SN）：可选填，填了就必须全局唯一
+      const sn = String(a.sn || "").trim();
+      must(
+        !sn || !s.robots.some((r) => r.sn === sn),
+        `机器人编号（SN）${sn} 已存在`,
+      );
       // 区域下拉与校验同一份口径（areaOptions：区域配置 ∪ 设备实际归属），不在清单里的区域一律拒绝
       const region = String(a.region || "").trim();
       must(
@@ -2978,6 +3067,7 @@ export function transition(state: State, a: Action): State {
         constraints,
         health: 100,
         firmware: String(a.firmware || "").trim() || "v1.0.0",
+        sn: sn || undefined,
       };
       s.robots.unshift(robot);
       object = robot.id;
@@ -3271,45 +3361,6 @@ export function transition(state: State, a: Action): State {
       must(added.length, "所选算法都已在厂区启用");
       object = ids.join(",");
       detail = `已从算法库启用 ${added.length} 个算法：${added.join("、")}`;
-      break;
-    }
-    // ── 机器人能力（后台管理 › 机器人能力）：两级 —— 能力类型 → 能力参数 ──
-    case "ADD_ROBOT_ABILITY_PARAM": {
-      const list = (s.robotAbilities ??= []);
-      const kind = list.find((k) => k.id === a.kindId);
-      must(kind, "未找到能力类型");
-      const name = String(a.name || "").trim();
-      must(name, "请填写能力参数名称");
-      must(
-        !kind!.params.some((p) => p.name === name),
-        `能力参数「${name}」已存在`,
-      );
-      const pid = "RA-" + Date.now().toString(36);
-      kind!.params.push({ id: pid, name });
-      object = pid;
-      detail = `已在「${kind!.name}」下新增能力参数：${name}`;
-      break;
-    }
-    case "DELETE_ROBOT_ABILITY_PARAM": {
-      const list = (s.robotAbilities ??= []);
-      const kind = list.find((k) => k.id === a.kindId);
-      must(kind, "未找到能力类型");
-      const hit = kind!.params.find((p) => p.id === a.paramId);
-      must(hit, "未找到要删除的能力参数");
-      kind!.params = kind!.params.filter((p) => p.id !== a.paramId);
-      object = hit!.id;
-      detail = `已删除能力参数「${hit!.name}」`;
-      break;
-    }
-    case "SET_ROBOT_ABILITY_STATE": {
-      const list = (s.robotAbilities ??= []);
-      const kind = list.find((k) => k.id === a.kindId);
-      must(kind, "未找到能力类型");
-      const hit = kind!.params.find((p) => p.id === a.paramId);
-      must(hit, "未找到该能力参数");
-      hit!.state = a.state === "停用" ? "停用" : "启用";
-      object = hit!.id;
-      detail = `能力参数「${hit!.name}」已${hit!.state === "停用" ? "停用" : "启用"}`;
       break;
     }
     case "DELETE_ROBOT_PAYLOAD": {
