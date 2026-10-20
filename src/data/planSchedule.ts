@@ -13,7 +13,7 @@ export const planKindOf = (p: Plan): PlanKind =>
 /**
  * 计划的发生时刻（北京时间）
  * @description 定时任务只返回「执行日期 + 执行时间」这一个时刻（一次性，错过即作废，不补跑）；
- *              周期任务按 每天 / 每周 / 每班 在 now 前后各一天内展开
+ *              周期任务按 每月 / 每天 / 每小时 在 now 前后各一天内展开
  * @param p 计划
  * @param now 当前时刻
  * @returns 发生时刻毫秒数列表
@@ -31,16 +31,18 @@ export function planOccurrences(p: Plan, now: number): number[] {
     .filter((d) => d >= p.start && d <= p.end)
     .flatMap((d) => {
       const anchor = Date.parse(d + "T" + p.time + ":00+08:00");
+      // 每月：只在与有效期首日同一个「日号」的那天执行（首日为 31 号时，小月跳过）
       if (
-        p.cycle === "每周" &&
-        new Date(d).getUTCDay() !== new Date(p.start).getUTCDay()
+        p.cycle === "每月" &&
+        new Date(d).getUTCDate() !== new Date(p.start).getUTCDate()
       )
         return [];
-      return p.cycle === "每班"
-        ? [anchor, anchor + 8 * 3600000, anchor + 16 * 3600000].filter(
-            (x) => businessDate(x) <= p.end,
-          )
-        : [anchor];
+      // 每小时：以执行时间为起点，当日内每小时一次（不跨到次日重复展开）
+      if (p.cycle === "每小时")
+        return Array.from({ length: 24 }, (_, i) => anchor + i * 3600000).filter(
+          (x) => businessDate(x) === d,
+        );
+      return [anchor];
     })
     .filter((x) => Number.isFinite(x));
 }

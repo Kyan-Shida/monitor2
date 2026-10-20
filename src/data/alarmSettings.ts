@@ -250,9 +250,11 @@ export function mainItemOf(
 export function settingOf(
   s: AlarmSettingHost,
   t: BusinessTarget,
-): Required<Pick<BusinessAlarm, "category" | "enabled" | "items">> {
+): Required<Pick<BusinessAlarm, "category" | "enabled" | "items" | "main">> {
   const items = t.alarm?.items?.length ? t.alarm.items : [mainItemOf(s, t)];
   return {
+    // 告警大类：老数据没有时按业务预警兜底（机器人预警是本体事件，不绑台账）
+    main: t.alarm?.main || "业务预警",
     category: t.alarm?.category || defaultAlarmClassOf(s, t),
     enabled: t.alarm?.enabled !== false,
     items: items.map((it, i) => ({

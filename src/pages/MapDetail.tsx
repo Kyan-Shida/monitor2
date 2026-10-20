@@ -31,12 +31,12 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
   const openDispatch = () => DRAWER("下发");
 
   /**
-   * 本图的业务使用数据（真实业务只关心三件事：图里有多少活、谁在用、用得对不对）
-   * - pts：本图上的巡检点（地图只是底图，点位是独立标定数据，按 mapId 关联）
+   * 本图的业务使用数据（真实业务只关心两件事：谁在用、用得对不对）
    * - holders：已激活本图的设备（robot.mapId 指向本图即视为在用）
    * - stale：激活版本与本图当前版本不一致的设备——不下发就不算真正生效
+   * @description 「巡检点 / 标定点」不再在地图详情展示：标定数据独立放「巡检点管理」，
+   *              地图详情只讲纯点云底图本身的使用情况
    */
-  const pts = s.points.filter((p) => p.mapId === m.id);
   const holders = s.robots.filter((r) => r.mapId === m.id);
   const stale = holders.filter((r) => r.mapVersion !== m.version);
 
@@ -87,9 +87,8 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
       </Panel>
 
       {/*
-        可用性链路：按「建图 → 有活 → 在跑 → 跑得对」的顺序排，任一步不通这张图就干不了活。
+        可用性链路：按「建图 → 在跑 → 跑得对」的顺序排，任一步不通这张图就干不了活。
         - 底图：没有底图就无法在图上标注巡检点（链路起点）
-        - 巡检点：0 个说明本图还没标定，生成不了任何巡检任务
         - 已激活设备：0 台说明本图还没部署到机器人（刚导入属于正常状态）
         - 版本同步：逐台亮出版本，谁落后一目了然，并直接给「去更新」入口；
                     0 台不是沉默，而是提示「尚未下发给任何设备」并给下发入口
@@ -103,20 +102,6 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
             ) : (
               <>
                 <Badge tone="amber">缺失</Badge> 无底图无法在图上标注巡检点
-              </>
-            )}
-          </dd>
-          <dt>巡检点</dt>
-          <dd>
-            {pts.length ? (
-              <>
-                {pts.length} 个
-                <Btn onClick={() => go("annotation", m.id)}>巡检点管理 →</Btn>
-              </>
-            ) : (
-              <>
-                <Badge tone="amber">未标定</Badge> 本图还不能生成巡检任务
-                <Btn onClick={() => go("annotation", m.id)}>去标定 →</Btn>
               </>
             )}
           </dd>

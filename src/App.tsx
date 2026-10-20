@@ -712,6 +712,8 @@ export default function App() {
             <AlarmCenter />
             {/* 通知中心：系统消息 / 任务通知 / 审批提醒 合并下拉 */}
             <NotificationCenter />
+            {/* 分组分隔：告警 / 通知 与「租户 · 账号」两类上下文分开 */}
+            <span className="header-sep" aria-hidden="true" />
             {/* 顶栏常驻租户切换（多租户省事版）：仿 SaaS 组织上下文切换 */}
             <TenantSwitcher />
             {/* 用户下拉菜单：登录账号 + 数据范围 + 退出登录 */}

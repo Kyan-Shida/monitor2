@@ -1,22 +1,25 @@
 /**
  * @file route.test.ts
- * @description 巡检路线（子线）回归：父线地图落库、点位顺序即执行顺序、跨图选点被拦
- * @interaction 消费 engine 的 SAVE_TEMPLATE / seed 的路线数据
+ * @description 巡检路线（子线）回归：路线 = 有序巡检点数组、不绑定地图、跨图点位照常保存
+ * @interaction 消费 engine 的 SAVE_TEMPLATE / seed 的路线数据 / routeMaps 的展示底图推导
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { publishStateOf, transition as run } from "./engine";
-import { shortestRoadPath } from "./roadnet";
+import { routeAlongRoad, shortestRoadPath } from "./roadnet";
 import { targetsOf } from "./mapCalibration";
+import { routeMapIds, routeRenderMapId } from "./routeMaps";
 
-test("巡检路线：落父线地图、保留点位顺序、跨图选点被拦", () => {
+test("巡检路线：只存点位顺序、不绑地图，跨图点位照常保存", () => {
   let s = seed();
   const seeded = s.templates.find((x) => x.id === "TMP01")!;
-  // 种子路线绑定父线地图（子线以父线为基线）
-  assert.equal(seeded.mapId, "MAP-A03");
+  // 路线不绑定地图：数据里没有 mapId，展示底图按点位反推
+  assert.equal("mapId" in seeded, false);
+  assert.equal(routeRenderMapId(s, seeded.points), "MAP-A03");
   assert.equal(
-    s.maps.find((m) => m.id === seeded.mapId)!.roadnet!.paths.length > 0,
+    s.maps.find((m) => m.id === routeRenderMapId(s, seeded.points))!.roadnet!
+      .paths.length > 0,
     true,
     "示例地图应带父线路网",
   );
@@ -27,39 +30,48 @@ test("巡检路线：落父线地图、保留点位顺序、跨图选点被拦",
     id: "TMP01",
     name: "一期罐区常规巡检路线",
     points: ["P003", "P001", "P002"],
-    mapId: "MAP-A03",
     state: "启用",
     end: "返航",
   });
   const saved = s.templates.find((x) => x.id === "TMP01")!;
   assert.deepEqual(saved.points, ["P003", "P001", "P002"]);
-  assert.equal(saved.mapId, "MAP-A03");
+  assert.equal("mapId" in saved, false, "保存后也不落地图字段");
   assert.equal(saved.version, 2);
 
-  // 跨图选点：一条路线只能属于同一张地图（父线），否则机器狗无法执行
+  // 跨图点位：路线只是点位数组，保存放行（「一次只跑一张图」是执行侧口径，由 createTask 把关）
   s.points.push({
     ...s.points.find((p) => p.id === "P001")!,
     id: "P-X",
     mapId: "MAP-B01",
     targetId: "O999",
   });
-  assert.throws(
-    () =>
-      run(s, {
-        type: "SAVE_TEMPLATE",
-        id: "TMP01",
-        name: "跨图路线",
-        points: ["P001", "P-X"],
-        state: "启用",
-        end: "返航",
-      }),
-    /同一张地图/,
-  );
-  // 被拦后原路线不受影响（不产生半成品版本）
-  assert.equal(s.templates.find((x) => x.id === "TMP01")!.version, 2);
+  s = run(s, {
+    type: "SAVE_TEMPLATE",
+    id: "TMP01",
+    name: "跨图路线",
+    points: ["P001", "P-X"],
+    state: "启用",
+    end: "返航",
+  });
+  const cross = s.templates.find((x) => x.id === "TMP01")!;
+  assert.deepEqual(cross.points, ["P001", "P-X"]);
+  assert.deepEqual(routeMapIds(s, cross.points), ["MAP-A03", "MAP-B01"]);
+  assert.equal(routeRenderMapId(s, cross.points), "MAP-A03", "底图取首个点位的地图");
+
+  // 地图更新（换版）不影响路线内容
+  const before = JSON.stringify(cross.points);
+  const refreshed = run(s, {
+    type: "SAVE_TEMPLATE",
+    id: "TMP01",
+    name: "跨图路线",
+    points: ["P001", "P-X"],
+    state: "启用",
+    end: "返航",
+  });
+  assert.equal(JSON.stringify(refreshed.templates.find((x) => x.id === "TMP01")!.points), before);
 });
 
-test("自定义路线：路径锚点落「巡检点 id」，误落定位点 id 会被拦下", () => {
+test("自建路线：路径锚点落「巡检点 id」，误落定位点 id 会被拦下", () => {
   const s0 = seed();
   const p1 = s0.points.find((x) => x.id === "P001")!;
   const p2 = s0.points.find((x) => x.id === "P002")!;
@@ -73,7 +85,7 @@ test("自定义路线：路径锚点落「巡检点 id」，误落定位点 id �
     id: "TMP01",
     name: template.name,
     points: [p1.id, p2.id],
-    mode: "自定义路线",
+    mode: "自建路线",
     path: [
       { x: p1.x, y: p1.y, pointId: p1.id },
       { x: p2.x, y: p2.y, pointId: p2.id, curve: true },
@@ -82,11 +94,11 @@ test("自定义路线：路径锚点落「巡检点 id」，误落定位点 id �
     end: "返航",
   });
   const saved = s.templates.find((x) => x.id === "TMP01")!;
-  assert.equal(saved.mode, "自定义路线");
+  assert.equal(saved.mode, "自建路线");
   assert.deepEqual(saved.points, [p1.id, p2.id], "执行点按画线吸附顺序落库");
-  assert.equal(saved.state, "停用", "自定义路线保存后一律停用，待导航验证");
+  assert.equal(saved.state, "停用", "自建路线保存后一律停用，待导航验证");
   assert.equal(saved.verified, false);
-  // 停用中的自定义路线不能直接启用，必须先跑导航验证
+  // 停用中的自建路线不能直接启用，必须先跑导航验证
   assert.throws(
     () => run(s, { type: "TOGGLE_TEMPLATE_STATE", id: "TMP01" }),
     /导航验证/,
@@ -98,9 +110,9 @@ test("自定义路线：路径锚点落「巡检点 id」，误落定位点 id �
       run(s0, {
         type: "SAVE_TEMPLATE",
         id: "TMP01",
-        name: "自定义路线（误用定位点 id）",
+        name: "自建路线（误用定位点 id）",
         points: [p1.targetId, p2.targetId],
-        mode: "自定义路线",
+        mode: "自建路线",
         path: [
           { x: p1.x, y: p1.y, pointId: p1.targetId },
           { x: p2.x, y: p2.y, pointId: p2.targetId },
@@ -147,6 +159,17 @@ test("子线沿父线走：取路网最短路径，不连通时才回退直连",
   );
   // 起终点相同：无需寻路
   assert.deepEqual(shortestRoadPath(paths, coord, "O101", "O101"), ["O101"]);
+
+  // 点位没被标进路网（O108 / O109 不在任何路网段）：就近接入后仍沿路网走，而不是两点直连
+  const snapped = routeAlongRoad(paths, coord, "O108", "O103")!;
+  assert.ok(snapped.length > 3, "端点不在路网时应先接入路网，再沿路网走完");
+  assert.equal(snapped[0], "O108");
+  assert.equal(snapped[snapped.length - 1], "O103");
+  // 两端都在网内时，与纯寻路结果一致
+  assert.deepEqual(
+    routeAlongRoad(paths, coord, "O101", "O103"),
+    shortestRoadPath(paths, coord, "O101", "O103"),
+  );
 });
 
 test("父线是单一连通块（有孤立段时子线只能直连）", () => {

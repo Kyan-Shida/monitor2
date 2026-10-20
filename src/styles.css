@@ -2849,17 +2849,6 @@ hr {
 .modal.slim {
   width: min(460px, 92vw);
 }
-/* 「更多操作」按钮组：等宽网格对齐，比 flex 换行更整齐 */
-.map-more-actions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-.map-more-actions .btn {
-  width: 100%;
-  min-height: 36px;
-  justify-content: center;
-}
 .modal .panel-head {
   flex: none;
   padding: 19px 24px;
@@ -3568,12 +3557,74 @@ hr {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
-  overflow: hidden;
+  /* 不裁剪：卡片内「⋯」下拉菜单要能盖出卡片外 */
+  overflow: visible;
 }
 .map-card-img {
   aspect-ratio: 16 / 11;
   background: #f4f6f9;
   border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  overflow: hidden;
+}
+/* 数据包（还不是地图）：名称用醒目色 */
+.map-packet-name {
+  color: #d0342c;
+}
+/* 卡片「⋯」：就地小下拉菜单 */
+.map-more {
+  position: relative;
+  z-index: 20;
+  display: inline-flex;
+}
+.map-more-menu {
+  /* 固定定位：位置由按钮屏幕坐标算出（见 Maps.tsx toggleMore），避免被面板裁切 */
+  position: fixed;
+  z-index: 220;
+  min-width: 132px;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(19, 45, 73, 0.16);
+}
+.map-more-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.map-more-item > svg {
+  color: #8c9bac;
+}
+.map-more-item:hover {
+  background: #f2f7fc;
+  color: var(--blue);
+}
+.map-more-item:hover > svg {
+  color: var(--blue);
+}
+.map-more-item.danger {
+  color: #c0393d;
+}
+.map-more-item.danger > svg {
+  color: #c0393d;
+}
+.map-more-item.danger:hover {
+  background: #fdf3f3;
+  color: #d33a3f;
 }
 .map-card-img img {
   display: block;
@@ -11839,16 +11890,15 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .user-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  width: 109px;
-  height: 42px;
-  padding: 0 10px 0 6px;
+  gap: 7px;
+  height: 34px;
+  padding: 0 8px 0 5px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: none;
   cursor: pointer;
-  font-size: 11px;
-  line-height: 12px;
+  font-size: 12px;
+  line-height: 13px;
   transition:
     background 0.15s,
     border-color 0.15s;
@@ -11862,12 +11912,12 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background: linear-gradient(135deg, #2f7bd9, #1f5cb8);
   color: #fff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -11880,13 +11930,13 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  line-height: 12px;
-  font-size: 11px;
+  line-height: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text);
 }
 .user-name small {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 400;
   color: var(--muted);
 }
@@ -11931,25 +11981,53 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   color: var(--muted);
   letter-spacing: 0.04em;
 }
-/* 顶栏常驻租户切换器：仿 SaaS 组织上下文切换 */
+/* 顶栏常驻租户切换器：仿 SaaS 组织上下文切换（图标 + 当前租户名） */
 .tenant-switcher {
   position: relative;
 }
 .ts-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 6px;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
-  color: inherit;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.ts-btn:hover:not(:disabled),
+.ts-btn[aria-expanded="true"] {
+  background: #f2f7fc;
+  border-color: var(--border);
 }
 .ts-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.7;
+  color: var(--muted);
+  font-weight: 500;
+}
+/* 租户名：超长省略，避免挤压顶栏 */
+.ts-btn-name {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ts-caret {
+  color: var(--muted);
+}
+/* 顶栏分组分隔：告警/通知 | 租户 · 账号 */
+.header-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 -3px;
+  background: var(--border);
 }
 .ts-label {
   color: var(--muted);
@@ -12131,7 +12209,6 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 .ts-check {
   margin-left: auto;
-}
 }
 .user-menu-item {
   display: flex;
@@ -13017,6 +13094,10 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   border-color: #77a7df;
   color: #165da8;
 }
+/* 任务列表视图切换：今日计划 / 任务记录 */
+.task-view-tabs {
+  margin: 0 0 12px;
+}
 .dispatch-filter {
   display: flex;
   align-items: center;
@@ -13400,6 +13481,13 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .route-preview-head .muted {
   color: #8c9bac;
 }
+/* 预览底图切换：路线不绑地图，切图只换底图，不改点位与顺序 */
+.route-map-select {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  max-width: 260px;
+}
 .route-preview-toggle {
   display: flex;
   align-items: center;
@@ -13468,7 +13556,7 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .route-preview-tools .route-preview-toggle {
   margin-left: 6px;
 }
-/* 自定义路线：自绘线路（绿色实线）与父子线（蓝色）区分开 */
+/* 自建路线：自绘线路（绿色实线）与父子线（蓝色）区分开 */
 .route-seg.custom {
   stroke: #16a34a;
 }
@@ -14763,7 +14851,7 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   --cs-col-center: 52%;
   --cs-col-right: 26%;
   --cs-left-a: 34%;   /* 设备状态（筛选 + 机器列表） */
-  --cs-left-b: 26%;   /* 当前设备（3 行键值 + 申请接管 / 一键返航 + 提示，格子需够高否则卡内滚动） */
+  --cs-left-b: 26%;   /* 当前设备（3 行键值 + 进行接管 / 一键返航 + 提示，格子需够高否则卡内滚动） */
   --cs-left-c: 12%;   /* 采集数据流 */
   --cs-left-d: 28%;   /* 巡检明细 */
   --cs-right-a: 40%;  /* 告警 · 去重合并 */
@@ -14811,7 +14899,7 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* 内容超高时在卡内滚动，而不是溢出压到相邻元素上（曾出现「申请接管」按钮与 kv 文字重叠） */
+  /* 内容超高时在卡内滚动，而不是溢出压到相邻元素上（曾出现「进行接管」按钮与 kv 文字重叠） */
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: thin;

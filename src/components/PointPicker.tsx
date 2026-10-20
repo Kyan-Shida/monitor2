@@ -390,7 +390,7 @@ export function PointPicker({
       {askOptimize && (
         <Modal title="最优排序" onClose={() => ASK(false)}>
           <p>
-            依据固定路线（路网）节点序列重排已选巡检点，生成无折返执行顺序。
+            依据路网节点序列重排已选巡检点，生成无折返执行顺序。
             本次调整 {picked.length} 个巡检点的执行次序。
           </p>
           <div className="modal-actions">

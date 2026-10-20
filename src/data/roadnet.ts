@@ -95,3 +95,65 @@ export function shortestRoadPath(
   }
   return out;
 }
+
+/** 就近路网节点（点位没被标进路网时，找最近的已标定位点接入） */
+function nearestNode(
+  paths: RoadnetPath[],
+  at: (id: string) => RoadPoint | undefined,
+  id: string,
+): { node: string; dist: number } | null {
+  const p = at(id);
+  if (!p) return null;
+  let best: { node: string; dist: number } | null = null;
+  for (const path of paths)
+    for (const nid of path.pointIds) {
+      if (nid === id) continue;
+      const q = at(nid);
+      if (!q) continue;
+      const d = Math.hypot(p.x - q.x, p.y - q.y);
+      if (!best || d < best.dist) best = { node: nid, dist: d };
+    }
+  return best;
+}
+
+/**
+ * 沿路网的行驶路径（端点可不在路网上）
+ * @description 预设路线要求「按路网走」：点位自身没被标进路网（标定只连了路网节点、
+ *              没把该巡检点的定位点连进去）时，先就近接入路网节点，再沿路网走完，
+ *              末端再短接回点位——而不是两点直接连线穿墙。
+ *              只有「接入距离超阈值」或「两端分别落在两个不连通的路网块」时才返回 null（调用方回退直连）。
+ * @param paths 父线（线 / 弧）
+ * @param at 定位点坐标查询
+ * @param from 起点定位点 id
+ * @param to 终点定位点 id
+ * @param snapR 就近接入的最大距离（百分比坐标，默认 12）
+ * @returns 途经的定位点 id 序列（含首尾）；接不上路网时返回 null
+ */
+export function routeAlongRoad(
+  paths: RoadnetPath[],
+  at: (id: string) => RoadPoint | undefined,
+  from: string,
+  to: string,
+  snapR = 12,
+): string[] | null {
+  const direct = shortestRoadPath(paths, at, from, to);
+  if (direct) return direct;
+  if (!at(from) || !at(to)) return null;
+  /** 该定位点本身是否已被标进路网 */
+  const inNet = (id: string) =>
+    !!at(id) && paths.some((p) => p.pointIds.includes(id));
+  /** 在网内的端点原样用；不在网的就近接入，接不上（超阈值）则放弃 */
+  const attach = (id: string): string | null => {
+    if (inNet(id)) return id;
+    const n = nearestNode(paths, at, id);
+    return n && n.dist <= snapR ? n.node : null;
+  };
+  const head = attach(from);
+  const tail = attach(to);
+  if (!head || !tail) return null;
+  // 两端落在互不连通的路网块：不硬接，交给调用方回退直连
+  const core = shortestRoadPath(paths, at, head, tail);
+  if (!core) return null;
+  const out = [from, ...core, to];
+  return out.filter((id, i) => i === 0 || id !== out[i - 1]);
+}

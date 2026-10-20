@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Boxes, Check, Lock } from "lucide-react";
+import { Boxes, Check, ChevronDown, Lock } from "lucide-react";
 import { useStore } from "../data/store";
 import { isSuper } from "../data/auth";
 
@@ -31,7 +31,8 @@ export function TenantSwitcher() {
   return (
     <div className="tenant-switcher" ref={ref}>
       <button
-        className="ts-btn"
+        className={"ts-btn" + (canSwitch ? "" : " locked")}
+        aria-expanded={open}
         onClick={() => canSwitch && setOpen(!open)}
         disabled={!canSwitch}
         title={
@@ -40,7 +41,9 @@ export function TenantSwitcher() {
             : `当前租户 · ${current?.name || ""}（账号仅限本租户）`
         }
       >
-        {canSwitch ? <Boxes size={17} /> : <Lock size={14} />}
+        {canSwitch ? <Boxes size={15} /> : <Lock size={13} />}
+        <span className="ts-btn-name">{current?.name || "未选择租户"}</span>
+        {canSwitch && <ChevronDown size={12} className="ts-caret" />}
       </button>
       {open && canSwitch && (
         <div className="ts-menu" role="menu">

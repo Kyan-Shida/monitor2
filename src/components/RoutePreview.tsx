@@ -4,9 +4,10 @@
  * @interaction Planning.tsx（巡检路线编辑 / 编辑内置页）、QuickTaskDrawer.tsx（临时任务）
  *
  * 术语口径：
- * - 固定路线 = 一张区域地图上的完整路网（标定工作台画出的线 / 弧），是巡检路线的基线；
- * - 自定义路线 = 不走路网、在图上自绘的线路（保存后停用，须导航验证后才可启用）；
- * - 机器狗沿固定路线行驶、按路线的点位顺序作业，故相邻停靠点之间**沿路网**画线（不直连，避免"穿墙"）。
+ * - 路线 = 一组有序巡检点，**不绑定地图**；底图只用来把点位与线路画出来；
+ * - 地图路网 = 一张区域地图上已标定的线 / 弧（预设路线沿它自动寻路）；
+ * - 自建路线 = 不走路网、在图上自绘的线路（保存后停用，须导航验证后才可启用）；
+ * - 机器狗沿路网行驶、按路线的点位顺序作业，故相邻停靠点之间**沿路网**画线（不直连，避免"穿墙"）。
  *
  * 坐标口径与 MapImageCanvas 一致：底图等比缩放后得到绘制区（plate），
  * 停靠点与连线都以该绘制区为参照定位，保证图与点严格对齐、不变形。
@@ -15,7 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useStore } from "../data/store";
 import { targetsOf } from "../data/mapCalibration";
-import { shortestRoadPath } from "../data/roadnet";
+import { routeAlongRoad } from "../data/roadnet";
 import { SAMPLE_MAP_IMAGE } from "../data/sampleMap";
 import { Btn, Note } from "./UI";
 import type { MapAsset, Point, RouteNode } from "../data/types";
@@ -36,19 +37,25 @@ const SNAP_R = 4;
 
 export function RoutePreview({
   map,
+  maps,
+  onMapChange,
   stops,
   path,
   onPathChange,
   height = PREVIEW_H,
 }: {
-  /** 父线所属地图 */
+  /** 展示用的地图（底图） */
   map?: MapAsset;
+  /** 可切换的底图清单：传了就在头部显示切图下拉（纯展示，不影响路线数据） */
+  maps?: MapAsset[];
+  /** 切图回调 */
+  onMapChange?: (mapId: string) => void;
   /** 子线停靠点：**数组顺序即机器狗执行顺序** */
   stops: Point[];
   /**
-   * 自定义线路锚点
-   * @description 传数组即进入「自定义路线」模式（不再沿父线寻路，改用这条自绘线路）；
-   *              传 undefined 表示跟随父线
+   * 自建线路锚点
+   * @description 传数组即进入「自建路线」模式（不再沿父线寻路，改用这条自绘线路）；
+   *              传 undefined 表示预设路线
    */
   path?: RouteNode[];
   /**
@@ -67,15 +74,15 @@ export function RoutePreview({
   /** 是否在停靠点旁显示巡检点名称（对应工具条「显示点名称」开关） */
   const [showLabels, SETLABELS] = useState(false);
   /**
-   * 选中的元素 id（父线 / 停靠点 / 自定义路线节点）
+   * 选中的元素 id（父线 / 停靠点 / 自建路线节点）
    * @description 前缀区分三类元素，右侧参数面板按前缀取对应参数
    */
   const [sel, SEL] = useState("");
   /** 「元素浏览」抽屉：列出图上全部元素，点行即选中并高亮 */
   const [browse, BROWSE] = useState(false);
   /**
-   * 是否处于「自定义路线」模式
-   * @description 由上层是否传入 path 驱动：自定义线路不走父线，须先在图上画线并经导航验证
+   * 是否处于「自建路线」模式
+   * @description 由上层是否传入 path 驱动：自建线路不走父线，须先在图上画线并经导航验证
    */
   const custom = !!onPathChange && path !== undefined;
   /**
@@ -102,7 +109,7 @@ export function RoutePreview({
   if (!map)
     return (
       <section className="route-preview">
-        <Note>请先选择固定路线地图，再挑选巡检点组成路线。</Note>
+        <Note>请先挑选巡检点，路线会按点位所在的地图铺在底图上。</Note>
       </section>
     );
 
@@ -120,7 +127,7 @@ export function RoutePreview({
   const legs = located.slice(1).map((p, i) => {
     const from = located[i].targetId;
     const to = p.targetId;
-    const road = shortestRoadPath(parentPaths, at, from, to);
+    const road = routeAlongRoad(parentPaths, at, from, to);
     return {
       key: p.id,
       onRoad: !!road,
@@ -287,7 +294,7 @@ export function RoutePreview({
   };
 
   /* ── 选中元素 → 右侧参数面板取数 ───────────────────────────────
-     三类元素（父线 / 停靠点 / 自定义路线节点）用 id 前缀区分，避免三套并列 state */
+     三类元素（父线 / 停靠点 / 自建路线节点）用 id 前缀区分，避免三套并列 state */
   const selStop = sel.startsWith("stop:")
     ? located.find((p) => `stop:${p.id}` === sel)
     : undefined;
@@ -302,7 +309,7 @@ export function RoutePreview({
     : undefined;
   /**
    * 删除当前选中元素
-   * @description 只允许删「自定义路线节点」：父线属于地图路网、停靠点属于巡检点主数据，
+   * @description 只允许删「自建路线节点」：父线属于地图路网、停靠点属于巡检点主数据，
    *              要改得回各自的工作台（标定 / 点位管理），不在这里越权删除
    */
   const removeSel = () => {
@@ -320,7 +327,7 @@ export function RoutePreview({
     const t = at(targetId);
     return t ? `${t.id} · x ${t.x.toFixed(2)}% · y ${t.y.toFixed(2)}%` : "—";
   };
-  /** 「元素浏览」清单：停靠点 / 自定义路线节点 / 父线，点行即选中并高亮 */
+  /** 「元素浏览」清单：停靠点 / 自建路线节点 / 父线，点行即选中并高亮 */
   const browseRows: { key: string; type: string; name: string }[] = [
     ...located.map((p, i) => ({
       key: `stop:${p.id}`,
@@ -336,7 +343,7 @@ export function RoutePreview({
     })),
     ...parentPaths.map((v) => ({
       key: `parent:${v.id}`,
-      type: "固定路线",
+      type: "路网",
       name: `${v.name || v.id} · ${v.kind} · ${v.pointIds.length} 节点`,
     })),
   ];
@@ -344,10 +351,24 @@ export function RoutePreview({
   return (
     <section className="route-preview">
       <div className="route-preview-head">
-        <b>路线预览{custom ? "（自定义路线）" : "（固定路线）"}</b>
-        <span className="muted">
-          固定路线：{map.name} · 路网 {parentPaths.length} 条
-        </span>
+        <b>路线预览{custom ? "（自建路线）" : "（预设路线）"}</b>
+        {onMapChange && maps?.length ? (
+          <select
+            className="route-map-select"
+            value={map.id}
+            onChange={(e) => onMapChange(e.target.value)}
+          >
+            {maps.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name} · 路网 {(m.roadnet?.paths || []).length} 段
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="muted">
+            地图路网：{map.name} · {parentPaths.length} 条
+          </span>
+        )}
         <div className="route-preview-tools">
           {onPathChange && (
             <Btn
@@ -359,7 +380,7 @@ export function RoutePreview({
                 SEL("");
               }}
             >
-              {custom ? "恢复固定路线" : "自定义路线"}
+              {custom ? "恢复预设路线" : "自建路线"}
             </Btn>
           )}
           <label className="route-preview-toggle">
@@ -368,7 +389,7 @@ export function RoutePreview({
               checked={showParent}
               onChange={() => SP(!showParent)}
             />
-            显示固定路线
+            显示路网
           </label>
         </div>
       </div>
@@ -386,12 +407,12 @@ export function RoutePreview({
               className={"calib-tool" + (tool === t ? " on" : "")}
               title={
                 t === "元素选择"
-                  ? "点选图上的停靠点 / 固定路线 / 路线节点，右侧查看参数"
+                  ? "点选图上的停靠点 / 路网 / 路线节点，右侧查看参数"
                   : custom
                     ? `点击图面落点，就近吸附巡检点、${
                         t === "直线" ? "直线" : "平滑"
                       }连接`
-                    : "先点右侧「自定义路线」才能在图面落点"
+                    : "先点右侧「自建路线」才能在图面落点"
               }
               // 落点类工具只在自定义模式下可用（不自定义就没有自绘线路可画）
               disabled={t !== "元素选择" && !custom}
@@ -631,7 +652,7 @@ export function RoutePreview({
       </div>
       {/*
         选中元素参数面板（与「地图标定工作台」右栏同形）：
-        按选中元素类型（停靠点 / 父线 / 自定义路线节点）给各自的参数；
+        按选中元素类型（停靠点 / 父线 / 自建路线节点）给各自的参数；
         父线、停靠点只读（要改去各自的工作台），只有自绘节点可删
       */}
       {editor && (
@@ -674,7 +695,7 @@ export function RoutePreview({
           {selPath && (
             <dl className="route-param-list">
               <dt>元素类型</dt>
-              <dd>固定路线（地图路网）</dd>
+              <dd>地图路网</dd>
               <dt>线路名称</dt>
               <dd>{selPath.name || selPath.id}</dd>
               <dt>线路类型</dt>
@@ -691,7 +712,7 @@ export function RoutePreview({
           {selNode && (
             <dl className="route-param-list">
               <dt>元素类型</dt>
-              <dd>自定义路线节点</dd>
+              <dd>自建路线节点</dd>
               <dt>节点序号</dt>
               <dd>{selNodeIdx + 1}</dd>
               <dt>关联巡检点</dt>
@@ -749,14 +770,14 @@ export function RoutePreview({
       {brokenParentRefs > 0 && (
         <Note>
           有 <b>{brokenParentRefs}</b>{" "}
-          段固定路线引用的定位点已不在本图（例如装置区的点随点位归属迁到了装置区地图），
+          段路网引用的定位点已不在本图（例如装置区的点随点位归属迁到了装置区地图），
           因此未绘制；可到「地图管理 › 编辑（地图标定）」重新连线，或保存一次路网以清理这些段。
         </Note>
       )}
       {missing > 0 && (
         <Note>
-          有 <b>{missing}</b> 个已选巡检点不在当前固定路线地图上，未参与预览；
-          一条路线只能属于同一张地图，请先在下方取消这些点的勾选。
+          有 <b>{missing}</b> 个已选巡检点不在当前底图上，未参与预览；路线本身不受影响，
+          切换上方的预览底图即可看到其他地图上的点。
         </Note>
       )}
     </section>

@@ -3,7 +3,7 @@
  * @description 后台管理 › 算法模板：平台维护「看什么 / 怎么采 / 拿什么算 / 什么算异常」的唯一入口。
  *              由原「算法模板管理」+「巡检要求管理」两页合并而来（保留原文件名与路由 id，少动引用）。
  *              一条算法模板 = 编码 + 名称 + 说明 + 算法能力类型 + 默认采集方式 + 适用目标类型
- *                + 算法 + 判定方式（单位 / 下限含 / 上限含 / 期望状态）+ 状态。
+ *                + 算法 + 判定方式（单位 / 期望状态）+ 状态。
  *              存储里仍保留 `deploy`（默认云端），但本页不做展示与维护（按产品要求本期不做部署位置）。
  * @interaction 路由 `requirements`（后台管理）；引擎动作 SAVE_REQUIREMENT；引用方「巡检目标台账」
  */
@@ -189,6 +189,20 @@ export function Requirements() {
           title={req.id ? "修改算法模板" : "新增算法模板"}
           wide
           onClose={() => SETREQ(null)}
+          footer={
+            <>
+              <Btn onClick={() => SETREQ(null)}>取消</Btn>
+              <Btn
+                primary
+                onClick={() => {
+                  if (act({ type: "SAVE_REQUIREMENT", requirement: req }))
+                    SETREQ(null);
+                }}
+              >
+                保存算法模板
+              </Btn>
+            </>
+          }
         >
           <h4>1、基础信息</h4>
           <div className="form-grid">
@@ -296,22 +310,6 @@ export function Requirements() {
                   onChange={(e) => SETREQ({ ...req, unit: e.target.value })}
                 />
               </Field>
-              <Field label="下限（含）">
-                <input
-                  type="number"
-                  step="any"
-                  value={req.min ?? 0}
-                  onChange={(e) => SETREQ({ ...req, min: +e.target.value })}
-                />
-              </Field>
-              <Field label="上限（含）">
-                <input
-                  type="number"
-                  step="any"
-                  value={req.max ?? 1}
-                  onChange={(e) => SETREQ({ ...req, max: +e.target.value })}
-                />
-              </Field>
             </div>
           )}
           {req.judge === "期望状态" && (
@@ -324,7 +322,7 @@ export function Requirements() {
             </Field>
           )}
 
-          <h4>4、状态与采集要求</h4>
+          <h4>4、状态</h4>
           <div className="form-grid">
             <Field label="状态">
               <select
@@ -337,43 +335,6 @@ export function Requirements() {
                 <option>停用</option>
               </select>
             </Field>
-          </div>
-          <Field label="采集与复核要求">
-            <div className="check-row">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={!!req.needPhoto}
-                  onChange={(e) =>
-                    SETREQ({ ...req, needPhoto: e.target.checked })
-                  }
-                />
-                需拍照
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={!!req.needVideo}
-                  onChange={(e) =>
-                    SETREQ({ ...req, needVideo: e.target.checked })
-                  }
-                />
-                需录像
-              </label>
-            </div>
-          </Field>
-
-          <div className="modal-actions">
-            <Btn onClick={() => SETREQ(null)}>取消</Btn>
-            <Btn
-              primary
-              onClick={() => {
-                if (act({ type: "SAVE_REQUIREMENT", requirement: req }))
-                  SETREQ(null);
-              }}
-            >
-              保存算法模板
-            </Btn>
           </div>
         </Modal>
       )}

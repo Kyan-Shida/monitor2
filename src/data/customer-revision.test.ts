@@ -50,17 +50,30 @@ test("bound version conflict remains assigned with reason; fixes retry, wait exp
   s = advanceAutomation(s, at("17:31"));
   assert.equal(s.tasks.find((x) => x.id === t.id)!.state, "超期");
 });
-test("weekly and shift slots use business timezone, missing binding does not silently choose robot", () => {
+test("monthly and hourly slots use business timezone, missing binding does not silently choose robot", () => {
   const s = available();
   delete s.plans[0].robotId;
   assert.equal(advanceAutomation(s, at("17:00")), s);
   assert.throws(() => run(s, { type: "GENERATE", id: "PL01" }), /绑定/);
-  const p = { ...s.plans[0], cycle: "每周", start: "2026-09-22" };
-  assert.ok(
-    planOccurrences(p, at("17:00")).every(
-      (t) => new Date(t + 8 * 3600000).getUTCDay() === 2,
-    ),
+  // 每月：只在与有效期首日同一个「日号」的那天展开（9-28 → 每月 28 号）
+  const p = { ...s.plans[0], cycle: "每月" as const, start: "2026-09-28" };
+  const occ = planOccurrences(p, at("17:00"));
+  assert.equal(occ.length, 1);
+  assert.equal(
+    new Date(occ[0] + 8 * 3600000).toISOString().slice(0, 10),
+    "2026-09-28",
   );
+  // 日号对不上的那天不展开
+  assert.deepEqual(planOccurrences({ ...p, start: "2026-09-22" }, at("17:00")), []);
+  // 每小时：以执行时间为起点，当日内每小时一次（10:00 → 23:00 共 14 次）
+  const hourly = {
+    ...s.plans[0],
+    cycle: "每小时" as const,
+    start: "2026-09-28",
+    end: "2026-09-28",
+    time: "10:00",
+  };
+  assert.equal(planOccurrences(hourly, at("10:00")).length, 14);
 });
 test("one-off plan fires once on its date; never repeats, never backfills", () => {
   const on = (time: string, date = "2026-10-16") =>

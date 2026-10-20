@@ -132,10 +132,8 @@ export function TaskDetailPanel({
       <div className="grid two">
         <Panel title="任务摘要">
           <dl>
-            <dt>来源</dt>
-            <dd>{t.source}</dd>
             <dt>任务类型</dt>
-            <dd>{t.taskType || "综合巡检任务"}</dd>
+            <dd>{t.source}</dd>
             <dt>原子动作</dt>
             <dd>
               {(t.atomicActions || []).join(" / ") || "按检测项执行"}

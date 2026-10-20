@@ -338,11 +338,16 @@ function withSeedDefaults(s: State): State {
       !b.alarm?.category ||
       b.alarm?.enabled === undefined,
   );
-  /** 路线方式老口径（跟随父线 / 自定义）→ 新口径（固定路线 / 自定义路线），只改这一处，不重算路线内容 */
-  const needRouteModeNorm = !!s.templates?.some(
-    (t) =>
-      (t.mode as string | undefined) === "跟随父线" ||
-      (t.mode as string | undefined) === "自定义",
+  /** 路线方式老口径（跟随父线 / 自定义 / 固定路线 / 自定义路线）→ 新口径（预设路线 / 自建路线），只改这一处，不重算路线内容 */
+  const needRouteModeNorm = !!s.templates?.some((t) => {
+    const m = t.mode as string | undefined;
+    return (
+      m === "跟随父线" || m === "自定义" || m === "固定路线" || m === "自定义路线"
+    );
+  });
+  /** 执行周期老口径（每周 / 每班）→ 月 / 天 / 时 新口径，只改下拉可选项对应的字段，不动排期参数 */
+  const needPlanCycleNorm = !!s.plans?.some(
+    (p) => (p.cycle as string) === "每周" || (p.cycle as string) === "每班",
   );
   /** 环境 / 区域类示例台账的旧口径：改接新的区域巡检要求与区域模板 */
   const needEnvNorm = !!s.businessTargets?.some(
@@ -381,7 +386,8 @@ function withSeedDefaults(s: State): State {
     !needZoneFix &&
     !needMaps &&
     !needRoadnetFix &&
-    !needRouteModeNorm
+    !needRouteModeNorm &&
+    !needPlanCycleNorm
   )
     return s;
   const base = seed();
@@ -480,16 +486,30 @@ function withSeedDefaults(s: State): State {
       : s.robots,
     // 路线方式口径切换：老缓存的模板逐条改写成新口径（内容 / 状态不动）
     templates: needRouteModeNorm
-      ? (s.templates || []).map((t) => ({
-          ...t,
-          mode:
-            (t.mode as string) === "跟随父线"
-              ? ("固定路线" as const)
-              : (t.mode as string) === "自定义"
-                ? ("自定义路线" as const)
-                : t.mode,
-        }))
+      ? (s.templates || []).map((t) => {
+          const m = t.mode as string;
+          const mode =
+            m === "跟随父线" || m === "固定路线"
+              ? ("预设路线" as const)
+              : m === "自定义" || m === "自定义路线"
+                ? ("自建路线" as const)
+                : t.mode;
+          return { ...t, mode };
+        })
       : s.templates,
+    // 执行周期口径切换：每周 → 每月、每班 → 每小时（其余原样，避免下拉里出现选不中的值）
+    plans: needPlanCycleNorm
+      ? (s.plans || []).map((p) => {
+          const c = p.cycle as string;
+          const cycle =
+            c === "每周"
+              ? ("每月" as const)
+              : c === "每班"
+                ? ("每小时" as const)
+                : p.cycle;
+          return { ...p, cycle };
+        })
+      : s.plans,
     devices: (needDevices ? base.devices : s.devices).map((d) => ({
       ...d,
       // 设备形态：老缓存缺该字段时按设备类型回填，只补缺、不覆盖已有值

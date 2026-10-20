@@ -199,9 +199,13 @@ export function downloadXlsx(
   aoa: (string | number)[][],
   sheetName: string,
   filename: string,
+  sheets?: { name: string; aoa: (string | number)[][] }[],
 ) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sheetName);
+  (sheets || []).forEach((s) =>
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.aoa), s.name),
+  );
   const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
   downloadBlob(
     new Blob([buf], {

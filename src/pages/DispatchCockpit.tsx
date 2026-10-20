@@ -83,7 +83,7 @@ export function DispatchCockpit({
   const shellRef = useRef<HTMLDivElement>(null);
   const [estop, ES] = useState(false);
   const [home, HOME] = useState(false);
-  /** 接管会话抽屉：点「申请接管」就地展开，不跳「人工操作与遥控」页（避免丢失当前选中设备与三栏上下文） */
+  /** 接管会话抽屉：点「进行接管」就地展开，不跳「人工操作与遥控」页（避免丢失当前选中设备与三栏上下文） */
   const [takeover, TAKEOVER] = useState(false);
   /** 底部控制带第 4 块所选的预录播报内容 */
   const [clip, C] = useState(PRESETS[0]);
@@ -339,7 +339,7 @@ export function DispatchCockpit({
                   <div className="ds-actions">
                     <Can perm={PERMS.远程接管}>
                       <Btn primary disabled={!robot} onClick={() => TAKEOVER(true)}>
-                        {session ? "接管会话" : "申请接管"}
+                        {session ? "接管会话" : "进行接管"}
                       </Btn>
                     </Can>
                     <Can perm={PERMS.一键返航充电}>
@@ -487,7 +487,7 @@ export function DispatchCockpit({
                         session
                           ? `会话 ${session.id} · 已接管，指令即时生效`
                           : robot
-                            ? "点「申请接管」就地建立会话后，此处才可操控"
+                            ? "点「进行接管」就地建立会话后，此处才可操控"
                             : pickHint
                       }
                     />

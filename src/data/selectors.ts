@@ -28,7 +28,7 @@ export const logNames: Record<string, string> = {
   PREEMPT: "人工抢占",
   WITHDRAW: "撤回确认",
   REORDER: "队列调序",
-  TAKEOVER: "申请人工接管",
+  TAKEOVER: "人工接管",
   CONTROL_ACK: "暂停确认 / 接管",
   CONTROL: "人工操作回执",
   CONTROL_EXIT: "退出接管核对",

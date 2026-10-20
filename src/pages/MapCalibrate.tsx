@@ -392,7 +392,7 @@ export function MapCalibrate({ id }: { id?: string }) {
               selPoint
                 ? "删除该定位点"
                 : selPath
-                  ? "删除该固定路线"
+                  ? "删除该段路网"
                   : "删除选中元素"
             }
             onClick={removeSel}

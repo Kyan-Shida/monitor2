@@ -1,7 +1,7 @@
 /**
  * @file MapNavigate.tsx
  * @description 地图「路线导航测试 + 实时监控」内置页。
- *              从巡检路线「导航」进入：对本图的自定义路线实跑一遍做验证。
+ *              从巡检路线「导航」进入：对本图的自建路线实跑一遍做验证。
  *              地图复用标定工作台的那张图（含路网与定位点），不做二次打点。
  *              看：机器人位置、规划路径、实际轨迹、激光点云、
  *                  线速度 / 角速度 / 电量、导航消息；
@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Thermometer, Video } from "lucide-react";
 import { useStore } from "../data/store";
 import { useViewState } from "../data/navigation";
+import { routeMapIds } from "../data/routeMaps";
 import { Badge, Btn, Note, Panel } from "../components/UI";
 import { MapImageCanvas } from "../components/MapImageCanvas";
 import type { MapAsset, Robot } from "../data/types";
@@ -51,19 +52,20 @@ export function MapNavigate({ id, tab }: { id?: string; tab?: string }) {
   const [angular, setAngular] = useState(0);
   /** 导航消息 */
   const [messages, setMessages] = useState<string[]>(["等待导航指令"]);
-  /** 待验证的自定义路线 id（从路线列表「导航」带入，随即走一遍验证） */
+  /** 待验证的自建路线 id（从路线列表「导航」带入，随即走一遍验证） */
   const [verifyId, SETVERIFYID] = useViewState<string>("maps.navRoute", "");
   /**
    * 待验证路线
-   * @description 只认「本图 + 自定义 + 尚未验证」的路线；自定义线路不走父线，
+   * @description 只认「本图 + 自建 + 尚未验证」的路线；路线不绑定地图，
+   *              「本图」按巡检点反推（点落在本图即在本页验证）；自建线路不走父线，
    *              必须由机器人实跑可行后才允许启用，因此本页承担它的验证入口
    */
   const verifying = s.templates.find(
     (t) =>
       t.id === verifyId &&
-      t.mode === "自定义路线" &&
+      t.mode === "自建路线" &&
       !t.verified &&
-      t.mapId === m?.id,
+      routeMapIds(s, t.points).includes(m?.id || ""),
   );
   /** 本页是否已按待验证路线实跑过一次（跑过才允许判定「验证通过」） */
   const [ranRoute, SETRANROUTE] = useState(false);
@@ -122,7 +124,7 @@ export function MapNavigate({ id, tab }: { id?: string; tab?: string }) {
     if (verifying?.path && verifying.path.length > 1)
       list.push({
         id: `verify-${verifying.id}`,
-        kind: "自定义路线",
+        kind: "自建路线",
         points: verifying.path,
         selected: true,
       });

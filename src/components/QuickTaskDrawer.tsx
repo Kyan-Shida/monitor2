@@ -1,7 +1,7 @@
 /**
  * @file QuickTaskDrawer.tsx
  * @description 临时任务抽屉：**先定路线来源，再定巡检点**。
- *              · 使用现有路线 = 直接从「巡检路线」拉过来（点位 + 父线地图一并带入）；
+ *              · 使用现有路线 = 直接从「巡检路线」拉过来（点位序列 + 按点位反推的预览底图）；
  *              · 自选巡检点 = 先选区域地图，再在该图上挑点，顺序可调。
  *              一期要求一条任务的巡检点落在**同一张地图**上（机器狗按区域调度、任务自身要求 mapId 唯一），
  *              跨图时才提示用户；跨区域能力后续开放（见下 `pickedMaps` 处的扩展点）。
@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { optimizePointOrder } from "../data/pointOrder";
+import { routeRenderMapId } from "../data/routeMaps";
 import { taskTypeOfActions, type AtomicAction } from "../data/types";
 import { actionsOfPoint } from "../data/deviceMaster";
 import { Modal, Field, Btn, Note } from "./UI";
@@ -61,17 +62,15 @@ export function QuickTaskDrawer({
     )?.id || "";
   const activeMap = pickMap || robot?.mapId || fallbackMap;
   /**
-   * 拉取现有路线的点位与基线地图
-   * @description 路线（Template）= 同一张地图上的有序点位，故点位与地图要一起带入，
-   *              否则会出现"点了路线、地图还是上一张"的错配
+   * 拉取现有路线的点位与预览底图
+   * @description 路线只是一个有序点位数组（不绑定地图），底图按点位反推，
+   *              避免出现"点了路线、地图还是上一张"的错配
    */
   const applyRoute = (id: string) => {
     const r = routes.find((x) => x.id === id);
     if (!r) return;
     P([...r.points]);
-    PMAP(
-      r.mapId || s.points.find((p) => p.id === r.points[0])?.mapId || activeMap,
-    );
+    PMAP(routeRenderMapId(s, r.points) || activeMap);
   };
   /**
    * 已选点位所属地图（去重）

@@ -1,9 +1,9 @@
 import { TakeoverOutcome } from "./TakeoverOutcome";
 /**
  * @file TakeoverDialog.tsx
- * @description 调度指挥驾驶舱的「接管会话」弹窗：就地走完 申请接管 → 暂停确认 → 人工遥控 → 退出 / 释放并恢复，
+ * @description 调度指挥驾驶舱的「接管会话」弹窗：就地走完 进行接管 → 暂停确认 → 人工遥控 → 退出 / 释放并恢复，
  *              不再跳到「人工操作与遥控」页（跳页会丢失当前选中设备与三栏上下文）
- * @interaction DispatchCockpit.tsx「当前设备」卡的「申请接管 / 接管会话」按钮
+ * @interaction DispatchCockpit.tsx「当前设备」卡的「进行接管 / 接管会话」按钮
  * @note 形态取舍：曾试右侧抽屉，但大屏里抽屉的高度与底栏贴底依赖 .modal-body 的 flex 拉伸，
  *       在大屏 grid 容器内表现不稳（底栏停在内容之后、下方留白），因此改用居中弹窗 + 流内动作条
  * @note 状态机口径与 pages/Execution.tsx 的 ControlConsole 完全一致（TAKEOVER / CONTROL_ACK / CONTROL_EXIT /
@@ -19,7 +19,7 @@ import { PERMS } from "../data/roles";
 /** 接管须知：均为系统真实约束（engine 的会话校验），不是泛泛提示 */
 const NOTES = [
   "接管期间该机器人暂停自主任务，控制权独占且有时效；",
-  "离线设备不可申请接管，低电量设备会被执行约束拦截；",
+  "离线设备不可接管，低电量设备会被执行约束拦截；",
   "退出接管后机器人保持暂停，需确认现场安全再释放控制权；",
   "释放后若原地有暂停任务，需明确恢复，否则不会自动继续。",
 ];
@@ -70,7 +70,7 @@ export function TakeoverDialog({
         </span>
       </div>
       <Steps
-        items={["申请接管", "暂停确认", "人工遥控", "释放并恢复"]}
+        items={["进行接管", "暂停确认", "人工遥控", "释放并恢复"]}
         current={current}
       />
 
@@ -131,7 +131,7 @@ export function TakeoverDialog({
               disabled={r.state === "离线"}
               onClick={() => act({ type: "TAKEOVER", robotId: r.id })}
             >
-              {r.state === "离线" ? "设备离线，不可接管" : "申请接管"}
+              {r.state === "离线" ? "设备离线，不可接管" : "进行接管"}
             </Btn>
           </Can>
         )}

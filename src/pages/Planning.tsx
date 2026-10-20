@@ -16,10 +16,12 @@ import { fmtTime } from "../data/selectors";
 import { actionsOfPoint, captureKindsOfPoint } from "../data/deviceMaster";
 import { targetsOf } from "../data/mapCalibration";
 import { constraints } from "../data/engine";
-import { planKindOf } from "../data/planSchedule";
-import { planKinds, routeModes } from "../data/types";
+import { businessDate, planKindOf, planOccurrences } from "../data/planSchedule";
+import { routeMapIds, routeRenderMapId } from "../data/routeMaps";
+import { planCycles, planKinds, routeModes } from "../data/types";
 import type {
   MapAsset,
+  PlanCycle,
   PlanKind,
   Point,
   RouteMode,
@@ -37,7 +39,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     [pickPage, PP] = useState(1),
     /** 执行方式：周期任务（按周期循环）/ 定时任务（指定日期执行一次） */
     [kind, KD] = useState<PlanKind>(initial?.kind || "周期任务"),
-    [cycle, CY] = useState(initial?.cycle || "每天"),
+    [cycle, CY] = useState<PlanCycle>(initial?.cycle || "每天"),
     [start, ST] = useState(initial?.start || "2026-09-22"),
     [end, EN] = useState(initial?.end || "2026-12-31"),
     [time, TM] = useState(initial?.time || "10:00"),
@@ -82,18 +84,18 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     [timeout, TO] = useState(initial?.timeout || 60),
     [wait, WA] = useState(initial?.wait || 30);
   /**
-   * 正在编辑的路线（子线）所属地图（父线）
-   * @description 一条子线只能落在同一张地图上（机器狗按区域调度，任务本身也要求 mapId 唯一），
-   *              故路线编辑时锁定一张图：候选列表只展示该图上的巡检点
+   * 预览底图（纯展示用，不落库）
+   * @description 路线不绑定地图，地图只负责把巡检点和线路画出来；默认取首个点位所在的地图，
+   *              可手动切到别的图查看，切图不影响已选点位与执行顺序
    */
   const [routeMapId, RM] = useState("");
   /**
-   * 自定义线路锚点
-   * @description undefined = 跟随父线（沿父线路网自动寻路）；数组 = 自定义路线（自绘线路，
+   * 自建线路锚点
+   * @description undefined = 预设路线（沿父线路网自动寻路）；数组 = 自建路线（自绘线路，
    *              不走父线，保存后为停用状态，须经机器导航验证可行才允许启用）
    */
   const [routePath, RP] = useState<RouteNode[] | undefined>(undefined);
-  /** 路线行「导航」的目标：父线地图 + 路线 id（先选机器人，再进地图导航，兼作自定义路线的验证入口） */
+  /** 路线行「导航」的目标：按点位反推的底图 + 路线 id（先选机器人，再进地图导航，兼作自建路线的验证入口） */
   const [navTarget, SETNAVTARGET] = useState<{
     map: MapAsset;
     id: string;
@@ -153,8 +155,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       N(t.name);
       SE(t.points);
       TS(t.state);
-      RM(t.mapId || s.points.find((p) => p.id === t.points[0])?.mapId || "");
-      RP(t.mode === "自定义路线" ? t.path || [] : undefined);
+      RM(routeRenderMapId(s, t.points));
+      RP(t.mode === "自建路线" ? t.path || [] : undefined);
       return;
     }
     N("");
@@ -167,6 +169,24 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         "",
     );
   }, [page, id]);
+  /**
+   * 路线编辑：底图跟着巡检点走
+   * @description 路线只记巡检点序列，底图纯展示；已选点（或自建线路吸附到的点）一变，
+   *              就自动切到这些点所在的地图，不用再手动选图
+   */
+  const routeAutoMapSig =
+    page === "route-edit"
+      ? routeMapIds(
+          s,
+          routePath === undefined
+            ? selected
+            : (routePath.map((n) => n.pointId).filter(Boolean) as string[]),
+        ).join("|")
+      : "";
+  useEffect(() => {
+    if (!routeAutoMapSig) return;
+    RM(routeAutoMapSig.split("|")[0]);
+  }, [routeAutoMapSig]);
   /** 重置计划表单为默认值（新建时调用） */
   const resetPlanForm = () => {
     N("");
@@ -229,9 +249,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     (p) =>
       (p.id + p.name + p.device).includes(pickQuery.trim()) &&
       (pickStateF === "全部" || p.state === pickStateF) &&
-      (pickMapF === "全部" || p.mapId === pickMapF) &&
-      // 路线（子线）锁定父线地图：只展示同一张图上的巡检点，从源头避免跨图子线
-      (!routeLocked || !routeMapId || p.mapId === routeMapId),
+      (pickMapF === "全部" || p.mapId === pickMapF),
   );
   /**
    * 已配置巡检点勾选表（数据源 s.points 来自「巡检点管理」页，平台预先配置好）
@@ -275,7 +293,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             PP(1);
           }}
         />
-        {/* 路线编辑已锁定父线地图，无需再按地图筛 */}
+        {/* 路线编辑不受地图限制：点位可按区域 / 地图自由筛选 */}
         {!routeLocked && (
           <select
             aria-label="按地图筛选"
@@ -413,14 +431,14 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     );
   if (page === "route-edit") {
     const editing = s.templates.find((x) => x.id === id);
-    /** 是否自定义路线（`routePath` 为数组即自定义，undefined 为跟随父线） */
+    /** 是否自建路线（`routePath` 为数组即自建，undefined 为预设路线） */
     const customRoute = routePath !== undefined;
-    /** 自定义线路吸附到的巡检点数：至少 2 个才构成一段可执行路线 */
+    /** 自建线路吸附到的巡检点数：至少 2 个才构成一段可执行路线 */
     const pathStopCount = (routePath || []).filter((n) => n.pointId).length;
     /**
      * 保存路线
-     * @description 自定义路线的执行点 = 自绘线路上吸附到的巡检点（按画线顺序）；
-     *              跟随父线沿用勾选顺序。自定义路线由引擎落成「停用 + 待导航验证」
+     * @description 自建路线的执行点 = 自绘线路上吸附到的巡检点（按画线顺序）；
+     *              预设路线沿用勾选顺序。自建路线由引擎落成「停用 + 待导航验证」
      */
     const saveRoute = () => {
       const pathSeq = (routePath || [])
@@ -432,9 +450,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           id,
           name,
           points: customRoute ? pathSeq : selected,
-          mapId: routeMapId,
           state: tstate,
-          mode: customRoute ? "自定义路线" : "固定路线",
+          mode: customRoute ? "自建路线" : "预设路线",
           path: customRoute ? routePath : undefined,
           end: "返航",
         })
@@ -455,7 +472,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               primary
               disabled={
                 !name.trim() ||
-                !routeMapId ||
                 (customRoute
                   ? (routePath || []).length < 2 || pathStopCount < 2
                   : !selected.length)
@@ -480,28 +496,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                     placeholder="输入路线名称"
                   />
                 </Field>
-                <Field label="固定路线地图" required>
-                  <select
-                    value={routeMapId}
-                    onChange={(e) => {
-                      // 换父线 = 换子线基线：已选点整体作废，避免跨图选点
-                      RM(e.target.value);
-                      SE([]);
-                    }}
-                  >
-                    {s.maps.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name} · 路网 {(m.roadnet?.paths || []).length} 段
-                      </option>
-                    ))}
-                  </select>
-                </Field>
                 <Field label="路线方式" required>
                   <select
-                    value={customRoute ? "自定义路线" : "固定路线"}
+                    value={customRoute ? "自建路线" : "预设路线"}
                     onChange={(e) => {
-                      // 切到自定义路线 → 从空白线路开始画；切回固定路线 → 丢弃自绘线路
-                      RP(e.target.value === "自定义路线" ? [] : undefined);
+                      // 切到自建路线 → 从空白线路开始画；切回预设路线 → 丢弃自绘线路
+                      RP(e.target.value === "自建路线" ? [] : undefined);
                     }}
                   >
                     {routeModes.map((m) => (
@@ -543,7 +543,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             />
             <div className="route-edit-col">
               <RoutePreview
-                map={s.maps.find((m) => m.id === routeMapId)}
+                map={s.maps.find(
+                  (m) => m.id === (routeMapId || routeRenderMapId(s, selected)),
+                )}
+                maps={s.maps}
+                onMapChange={RM}
                 stops={
                   selected
                     .map((pid) => s.points.find((p) => p.id === pid))
@@ -565,11 +569,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     /** 编辑路线：跳内置页并带上路线 id */
     const openEdit = (t: (typeof s.templates)[number]) =>
       go("route-edit", t.id);
-    /** 打开「导航」选机器人：自定义路线同时登记为待验证（导航页跑完一遍即可置为已验证） */
+    /** 打开「导航」选机器人：自建路线同时登记为待验证（导航页跑完一遍即可置为已验证） */
     const openNavigate = (t: (typeof s.templates)[number]) => {
-      const map = s.maps.find((m) => m.id === t.mapId);
+      // 路线不绑定地图：按巡检点反推一张能画出它的底图
+      const map = s.maps.find((m) => m.id === routeRenderMapId(s, t.points));
       if (!map) return;
-      SETNAVROUTE(t.mode === "自定义路线" && !t.verified ? t.id : "");
+      SETNAVROUTE(t.mode === "自建路线" && !t.verified ? t.id : "");
       SETNAVTARGET({ map, id: t.id });
     };
     // 分页切片：当前页一律 clamp 到有效范围
@@ -610,15 +615,15 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               del.cell(t.id, t.name),
               <span className="cell-muted">{t.id}</span>,
               <b>{t.name}</b>,
-              // 路线分类：固定路线（沿已标定的固定路网）/ 自定义路线（自绘线路）
-              t.mode || "固定路线",
+              // 路线分类：预设路线（沿已标定的固定路网）/ 自建路线（自绘线路）
+              t.mode || "预设路线",
               `${t.points.length} 个`,
               <span className="cell-muted">{t.updatedAt || "—"}</span>,
               <>
                 <span className={"badge " + (t.state === "启用" ? "green" : "")}>
                   {t.state}
                 </span>
-                {t.mode === "自定义路线" && (
+                {t.mode === "自建路线" && (
                   <small className="cell-muted">
                     {t.verified
                       ? `已验证${t.verifiedBy ? " · " + t.verifiedBy : ""}`
@@ -628,9 +633,13 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               </>,
               <div className="actions">
                 {/* 导航：选机器人后进入地图导航（与地图卡片的「导航」同一套逻辑）；
-                    自定义路线同时是它的导航验证入口 —— 实跑可行后才允许启用 */}
+                    自建路线同时是它的导航验证入口 —— 实跑可行后才允许启用 */}
                 <Btn
-                  disabled={!s.maps.some((m) => m.id === t.mapId)}
+                  disabled={
+                    !s.maps.some((m) =>
+                      routeMapIds(s, t.points).includes(m.id),
+                    )
+                  }
                   onClick={() => openNavigate(t)}
                 >
                   导航
@@ -906,10 +915,13 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             </Field>
             {kind === "周期任务" ? (
               <Field label="执行周期" required>
-                <select value={cycle} onChange={(e) => CY(e.target.value)}>
-                  <option>每天</option>
-                  <option>每周</option>
-                  <option>每班</option>
+                <select
+                  value={cycle}
+                  onChange={(e) => CY(e.target.value as PlanCycle)}
+                >
+                  {planCycles.map((c) => (
+                    <option key={c}>{c}</option>
+                  ))}
                 </select>
               </Field>
             ) : (
@@ -972,8 +984,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             </Field>
           </div>
           <Note>
-            计划按北京时间自动生成、下发并执行；提前生成不提前启动。浏览器打开期间运行模拟时钟，异常进入调度中心。每周按有效期首日的星期执行；每班以所填时间为首班，每
-            8 小时一次。<b>定时任务</b>只在「执行日期 + 执行时间」执行一次，错过不补跑。
+            计划按北京时间自动生成、下发并执行；提前下发不提前启动。浏览器打开期间运行模拟时钟，异常进入调度中心。每月按有效期首日的日号执行；每小时以所填时间为起点，当日内每小时一次。<b>定时任务</b>只在「执行日期 + 执行时间」执行一次，错过不补跑。
           </Note>
           <Btn onClick={() => go("plans")}>取消</Btn>
           <Btn
@@ -1082,6 +1093,55 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     (curPage - 1) * taskPageSize,
     curPage * taskPageSize,
   );
+  /** 任务列表视图：今日计划（含尚未到点下发的） / 任务记录（已生成的任务） */
+  const [taskView, TASKVIEW] = useViewState<"今日计划" | "任务记录">(
+    "planning.tasks.view",
+    "今日计划",
+  );
+  /**
+   * 今日计划任务
+   * @description 按启用计划展开当天所有发生时刻，**没到提前量的也列出来**（状态记「待下发」）；
+   *              已生成的任务按 planId + scheduleKey 对应回计划时刻，状态取任务状态
+   */
+  const todayRows = (() => {
+    const now = Date.now();
+    const today = businessDate(now);
+    /** 发生时刻 → 北京时间 HH:mm（与排期口径一致） */
+    const hhmm = (ms: number) =>
+      new Date(ms + 8 * 3600000).toISOString().slice(11, 16);
+    const rows = s.plans
+      .filter((p) => p.state === "启用")
+      .flatMap((p) =>
+        planOccurrences(p, now)
+          .filter((at) => businessDate(at) === today)
+          .map((at) => {
+            const task = s.tasks.find(
+              (t) => t.planId === p.id && t.scheduleKey === String(at),
+            );
+            return {
+              key: `${p.id}-${at}`,
+              plan: p,
+              time: hhmm(at),
+              at,
+              route: s.templates.find((x) => x.id === p.templateId)?.name || p.templateId,
+              robot:
+                s.robots.find((r) => r.id === p.robotId)?.name ||
+                p.robotId ||
+                "待绑定",
+              task,
+            };
+          }),
+      )
+      .sort((a, b) => a.at - b.at);
+    return rows;
+  })();
+  const [todayPage, SETTODAYPAGE] = useState(1);
+  const todayPageMax = Math.max(1, Math.ceil(todayRows.length / taskPageSize));
+  const todayCur = Math.min(todayPage, todayPageMax);
+  const todayPageRows = todayRows.slice(
+    (todayCur - 1) * taskPageSize,
+    todayCur * taskPageSize,
+  );
   /** 筛选器统一切换回第一页 */
   const resetPage = () => SP(1);
   /** 任务列表筛选：复用全站 FilterPanel（草稿条件，点「查询」才生效） */
@@ -1117,16 +1177,19 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         title="任务列表"
         extra={
           <div className="actions">
-            {/* 筛选：条件收进「筛选」按钮，展开后复用全站 FilterPanel（草稿条件，点「查询」才生效） */}
-            <Btn onClick={() => SETTASKFILTEROPEN(!taskFilterOpen)}>
-              {taskFilterOpen ? "收起筛选" : "筛选"}
-            </Btn>
+            {/* 筛选 / 删除只作用于「任务记录」；今日计划是排期展开，不参与筛选 */}
+            {taskView === "任务记录" && (
+              <Btn onClick={() => SETTASKFILTEROPEN(!taskFilterOpen)}>
+                {taskFilterOpen ? "收起筛选" : "筛选"}
+              </Btn>
+            )}
             <Btn primary onClick={() => setQuickOpen(true)}>
               ＋ 临时巡检任务
             </Btn>
-            {/* TASK-05：点「删除」进入选择态（复选框列出现），勾选后再次点击即二次确认删除 */}
-            <Btn
-              danger
+            {taskView === "任务记录" && (
+              // TASK-05：点「删除」进入选择态（复选框列出现），勾选后再次点击即二次确认删除
+              <Btn
+                danger
               onClick={() => {
                 if (!pickMode) return setPickMode(true);
                 if (!picked.length) return setPickMode(false);
@@ -1146,10 +1209,70 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 : picked.length
                   ? `删除（${picked.length}）`
                   : "退出选择"}
-            </Btn>
+              </Btn>
+            )}
           </div>
         }
       >
+        {/* 视图切换：今日计划（含未到点下发的）/ 任务记录（已生成的任务） */}
+        <div className="segmented task-view-tabs">
+          <button
+            className={taskView === "今日计划" ? "active" : ""}
+            onClick={() => TASKVIEW("今日计划")}
+          >
+            今日计划 {todayRows.length}
+          </button>
+          <button
+            className={taskView === "任务记录" ? "active" : ""}
+            onClick={() => TASKVIEW("任务记录")}
+          >
+            任务记录 {allFiltered.length}
+          </button>
+        </div>
+        {taskView === "今日计划" ? (
+          <>
+            <Table
+              heads={[
+                "计划时刻",
+                "计划",
+                "巡检路线",
+                "机器人",
+                "状态",
+                "操作",
+              ]}
+              rows={todayPageRows.map((x) => [
+                <b>{x.time}</b>,
+                <>
+                  <b>{x.plan.name}</b>
+                  <small className="cell-muted">{x.plan.id}</small>
+                </>,
+                x.route,
+                x.robot,
+                x.task ? <Badge>{x.task.state}</Badge> : <Badge>待下发</Badge>,
+                <div className="actions">
+                  {x.task ? (
+                    <Btn onClick={() => setTaskPeek(x.task)}>详情</Btn>
+                  ) : (
+                    <Btn onClick={() => go("plan-edit", x.plan.id)}>
+                      查看计划
+                    </Btn>
+                  )}
+                </div>,
+              ])}
+            />
+            <Pager
+              page={todayCur}
+              count={todayRows.length}
+              size={taskPageSize}
+              onChange={(n) => SETTODAYPAGE(n)}
+              onSize={(n) => {
+                SETTASKSIZE(n);
+                SETTODAYPAGE(1);
+              }}
+            />
+          </>
+        ) : (
+          <>
         {/* TASK-01：任务生成规则说明；DSP-01：计划任务直接绑定机器人、临时任务走调度 */}
         {/* 筛选：条件收进「筛选」按钮，展开后复用全站 FilterPanel（草稿条件，点「查询」才生效） */}
         {taskFilterOpen && (
@@ -1276,6 +1399,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             SP(1);
           }}
         />
+          </>
+        )}
       </Panel>
       {t && (
         <Panel title={`${t.name} · 不可变任务快照`}>
@@ -1448,8 +1573,8 @@ function PlanModal({
   setTemplateId: (v: string) => void;
   kind: PlanKind;
   setKind: (v: PlanKind) => void;
-  cycle: string;
-  setCycle: (v: string) => void;
+  cycle: PlanCycle;
+  setCycle: (v: PlanCycle) => void;
   time: string;
   setTime: (v: string) => void;
   start: string;
@@ -1534,10 +1659,13 @@ function PlanModal({
         </Field>
         {kind === "周期任务" ? (
           <Field label="执行周期" required>
-            <select value={cycle} onChange={(e) => setCycle(e.target.value)}>
-              <option>每天</option>
-              <option>每周</option>
-              <option>每班</option>
+            <select
+              value={cycle}
+              onChange={(e) => setCycle(e.target.value as PlanCycle)}
+            >
+              {planCycles.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
             </select>
           </Field>
         ) : (
@@ -1574,7 +1702,7 @@ function PlanModal({
             </Field>
           </>
         )}
-        <Field label="提前生成 / 分钟" required>
+        <Field label="提前下发 / 分钟" required>
           <input
             type="number"
             min={1}

@@ -24,6 +24,7 @@ import type {
   RobotPayloadAbility,
   DeviceKind,
   PlanKind,
+  PlanCycle,
   MapPacket,
   Roadnet,
   AlarmClass,
@@ -43,6 +44,7 @@ import {
   algoDeploys,
   algoKinds,
   deviceKinds,
+  planCycles,
   planKinds,
   ALARM_CLASS_MAINS,
   ROOT_AREA_ID,
@@ -2079,43 +2081,39 @@ export function transition(state: State, a: Action): State {
     }
     case "SAVE_TEMPLATE": {
       must(a.name && a.points?.length, "请输入巡检路线名称并选择巡检点");
-      // 单图约束（父线基线）：机器狗按区域调度、任务本身也要求同一张地图，
-      // 所以一条路线（子线）必须落在同一张地图（父线）上。
-      // 后期若支持跨图，把这里换成 mapIds: string[] 白名单校验即可
+      // 路线只是一个巡检点序列，不绑定地图（地图只用于把点位与线路画出来）：
+      // 这里只校验点位本身存在，跨图点位照常保存；
+      // 「一台机器人一次只跑一张图」是执行侧的口径，由 createTask 在生成任务时把关
       const routePoints = (a.points as string[])
         .map((pid) => s.points.find((x) => x.id === pid))
         .filter(Boolean) as Point[];
       must(routePoints.length === a.points.length, "所选巡检点不存在或已删除");
-      const mapIds = [...new Set(routePoints.map((p) => p.mapId))];
-      must(mapIds.length === 1, "一条巡检路线只能属于同一张地图（父线）");
       const old = s.templates.find((t) => t.id === a.id);
-      /** 路线方式：缺省固定路线（老数据与「新建路线」默认） */
-      const mode: RouteMode = (a.mode as RouteMode) || old?.mode || "固定路线";
-      const path = mode === "自定义路线" ? ((a.path as RouteNode[]) || []) : undefined;
+      /** 路线方式：缺省预设路线（老数据与「新建路线」默认） */
+      const mode: RouteMode = (a.mode as RouteMode) || old?.mode || "预设路线";
+      const path = mode === "自建路线" ? ((a.path as RouteNode[]) || []) : undefined;
       must(
-        mode !== "自定义路线" || (path as RouteNode[]).length >= 2,
-        "自定义路线至少需要两个路径点（请在预览图上依次点选巡检点）",
+        mode !== "自建路线" || (path as RouteNode[]).length >= 2,
+        "自建路线至少需要两个路径点（请在预览图上依次点选巡检点）",
       );
       /**
-       * 自定义线路是否变动
+       * 自建线路是否变动
        * @description 线路没动（例如只改名称）时保留既有验证结论；线路一变就必须重跑导航验证，
        *              否则「停用 → 导航验证 → 启用」这道门槛形同虚设
        */
       const pathChanged =
-        mode === "自定义路线" &&
+        mode === "自建路线" &&
         JSON.stringify(path) !== JSON.stringify(old?.path || undefined);
-      /** 固定路线走的是已验证路网，视为已通过；自定义路线按验证结论落库 */
+      /** 预设路线走的是已验证路网，视为已通过；自建路线按验证结论落库 */
       const verified =
-        mode !== "自定义路线" ? true : pathChanged ? false : !!old?.verified;
+        mode !== "自建路线" ? true : pathChanged ? false : !!old?.verified;
       const t: Template = {
         id: old?.id || id("TMP"),
         name: a.name,
         points: a.points,
-        // 父线地图（路线基线）：后期支持跨图时扩展为 mapIds: string[]
-        mapId: mapIds[0],
         end: a.end || "返航",
-        // 自定义路线不走固定路线，保存后一律落「停用」：须经机器导航验证可行后由用户启用
-        state: mode === "自定义路线" ? "停用" : a.state || old?.state || "启用",
+        // 自建路线不走预设路线路网，保存后一律落「停用」：须经机器导航验证可行后由用户启用
+        state: mode === "自建路线" ? "停用" : a.state || old?.state || "启用",
         version: (old?.version || 0) + 1,
         mode,
         path,
@@ -2140,10 +2138,10 @@ export function transition(state: State, a: Action): State {
         );
         must(used.length === 0, "该巡检路线仍有启用的计划引用，请先停用相关计划");
       } else {
-        // 自定义路线不走固定路线路网，启用前必须完成导航验证（可行才允许投用）
+        // 自建路线不走预设路线路网，启用前必须完成导航验证（可行才允许投用）
         must(
-          t.mode !== "自定义路线" || t.verified,
-          "自定义路线须先完成导航验证（路线列表 › 导航）",
+          t.mode !== "自建路线" || t.verified,
+          "自建路线须先完成导航验证（路线列表 › 导航）",
         );
       }
       t.state = t.state === "启用" ? "停用" : "启用";
@@ -2152,7 +2150,7 @@ export function transition(state: State, a: Action): State {
     case "VERIFY_ROUTE": {
       const t = s.templates.find((x) => x.id === a.id);
       must(t, "巡检路线不存在或已删除");
-      must(t.mode === "自定义路线", "仅自定义路线需要导航验证");
+      must(t.mode === "自建路线", "仅自建路线需要导航验证");
       const robot = s.robots.find((r) => r.id === a.robotId);
       must(robot, "请选择执行验证的机器人设备");
       t.verified = true;
@@ -2192,6 +2190,10 @@ export function transition(state: State, a: Action): State {
       const kind: PlanKind = planKinds.includes(a.kind as PlanKind)
         ? (a.kind as PlanKind)
         : "周期任务";
+      // 执行周期：只认 月 / 天 / 时 三档，缺失或越界按「每天」兜底
+      const cycle: PlanCycle = planCycles.includes(a.cycle as PlanCycle)
+        ? (a.cycle as PlanCycle)
+        : "每天";
       must(
         kind !== "定时任务" || /^\d{4}-\d{2}-\d{2}$/.test(String(a.start || "")),
         "请选择定时任务的执行日期",
@@ -2210,7 +2212,7 @@ export function transition(state: State, a: Action): State {
         kind,
         templateId: a.templateId,
         robotId: a.robotId,
-        cycle: a.cycle,
+        cycle,
         start,
         end,
         time: a.time,

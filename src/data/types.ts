@@ -1302,7 +1302,7 @@ export interface Task {
   preemptedTaskId?: string;
 }
 /**
- * 自定义路线的路径锚点（底图百分比坐标，口径与 RoutePreview / MapImageCanvas 一致）
+ * 自建路线的路径锚点（底图百分比坐标，口径与 RoutePreview / MapImageCanvas 一致）
  * @description `pointId` 非空表示该锚点吸附到某个巡检点的定位点——只引用既有巡检点，
  *              不会新建或删除业务点位；机器狗按这条自绘线路行驶，不再沿父线路网寻路
  */
@@ -1317,30 +1317,28 @@ export interface RouteNode {
    */
   curve?: boolean;
 }
-/** 巡检路线方式：固定路线（沿已标定的固定路网自动寻路）/ 自定义路线（自绘线路，须导航验证后方可启用） */
-export const routeModes = ["固定路线", "自定义路线"] as const;
+/** 巡检路线方式：预设路线（沿已标定的固定路网自动寻路）/ 自建路线（自绘线路，须导航验证后方可启用） */
+export const routeModes = ["预设路线", "自建路线"] as const;
 export type RouteMode = (typeof routeModes)[number];
 export interface Template {
   id: string;
   name: string;
-  /** 巡检点 id 序列：**顺序即机器狗的执行顺序**（子线按此顺序跑） */
-  points: string[];
   /**
-   * 父线地图 id（路线基线）
-   * @description 一条路线（子线）只允许落在同一张地图（父线）上：机器狗按区域调度，
-   *              任务自身也要求 `mapId` 唯一。后期支持跨图时扩展为 `mapIds: string[]`
+   * 巡检点 id 序列：**顺序即机器狗的执行顺序**（子线按此顺序跑）
+   * @description 路线就是这条有序数组，**不绑定地图**：地图只负责把点位与线路画出来，
+   *              换版 / 重新标定 / 新增地图都不会改动或作废路线
    */
-  mapId?: string;
+  points: string[];
   end: string;
   /** 路线状态：启用后计划方可引用；停用仅存档不参与生成 */
   state: "启用" | "停用";
   version: number;
-  /** 路线方式：缺省视为「固定路线」（老数据兼容） */
+  /** 路线方式：缺省视为「预设路线」（老数据兼容） */
   mode?: RouteMode;
-  /** 自定义线路的路径锚点（`mode="自定义路线"` 时必填，至少 2 个） */
+  /** 自建线路的路径锚点（`mode="自建路线"` 时必填，至少 2 个） */
   path?: RouteNode[];
   /**
-   * 导航验证：自定义路线必须由机器人实跑一遍验证可行后才允许启用
+   * 导航验证：自建路线必须由机器人实跑一遍验证可行后才允许启用
    * @description 跟随父线的路线沿已验证路网行驶，缺省视为已通过
    */
   verified?: boolean;
@@ -1350,9 +1348,12 @@ export interface Template {
   /** 最近一次保存时间（路线列表「更新时间」列；老数据缺省显示「—」） */
   updatedAt?: string;
 }
-/** 计划执行方式：周期任务（按「每天 / 每周 / 每班」循环）/ 定时任务（指定日期时刻执行一次） */
+/** 计划执行方式：周期任务（按「每月 / 每天 / 每小时」循环）/ 定时任务（指定日期时刻执行一次） */
 export const planKinds = ["周期任务", "定时任务"] as const;
 export type PlanKind = (typeof planKinds)[number];
+/** 周期任务的执行周期：月 / 天 / 时三档，数组顺序即下拉顺序 */
+export const planCycles = ["每月", "每天", "每小时"] as const;
+export type PlanCycle = (typeof planCycles)[number];
 
 export interface Plan {
   robotId?: string;
@@ -1368,7 +1369,8 @@ export interface Plan {
   id: string;
   name: string;
   templateId: string;
-  cycle: string;
+  /** 执行周期（月 / 天 / 时） */
+  cycle: PlanCycle;
   start: string;
   end: string;
   time: string;

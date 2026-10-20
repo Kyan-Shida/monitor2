@@ -10,7 +10,14 @@
  *              （见 components/PointCalibration.tsx），两者按**定位 ID**绑定。
  * @interaction 详情页由 App.tsx 按路由 `map-detail` 渲染；本文件仅负责列表与旧深链兼容分支
  */
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import { FileText, Pencil, Power, RefreshCw, Trash2 } from "lucide-react";
 import { useStore } from "../data/store";
 import { go, usePageSize, useViewState } from "../data/navigation";
 import {
@@ -129,9 +136,70 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     s.robots.find((r) => r.id === scanRid)?.name || "所选机器人";
   /** 地图数据包（还不是地图）：与地图卡片同区展示 */
   const packets = s.mapPackets || [];
-  /** 「⋯」当前指向的对象：数据包或地图（两者 id 前缀不同，按存在性判断） */
-  const morePacket = packets.find((k) => k.id === moreId);
-  const moreMap = s.maps.find((x) => x.id === moreId);
+  /** 「⋯」下拉小菜单：点菜单外任意处即关闭 */
+  const moreRef = useRef<HTMLDivElement>(null);
+  /**
+   * 「⋯」下拉小菜单的定位
+   * @description 固定定位（相对视口）：卡片区在 `.panel`（overflow:hidden）里，
+   *              绝对定位的菜单会被面板底边裁掉，故按按钮的屏幕坐标算 top / left
+   */
+  const MENU_W = 132;
+  const morePos = useRef<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [moreOpen, SETMOREOPEN] = useState(false);
+  /** 开 / 关某张卡的菜单：开时记下按钮位置（右对齐按钮右边缘） */
+  const toggleMore = (e: ReactMouseEvent<HTMLElement>, id: string) => {
+    if (moreId === id) {
+      MORED("");
+      SETMOREOPEN(false);
+      return;
+    }
+    const r = e.currentTarget.getBoundingClientRect();
+    // 菜单约 180px 高：下方空间不够就向上弹
+    // 边界同时看屏幕底和面板底（面板底还压着分页条，向下弹会盖住分页与翻页）
+    const MENU_H = 180;
+    const panel = e.currentTarget.closest(".panel");
+    const limit = Math.min(
+      window.innerHeight - 8,
+      panel ? panel.getBoundingClientRect().bottom - 8 : Infinity,
+    );
+    let top = r.bottom + 6;
+    if (top + MENU_H > limit) top = Math.max(8, r.top - MENU_H - 6);
+    morePos.current = {
+      top,
+      left: Math.max(8, r.right - MENU_W),
+    };
+    MORED(id);
+    SETMOREOPEN(true);
+  };
+  /** 关闭菜单（菜单项点完也走这里，避免残留监听） */
+  const closeMore = () => {
+    MORED("");
+    SETMOREOPEN(false);
+  };
+  /** 小菜单用固定定位：相对视口摆放，不受面板 overflow 裁剪 */
+  const menuStyle: CSSProperties = {
+    top: morePos.current.top,
+    left: morePos.current.left,
+  };
+  useEffect(() => {
+    if (!moreOpen) return;
+    const close = () => {
+      MORED("");
+      SETMOREOPEN(false);
+    };
+    const onDown = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) close();
+    };
+    // 页面滚动 / 窗口尺寸变化后按钮位置已变，直接收起，避免菜单悬空
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [moreOpen]);
 
   /** 数据包回传进度：模拟机器人扫描 + 回传（原型按固定节拍推进） */
   useEffect(() => {
@@ -322,7 +390,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                 F("");
               }}
             >
-              ＋ 导入地图
+              ＋ 导入已处理地图
             </Btn>
           </div>
         }
@@ -349,79 +417,191 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             还没有地图。点「＋ 新增地图」让在线机器人扫描回传数据包，或「＋ 导入地图」上传现成的纯点云地图。
           </Empty>
         ) : (
-          <div className="map-cards">
-            {/*
-              地图数据包（还不是地图）：与地图同一卡片样式，名称用醒目色标出；
-              「编辑」命名 / 定区域后才经 IMPORT 落为正式地图
-            */}
-            {packets.map((k) => (
-              <article className="map-card packet" key={k.id}>
-                <div className="map-card-img">
-                  <img src={k.image || SAMPLE_MAP_IMAGE} alt={k.name} />
-                </div>
-                <div className="map-card-body">
-                  <div className="map-card-name">
-                    <b>{k.name}</b>
-                    <small>
-                      {k.source} · {k.at}
-                    </small>
-                  </div>
-                  <div className="map-card-actions">
-                    <Btn disabled title="数据包还不是地图，请先「构建地图」">
-                      导航
-                    </Btn>
-                    <Btn
-                      onClick={() => {
-                        PKT(k);
-                        PKN(k.name);
-                        PKR(areaOptions(s)[0] || "一期罐区");
-                      }}
-                    >
-                      编辑
-                    </Btn>
-                    <Btn onClick={() => MORED(k.id)}>⋯</Btn>
-                  </div>
-                </div>
-              </article>
-            ))}
-            {rows.map((x) => {
-              const bound = s.robots.filter((r) => r.mapId === x.id);
-              const outdated = bound.filter((r) => r.mapVersion < x.version);
-              return (
-                <article className="map-card" key={x.id}>
-                  <div className="map-card-img">
-                    <img src={x.image || SAMPLE_MAP_IMAGE} alt={x.name} />
-                  </div>
-                  <div className="map-card-body">
-                    <div className="map-card-name">
-                      <b>{x.name}</b>
-                      <small>
-                        {x.region} · V{x.version} · {x.syncState}
-                        {x.updatedAt ? ` · ${x.updatedAt}` : ""}
-                        {outdated.length ? (
-                          <span className="outdated">
-                            {" "}· ⚠{outdated.length} 台待更新
-                          </span>
-                        ) : (
-                          ""
-                        )}
-                      </small>
-                    </div>
-                    <div className="map-card-actions">
-                      <Btn
-                        small
-                        title="把本地图下发给所选机器人设备，并同步到机器人端"
-                        onClick={() => SET_DISPATCH(x.id)}
+          <Table
+            heads={[
+              "地图名称",
+              "区域 / 来源",
+              "版本",
+              "同步状态",
+              "更新时间",
+              "绑定机器",
+              "操作",
+            ]}
+            rows={[
+              // 地图数据包（还不是地图）：同一张表里用「数据包」状态区分，编辑命名后才落为正式地图
+              ...packets.map((k) => [
+                <b className="map-packet-name">{k.name}</b>,
+                k.source,
+                "—",
+                <Badge>数据包</Badge>,
+                k.at,
+                "—",
+                <div className="actions">
+                  <Btn
+                    onClick={() => {
+                      PKT(k);
+                      PKN(k.name);
+                      PKR(areaOptions(s)[0] || "一期罐区");
+                    }}
+                  >
+                    编辑
+                  </Btn>
+                  <div
+                    className="map-more"
+                    ref={moreId === k.id ? moreRef : undefined}
+                  >
+                    <Btn onClick={(e) => toggleMore(e, k.id)}>⋯</Btn>
+                    {moreId === k.id && (
+                      <div
+                        className="map-more-menu"
+                        role="menu"
+                        style={menuStyle}
                       >
-                        地图下发
-                      </Btn>
-                      <Btn small onClick={() => MORED(x.id)}>⋯</Btn>
-                    </div>
+                        <button
+                          role="menuitem"
+                          className="map-more-item"
+                          onClick={() => {
+                            closeMore();
+                            RN({ kind: "packet", id: k.id, name: k.name });
+                          }}
+                        >
+                          <Pencil size={14} />
+                          重命名
+                        </button>
+                        <button
+                          role="menuitem"
+                          className="map-more-item"
+                          onClick={() => {
+                            closeMore();
+                            PKT(k);
+                            PKN(k.name);
+                            PKR(areaOptions(s)[0] || "一期罐区");
+                          }}
+                        >
+                          <RefreshCw size={14} />
+                          构建地图
+                        </button>
+                        <button
+                          role="menuitem"
+                          className="map-more-item danger"
+                          onClick={() => {
+                            closeMore();
+                            DELPKT(k);
+                          }}
+                        >
+                          <Trash2 size={14} />
+                          删除
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </article>
-              );
-            })}
-          </div>
+                </div>,
+              ]),
+              ...rows.map((x) => {
+                const bound = s.robots.filter((r) => r.mapId === x.id);
+                const outdated = bound.filter((r) => r.mapVersion < x.version);
+                return [
+                  <b>{x.name}</b>,
+                  x.region,
+                  `V${x.version}`,
+                  <Badge>{x.syncState}</Badge>,
+                  x.updatedAt || "—",
+                  bound.length
+                    ? `${bound.length} 台${outdated.length ? ` · ⚠${outdated.length} 待更新` : ""}`
+                    : "—",
+                  <div className="actions">
+                    <Btn
+                      small
+                      title="把本地图下发给所选机器人设备，并同步到机器人端"
+                      onClick={() => SET_DISPATCH(x.id)}
+                    >
+                      地图下发
+                    </Btn>
+                    <div
+                      className="map-more"
+                      ref={moreId === x.id ? moreRef : undefined}
+                    >
+                        <Btn small onClick={(e) => toggleMore(e, x.id)}>
+                          ⋯
+                        </Btn>
+                        {moreId === x.id && (
+                          <div
+                            className="map-more-menu"
+                            role="menu"
+                            style={menuStyle}
+                          >
+                            <button
+                              role="menuitem"
+                              className="map-more-item"
+                              onClick={() => {
+                                closeMore();
+                                go("map-detail", x.id);
+                              }}
+                            >
+                              <FileText size={14} />
+                              详情
+                            </button>
+                            <button
+                              role="menuitem"
+                              className="map-more-item"
+                              onClick={() => {
+                                closeMore();
+                                RN({ kind: "map", id: x.id, name: x.name });
+                              }}
+                            >
+                              <Pencil size={14} />
+                              重命名
+                            </button>
+                            <button
+                              role="menuitem"
+                              className="map-more-item"
+                              onClick={() => {
+                                closeMore();
+                                act({ type: "TOGGLE_MAP_STATUS", id: x.id });
+                              }}
+                            >
+                              <Power size={14} />
+                              {x.status === "停用" ? "启用" : "停用"}
+                            </button>
+                            <button
+                              role="menuitem"
+                              className="map-more-item"
+                              onClick={() => {
+                                closeMore();
+                                N(x.name);
+                                RG(x.region);
+                                IMG("");
+                                F("");
+                                C("");
+                                V("");
+                                ER("");
+                                CI(false);
+                                IT(x.id);
+                                M("import");
+                              }}
+                            >
+                              <RefreshCw size={14} />
+                              更新地图
+                            </button>
+                            <button
+                              role="menuitem"
+                              className="map-more-item danger"
+                              onClick={() => {
+                                closeMore();
+                                DELM(x);
+                              }}
+                            >
+                              <Trash2 size={14} />
+                              删除地图
+                            </button>
+                          </div>
+                        )}
+                    </div>
+                  </div>,
+                ];
+              }),
+            ]}
+          />
         )}
         <Pager
           page={cur}
@@ -537,111 +717,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         </Modal>
       )}
 
-      {/*
-        数据包卡片「⋯」：重命名 / 构建地图 / 删除
-        @description 「构建地图」把数据包转成可标定的 SLAM 地图（路网与定位点在标定工作台维护）
-      */}
-      {morePacket && (
-        <Modal
-          title={`${morePacket.name} · 更多操作`}
-          onClose={() => MORED("")}
-        >
-          <div className="actions">
-            <Btn
-              onClick={() => {
-                const k = morePacket;
-                MORED("");
-                RN({ kind: "packet", id: k.id, name: k.name });
-              }}
-            >
-              重命名
-            </Btn>
-            <Btn
-              onClick={() => {
-                const k = morePacket;
-                MORED("");
-                PKT(k);
-                PKN(k.name);
-                PKR(areaOptions(s)[0] || "一期罐区");
-              }}
-            >
-              构建地图
-            </Btn>
-            <Btn
-              danger
-              onClick={() => {
-                const k = morePacket;
-                MORED("");
-                DELPKT(k);
-              }}
-            >
-              删除
-            </Btn>
-          </div>
-        </Modal>
-      )}
-
-      {/* 地图卡片「⋯」：详情 / 重命名 / 删除地图 / 启停 / 地图下发 */}
-      {moreMap && (
-        <Modal slim title={`${moreMap.name} · 更多操作`} onClose={() => MORED("")}>
-          <div className="map-more-actions">
-            <Btn
-              onClick={() => {
-                const mid = moreMap.id;
-                MORED("");
-                go("map-detail", mid);
-              }}
-            >
-              详情
-            </Btn>
-            <Btn
-              onClick={() => {
-                const x = moreMap;
-                MORED("");
-                RN({ kind: "map", id: x.id, name: x.name });
-              }}
-            >
-              重命名
-            </Btn>
-            <Btn
-              onClick={() => {
-                act({ type: "TOGGLE_MAP_STATUS", id: moreMap.id });
-              }}
-            >
-              {moreMap.status === "停用" ? "启用" : "停用"}
-            </Btn>
-            <Btn
-              onClick={() => {
-                const x = moreMap;
-                MORED("");
-                N(x.name);
-                RG(x.region);
-                IMG("");
-                F("");
-                C("");
-                V("");
-                ER("");
-                CI(false);
-                IT(x.id);
-                M("import");
-              }}
-            >
-              更新地图
-            </Btn>
-            <Btn
-              danger
-              onClick={() => {
-                const x = moreMap;
-                MORED("");
-                DELM(x);
-              }}
-            >
-              删除地图
-            </Btn>
-          </div>
-        </Modal>
-      )}
-      {/* 地图下发弹窗：从更多操作进入 */}
+      {/* 卡片「⋯」已改为就地下拉小菜单（见卡片渲染），不再用弹窗 */}
+      {/* 地图下发弹窗：从卡片「地图下发」进入 */}
       {dispatchMapId && (
         <Modal
           wide

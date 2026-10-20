@@ -59,7 +59,7 @@ export function ControlConsole({ robotId }: { robotId: string }) {
             {session ? <><div className="manual-readout"><span>采集证据 <b>{evidence.length}</b> 条</span><span>会话 {session.id}</span></div>
               {evidence.length ? <Table heads={["采集项", "处理状态", "操作"]} rows={evidence.slice(0,3).map(result => [result.item, <Badge>{result.status}</Badge>, <Btn onClick={() => go("result-detail", result.id)}>查看结果</Btn>])}/> : <p className="muted">本次尚未采集证据。人工采集结果独立留档，不覆盖自主结果。</p>}
               {latest?.resumedAt && !x && <p>原任务已于 {new Date(latest.resumedAt).toLocaleTimeString("zh-CN")} 恢复自主执行。</p>}
-            </> : <p className="muted">申请接管后，这里展示本次采集证据和处理状态。</p>}
+            </> : <p className="muted">接管后，这里展示本次采集证据和处理状态。</p>}
             <details className="manual-history"><summary>查看完整接管记录、证据与操作回执</summary><TakeoverOutcome robotId={r.id}/></details>
           </Panel>
         </section>
@@ -76,8 +76,8 @@ export function ControlConsole({ robotId }: { robotId: string }) {
                   : ["暂停", "已被接管"].includes(t?.state || "")
                     ? "下一步：明确恢复原任务。"
                     : latest?.resumedAt
-                      ? "任务已恢复；需要再次操作时可申请新会话。"
-                      : "先申请接管，再进行移动、云台和采集操作。"}
+                      ? "任务已恢复；需要再次操作时可再次接管。"
+                      : "先进行接管，再进行移动、云台和采集操作。"}
           </p>
           {/* TKO-01：机器人申请人工接管 —— 人从异常入口进入，而非主动切入 */}
           {!!robotReqs.length && (
@@ -111,9 +111,9 @@ export function ControlConsole({ robotId }: { robotId: string }) {
                   C(false);
                   act({ type: "TAKEOVER", robotId: r.id });
                 }}
-                title="人工主动接管（区别于机器人申请）"
+                title="人工主动接管"
               >
-                申请接管（人工主动）
+                进行接管
               </Btn>
             </Can>
           )}

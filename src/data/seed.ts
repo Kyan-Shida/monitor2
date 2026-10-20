@@ -1747,8 +1747,6 @@ export function seed(
         id: "TMP01",
         name: "一期罐区常规巡检路线",
         points: ["P001", "P002", "P003"],
-        /** 父线地图：子线（本路线）只能落在同一张地图上（机器狗按区域调度） */
-        mapId: "MAP-A03",
         end: "返航",
         state: "启用",
         version: 1,
@@ -1758,7 +1756,6 @@ export function seed(
         id: "TMP02",
         name: "罐体温度专项路线",
         points: ["P004", "P006"],
-        mapId: "MAP-A03",
         end: "返航",
         state: "启用",
         version: 1,

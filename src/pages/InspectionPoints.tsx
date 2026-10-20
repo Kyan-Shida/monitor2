@@ -210,11 +210,11 @@ export function InspectionPoints({ id }: { id?: string }) {
             )}
             <Table
               heads={[
+                "巡检点 ID",
                 "巡检点名称",
                 "统一坐标（米）",
                 "区域",
                 "巡检项名称",
-                "ID 点",
                 "覆盖设备",
                 "状态",
                 "操作",
@@ -224,11 +224,11 @@ export function InspectionPoints({ id }: { id?: string }) {
                 const devs = devicesOfPoint(s, p);
                 const w = p.world;
                 return [
+                  p.id,
                   p.name,
                   w ? `X ${w.x} · Y ${w.y} · Z ${w.z}` : "未写入统一坐标",
                   areasOfPoint(p).join(" / ") || "—",
                   specs.map((sp) => sp.name).join(" / ") || "—",
-                  p.id,
                   devs.map((d) => d.name).join(" / ") || "—",
                   <Badge tone={p.state === "已启用" ? "green" : "amber"}>{p.state}</Badge>,
                   <div className="actions">

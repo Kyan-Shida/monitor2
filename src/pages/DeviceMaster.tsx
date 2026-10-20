@@ -34,17 +34,25 @@ import type { DeviceAsset, DeviceKind } from "../data/types";
  * @description 巡检项一列可用「、」「,」「;」「/」分隔多个检测目标；
  *              采集方式与单位不再由导入填写（检测项页同样不填），落库取默认值。
  */
-const CSV_HEADS = [
-  "设备编码",
-  "设备名称",
-  "设备形态",
-  "所属区域",
-  "安装位置",
-  "巡检项",
+/** 标准列名：解析位置映射与表头识别的统一口径（保持简短稳定，不随提示文字变化） */
+const HEAD_COLS = ["设备编码", "设备名称", "设备形态", "所属区域", "安装位置", "巡检项"];
+/** 每列填写提示：用于模板表头的括号说明，让用户打开 Excel 即懂怎么填 */
+const HEAD_HINTS: Record<string, string> = {
+  "设备编码": "必填，重复则更新已有设备",
+  "设备名称": "必填",
+  "设备形态": "选填，留空按类型自动判定",
+  "所属区域": "选填",
+  "安装位置": "选填，可底图打点",
+  "巡检项": "必填，多个用「、」分隔",
+};
+/** 下载模板与预览用的友好表头（标准名 + 括号提示） */
+const TEMPLATE_HEADS = HEAD_COLS.map((c) => `${c}（${HEAD_HINTS[c]}）`);
+/** 模板示例数据（二维数组，避免逗号歧义）：覆盖实体/虚拟、形态留空、多巡检项等场景 */
+const TEMPLATE_SAMPLE: string[][] = [
+  ["V010", "V010 新增储罐", "", "一期罐区", "一期罐区东侧", "液位计、罐壁温度"],
+  ["V011", "V011 在线分析仪", "实体设备", "装置区", "装置区 A 段管廊", "出口压力表"],
+  ["V012", "V012 罐区周界", "虚拟设备", "一期罐区", "", "周界入侵、罐区气体"],
 ];
-const CSV_SAMPLE = `设备编码,设备名称,设备形态,所属区域,安装位置,巡检项
-V010,V010 新增储罐,实体设备,一期罐区,一期罐区东侧,液位计、罐壁温度
-V011,V011 在线分析仪,实体设备,装置区,装置区 A 段管廊,出口压力表`;
 /** 导入行：Excel 解析共用的字段口径（一行 = 一台设备） */
 type ImportRow = {
   id: string;
@@ -84,6 +92,8 @@ export function DeviceMaster() {
     deviceKind: DeviceKind;
     /** 所属区域（必填） */
     region: string;
+    /** 厂区坐标文本：点地图自动代入，或用户手动输入（x, y） */
+    coordInput: string;
     /** 安装位置：全厂区 2D 底图上打点得到的厂区坐标（底图百分比口径） */
     x?: number;
     y?: number;
@@ -221,7 +231,17 @@ export function DeviceMaster() {
       const rows = await readSheetRows(f);
       const parsed = rows
         .filter((r) => r.some((c) => c))
-        .filter((r) => !CSV_HEADS.some((h) => (r[0] || "").startsWith(h)))
+        // 表头识别：去掉括号说明后与标准列名匹配（兼容旧无括号表头与新友好表头）
+        .filter(
+          (r) =>
+            !HEAD_COLS.some(
+              (h) =>
+                (r[0] || "")
+                  .replace(/（[^）]*）/g, "")
+                  .replace(/\([^)]*\)/g, "")
+                  .trim() === h,
+            ),
+        )
         .map(([id, name, dkind, region, location, targets]) => ({
           id: id || "",
           name: name || "",
@@ -234,7 +254,7 @@ export function DeviceMaster() {
       if (!parsed.length) {
         IMPROWS([]);
         IMPERR(
-          `未解析到有效数据行，请检查表头与内容（${CSV_HEADS.join(" / ")}）`,
+          `未解析到有效数据行，请检查表头与内容（${TEMPLATE_HEADS.join(" / ")}）`,
         );
         return;
       }
@@ -253,12 +273,26 @@ export function DeviceMaster() {
     }
   }
 
-  /** 下载 Excel 模板（与导入口径一致：设备身份 3 列 + 检测项 5 列，一设备多行即多检测项） */
+  /** 下载带「填写说明」工作表的 Excel 模板，让用户打开即懂怎么填 */
   function downloadTemplate() {
-    const sample = CSV_SAMPLE.split("\n")
-      .slice(1)
-      .map((line) => line.split(","));
-    downloadXlsx([CSV_HEADS, ...sample], "设备清单", "设备导入模板.xlsx");
+    const guide: (string | number)[][] = [
+      ["列名", "是否必填", "填写说明", "示例"],
+      ["设备编码", "必填", "业务唯一键；与已有设备编码重复时按编码更新（覆盖）该设备", "V010"],
+      ["设备名称", "必填", "设备显示名称", "V010 新增储罐"],
+      ["设备形态", "选填", "留空时按名称/类型自动判定（含罐区/管廊/围堰等→虚拟设备，其余→实体设备）", "实体设备 / 虚拟设备"],
+      ["所属区域", "选填", "设备归属区域；留空时按安装位置前缀推导", "一期罐区"],
+      ["安装位置", "选填", "安装位置描述；也可在台账内底图打点生成坐标", "一期罐区东侧"],
+      ["巡检项", "必填", "一台设备的多个检测目标，用「、」分隔；采集方式与单位系统按默认填", "液位计、罐壁温度"],
+      ["", "", "", ""],
+      ["以下由系统自动生成，无需填写", "", "", ""],
+      ["检测项ID / 类型 / 分类 / 更新时间", "系统生成", "导入后由平台按检测目标名称自动判定，不与模板列对应", "—"],
+    ];
+    downloadXlsx(
+      [TEMPLATE_HEADS, ...TEMPLATE_SAMPLE],
+      "设备导入模板",
+      "设备导入模板.xlsx",
+      [{ name: "填写说明", aoa: guide }],
+    );
   }
 
   return (
@@ -299,6 +333,8 @@ export function DeviceMaster() {
                       deviceKind: "实体设备",
                       // 已按区域筛选时预填该区域，减少一次重复选择
                       region: treeSel.startsWith("r:") ? treeSel.slice(2) : "",
+                      // 安装位置统一用坐标：默认空，点地图自动代入或手动输入
+                      coordInput: "",
                     })
                   }
                 >
@@ -409,9 +445,10 @@ export function DeviceMaster() {
             />
           </Field>
           <Note>
-            表头：{CSV_HEADS.join(" / ")}。<b>一行为一台设备</b>
-            ，巡检项可用「、」分隔多个检测目标（采集方式与单位不再填写）；
-            设备形态留空时按设备类型自动判定；编码重复时按编码更新已有设备。
+            表头（已含填写提示）：{TEMPLATE_HEADS.join("　/　")}。
+            <b>一行为一台设备，先「下载 Excel 模板」按提示填写最稳妥</b>；
+            巡检项可用「、」分隔多个检测目标；设备形态留空时按类型自动判定；
+            编码重复时按编码更新已有设备；检测项ID / 类型 / 分类 / 更新时间由系统自动生成，无需填写。
           </Note>
           <div className="actions" style={{ marginTop: 10 }}>
             <Btn onClick={downloadTemplate}>下载 Excel 模板</Btn>
@@ -434,7 +471,7 @@ export function DeviceMaster() {
                 <table className="import-table">
                   <thead>
                     <tr>
-                      {CSV_HEADS.map((h) => (
+                      {TEMPLATE_HEADS.map((h) => (
                         <th key={h}>{h}</th>
                       ))}
                     </tr>
@@ -473,15 +510,16 @@ export function DeviceMaster() {
                   !devForm.id.trim() || !devForm.name.trim() || !devForm.region
                 }
                 onClick={() => {
+                  // 安装位置统一使用厂区坐标：以输入框为准（点地图会写入，也可手动改）
+                  const coord = devForm.coordInput.trim() || coordText;
                   const ok = act({
                     type: "ADD_DEVICE",
                     id: devForm.id.trim(),
                     name: devForm.name.trim(),
                     deviceKind: devForm.deviceKind,
                     region: devForm.region,
-                    // 安装位置：地图打点 → 厂区坐标（未打点则留空）
-                    coord: coordText || undefined,
-                    coordSys: coordText ? "厂区局部坐标" : undefined,
+                    coord: coord || undefined,
+                    coordSys: coord ? "厂区局部坐标" : undefined,
                   });
                   if (ok) DEVFORM(null);
                 }}
@@ -538,16 +576,20 @@ export function DeviceMaster() {
             <div className="device-form-map">
               <Field label="安装位置">
                 <input
-                  value={coordText}
-                  placeholder="点击下方地图自动代入厂区坐标"
-                  readOnly
+                  value={devForm.coordInput}
+                  placeholder="点击下方地图自动代入，或手动输入厂区坐标（x, y）"
+                  onChange={(e) =>
+                    DEVFORM({ ...devForm, coordInput: e.target.value })
+                  }
                 />
               </Field>
               <MapImageCanvas
                 image={plantMapImage}
                 markers={pickMarkers}
                 selected="pick"
-                onAdd={(x, y) => DEVFORM({ ...devForm, x, y })}
+                onAdd={(x, y) =>
+                  DEVFORM({ ...devForm, x, y, coordInput: `${x}, ${y}` })
+                }
                 height={360}
               />
             </div>
