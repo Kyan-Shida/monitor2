@@ -4,7 +4,8 @@
  * @interaction 由 components/RoleAdmin.tsx 在新增 / 编辑角色时打开
  */
 import { useState } from "react";
-import { Btn, Field } from "./UI";
+import { createPortal } from "react-dom";
+import { Btn, Confirm, Field, Switch } from "./UI";
 import {
   actionKey,
   addRole,
@@ -56,6 +57,8 @@ export function RoleDrawer({
   );
   const [menus, setMenus] = useState(role?.menus ?? []);
   const [actions, setActions] = useState(role?.actions ?? []);
+  /** 保存前再确认一次 */
+  const [ask, ASK] = useState(false);
 
   /** 空白分组（页签已从侧边栏收起）不参与权限树 */
   const groups = menuTree.filter((g) => g.children.length > 0);
@@ -126,7 +129,9 @@ export function RoleDrawer({
     .flatMap((g) => g.children)
     .find((c) => c.pageId === activePage);
 
-  return (
+  /* 挂 body：应用根 .app 带 transform: scale(整页缩放)，fixed 子元素会以它为基准被二次缩放，
+     抽屉就不贴右边、也不满屏高度了，所以和 Modal 一样走 portal */
+  return createPortal(
     <div className="overlay drawer-overlay" onClick={onClose}>
       <aside
         className="drawer role-drawer"
@@ -185,16 +190,15 @@ export function RoleDrawer({
                 />
               </Field>
               <Field label="状态">
-                <select
-                  value={status}
-                  disabled={role?.isSuper}
-                  onChange={(e) =>
-                    setStatus(e.target.value as AdminRole["status"])
-                  }
-                >
-                  <option value="启用">启用</option>
-                  <option value="禁用">禁用</option>
-                </select>
+                <div className="switch-row">
+                  <Switch
+                    checked={status === "启用"}
+                    label="启用状态"
+                    disabled={role?.isSuper}
+                    onChange={(on) => setStatus(on ? "启用" : "禁用")}
+                  />
+                  {status}
+                </div>
               </Field>
             </div>
           )}
@@ -284,11 +288,26 @@ export function RoleDrawer({
 
         <div className="drawer-foot">
           <Btn onClick={onClose}>取消</Btn>
-          <Btn primary disabled={!ready} onClick={save}>
+          <Btn primary disabled={!ready} onClick={() => ASK(true)}>
             保存
           </Btn>
         </div>
+        {/* 二次确认：挂在 .drawer 内部，点击遮罩只关确认框、不连带关掉抽屉 */}
+        {ask && (
+          <Confirm
+            title={role ? "保存角色信息" : "创建角色"}
+            message={
+              role
+                ? `「${name}」的信息与功能权限保存后立即生效。`
+                : `将新建角色「${name}」并按勾选授予功能权限。`
+            }
+            confirmText="保存"
+            onClose={() => ASK(false)}
+            onConfirm={save}
+          />
+        )}
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }

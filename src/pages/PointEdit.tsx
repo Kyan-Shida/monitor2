@@ -1,22 +1,29 @@
 /**
  * @file PointEdit.tsx
  * @description 巡检点详情（单页）：**新增巡检点与编辑巡检项合并在这一页**（原「添加/编辑巡检点」「添加巡检项」「现场采集」三页合一）。
- *   顶栏：当前机器人 · 当前地图（级联选择器）｜ 巡检点详情 ｜ 删除 · 保存
+ *   顶栏：巡检点详情（居中）｜ 取消 · 删除 · 保存（右侧）：页内不放机器人 / 地图选择器
  *   左栏：① 基本信息（所属区域 · 巡检点名称 · 巡检点坐标「采集当前位置 / 保存」）② 机器控制（常驻操控台）
  *   右栏：巡检项清单（排序手柄 + 名称 + 编辑）⇄ 巡检项详情（名称 / 目标台账 / 所需能力列表 / 当前巡检项记录参 + 取消·保存）
  *   入口语义由 `field` 区分：现场采集进来「采集当前位置」可点、自动读机器人实时坐标；
  *   编辑巡检点进来按钮置灰，只回显该点此前现场采集到的坐标。
+ *   现场采集入口先弹「现场采集准备」定执行机器人与它要用的地图（防呆：只列该机器人已绑定的地图），
+ *   定完直接进页；编辑入口沿用该点已绑定的机器人与地图，两个入口的顶栏都不再放选择器。
  *   坐标未「保存」前不能添加巡检项（点了弹窗提示）；点已保存巡检项的「编辑」会二次确认。
  * @interaction 入口：「巡检点管理」列表行内「编辑巡检点」、工具条「现场采集新增」、地图上线工作台「现场采集」；
  *              引擎 action：CAPTURE_ONSITE_POINT（定格点位）、SAVE_POINT（落巡检点）、DELETE_POINT（删巡检点）、ADD_BUSINESS_TARGET（就地补台账）
  */
 import { useRef, useState } from "react";
-import { ArrowUpDown } from "lucide-react";
+import { GripVertical, Pencil } from "lucide-react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
 import { Badge, Btn, Empty, Field, Modal, Note, Panel } from "../components/UI";
-import { Cascader, type CascaderOption } from "../components/Cascader";
-import { ControlCockpit, InspectItemDrawer } from "../components/InspectItemDrawer";
+
+import { OnsiteSetupModal } from "../components/OnsiteSetupModal";
+import {
+  ControlCockpit,
+  InspectItemDrawer,
+  ParamSummary,
+} from "../components/InspectItemDrawer";
 import { businessTargetLabelOf } from "../data/businessTargetCrumb";
 import { clearPointDraft, pointDraftKey } from "../data/pointEditDraft";
 import type {
@@ -45,27 +52,6 @@ function nextExternalId(targets: Candidate[]): string {
     .map((m) => Number(m[1]));
   const max = nums.length ? Math.max(...nums) : 100;
   return `O${String(max + 1).padStart(3, "0")}`;
-}
-
-/** 按「区域 › 子项」两级分组，生成级联候选（区域值加前缀，避免与叶子撞车） */
-function groupOptions<T extends { region?: string }>(
-  items: T[],
-  keyOf: (x: T) => string,
-  labelOf: (x: T) => string,
-): CascaderOption[] {
-  const byArea = new Map<string, CascaderOption[]>();
-  items.forEach((x) => {
-    const area = x.region || "其他区域";
-    byArea.set(area, [
-      ...(byArea.get(area) || []),
-      { value: keyOf(x), label: labelOf(x) },
-    ]);
-  });
-  return [...byArea].map(([area, children]) => ({
-    value: `a:${area}`,
-    label: area,
-    children,
-  }));
 }
 
 /** 没有巡检项在编时，操控台用的空草稿：只为了让它能正常渲染与下发指令 */
@@ -115,7 +101,16 @@ export function PointEdit({
   /** 正在编辑的巡检项草稿：null = 右栏显示清单 */
   const [draft, DRAFT] = useViewState<InspectSpec | null>(`${key}.draft`, null);
   /** 当前带领 / 操控的机器人（现场采集要读它的实时坐标） */
-  const [robotId, ROBOT] = useViewState(`${key}.robot`, robot || s.robots[0]?.id || "");
+  const [robotId, ROBOT] = useViewState(
+    `${key}.robot`,
+    // 深链带入 > 该点此前现场采集用的机器 > 首台（页内不再提供选择器，默认值要尽量贴业务）
+    robot || editing?.calibrateRobot || s.robots[0]?.id || "",
+  );
+  /**
+   * 现场采集入口：机器人与地图是否已在「准备」弹窗里定过
+   * @description 每次进入都重新问一次（不落草稿），避免上次的机器 / 地图被沿用后直接开跑
+   */
+  const [ready, READY] = useState(!field);
   /** 操控台正在记录参数的动作（左栏操控台与右栏记录参共用） */
   const [recAct, RECACT] = useViewState<AtomicAction | "">(
     `${key}.recAct`,
@@ -143,6 +138,10 @@ export function PointEdit({
   const [askPose, ASKPOSE] = useState(false);
   /** 删除巡检点的二次确认 */
   const [askDel, ASKDEL] = useState(false);
+  /** 保存巡检项的二次确认（弹窗里回显本项参数记录，核对无误再落库） */
+  const [confirmItem, SETCONFIRMITEM] = useState(false);
+  /** 保存巡检点（整点）的二次确认：校验名称必填 / 不重名后弹窗 */
+  const [confirmPoint, SETCONFIRMPOINT] = useState(false);
   /** 拖动排序时的行下标（用于高亮） */
   const [drag, DRAG] = useState<number | null>(null);
   /** 同步一份行下标：拖拽事件里即时读取，规避 state 更新滞后导致的换位不灵敏 */
@@ -163,7 +162,6 @@ export function PointEdit({
 
   const bts = s.businessTargets || [];
   const r = s.robots.find((x) => x.id === robotId);
-  const m = s.maps.find((x) => x.id === mapId);
   const mapTargets = targetsOf(s, mapId || "");
   /** 该点已绑定的标定点（编辑态回显历史采集坐标） */
   const bound = mapTargets.find((t) => t.id === targetId);
@@ -171,18 +169,14 @@ export function PointEdit({
   const shown = picked || bound;
   const worldOf = bound?.world || editing?.world;
 
-  /** 机器人候选：区域 › 机器人 */
-  const robotOptions = groupOptions(
-    s.robots,
-    (x) => x.id,
-    (x) => `${x.id} · ${x.name}`,
-  );
-  /** 地图候选：区域 › 地图（顶栏「当前地图」与基本信息「所属区域」同一个值） */
-  const mapOptions = groupOptions(
-    s.maps,
-    (x) => x.id,
-    (x) => x.name,
-  );
+  /**
+   * 所属区域：**只读，不给选**
+   * @description 新增时由当前地图逆推（区域归属由地图决定，手动改会与地图不一致）；
+   *              编辑时沿用该点来源地图的区域，同一条数据只会有一个区域口径
+   */
+  const areaNameOfMap = s.maps.find((x) => x.id === mapId)?.region || "其他区域";
+  /** 现场采集入口：进页即弹「准备」弹窗定机器人与地图，确认后才进页面 */
+  const needSetup = !!field && !ready;
   const labelOfBt = (bid: string) => businessTargetLabelOf(s, bid);
   const insOf = (bid: string) =>
     s.instruments?.find((x) => x.id === bts.find((b) => b.id === bid)?.instrumentId);
@@ -247,12 +241,27 @@ export function PointEdit({
     ERR("");
     DRAFT(sp ? { ...sp } : { ...IDLE });
   }
+  /** 巡检项必填校验：保存与「二次确认」前共用同一套规则，避免弹窗里才发现缺项 */
+  function itemErrorOf(d: InspectSpec | null): string {
+    if (!d) return "";
+    if (!d.name.trim()) return "请填写巡检项名称";
+    if (!d.targetId) return "请选择巡检目标台账（检什么、怎么判）";
+    if (!d.actions.length) return "请至少选择一个原子动作";
+    return "";
+  }
+  /** 保存入口：先弹二次确认（内含本项参数记录），确认后才真落库 */
+  function askSaveItem() {
+    const msg = itemErrorOf(draft);
+    if (msg) return ERR(msg);
+    ERR("");
+    SETCONFIRMITEM(true);
+  }
   /** 保存巡检项：编辑态覆盖、新增态追加；保存后右栏恢复清单 */
   function saveItem() {
     if (!draft) return;
-    if (!draft.name.trim()) return ERR("请填写巡检项名称");
-    if (!draft.targetId) return ERR("请选择巡检目标台账（检什么、怎么判）");
-    if (!draft.actions.length) return ERR("请至少选择一个原子动作");
+    const msg = itemErrorOf(draft);
+    if (msg) return ERR(msg);
+    SETCONFIRMITEM(false);
     const rec: InspectSpec = {
       ...draft,
       id: draft.id || "IP-" + Date.now().toString(36),
@@ -280,12 +289,34 @@ export function PointEdit({
       return next;
     });
   }
+  /**
+   * 保存巡检点前的校验（入口与真正落库共用）
+   * @description 名称必填 + **不与已有巡检点重名**（同一工厂里点位名是现场对账凭据），
+   *              再检查坐标与巡检项是否齐备
+   */
+  function pointErrorOf(): string {
+    if (draft) return "请先「保存巡检项」或「取消」，再保存巡检点";
+    if (!name.trim()) return "请填写巡检点名称";
+    const dup = s.points.some(
+      (p) => p.name.trim() === name.trim() && p.id !== editing?.id,
+    );
+    if (dup) return `巡检点名称「${name.trim()}」已存在，请换一个名称`;
+    if (!targetId) return "请先「采集当前位置」并保存巡检点坐标";
+    if (!items.length) return "请至少添加并保存一个巡检项";
+    return "";
+  }
+  /** 保存入口：校验通过后弹二次确认（列出名称 / 区域 / 坐标 / 巡检项数） */
+  function askSavePoint() {
+    const msg = pointErrorOf();
+    if (msg) return ERR(msg);
+    ERR("");
+    SETCONFIRMPOINT(true);
+  }
   /** 保存巡检点：坐标 + 身份 + 全部巡检项一次性提交 */
   function savePoint() {
-    if (draft) return ERR("请先「保存巡检项」或「取消」，再保存巡检点");
-    if (!name.trim()) return ERR("请填写巡检点名称");
-    if (!targetId) return ERR("请先「采集当前位置」并保存巡检点坐标");
-    if (!items.length) return ERR("请至少添加并保存一个巡检项");
+    const msg = pointErrorOf();
+    if (msg) return ERR(msg);
+    SETCONFIRMPOINT(false);
     ERR("");
     const ok = act({
       type: "SAVE_POINT",
@@ -389,28 +420,14 @@ export function PointEdit({
   return (
     /* pd-page：整页锁一屏（main 已是 main-fill），内部用 flex 把高度分给三个面板，尽量不出现滚动条 */
     <div className="pd-page">
-      {/* 顶栏：机器 / 地图上下文在左，页面标题居中，删除与保存靠右 */}
+      {/* 顶栏：标题居中，取消 / 删除 / 保存靠右（机器人与地图在进页前的「准备」弹窗里定了） */}
       <div className="context-bar pd-topbar">
-        <div className="pd-topbar-left">
-          <Cascader
-            options={robotOptions}
-            value={robotId}
-            placeholder="当前机器人"
-            onChange={ROBOT}
-          />
-          <Cascader
-            options={mapOptions}
-            value={mapId}
-            placeholder="当前地图"
-            onChange={MAP}
-          />
-        </div>
         <b className="pd-title">巡检点详情</b>
         <div className="actions">
           {/* 取消：本次改动一律不落库（含已填的巡检项），直接回列表 */}
           <Btn onClick={cancelPage}>取消</Btn>
           {editing && <Btn onClick={() => ASKDEL(true)}>删除</Btn>}
-          <Btn primary disabled={!!draft} onClick={savePoint}>
+          <Btn primary disabled={!!draft} onClick={askSavePoint}>
             保存
           </Btn>
         </div>
@@ -422,6 +439,20 @@ export function PointEdit({
         </p>
       )}
 
+      {/* 现场采集准备：定执行机器人 + 机器人使用地图，防呆不通过则进不去 */}
+      {needSetup && (
+        <OnsiteSetupModal
+          robotId={robotId}
+          mapId={mapId}
+          onClose={cancelPage}
+          onConfirm={(rid, mid) => {
+            ROBOT(rid);
+            MAP(mid);
+            READY(true);
+          }}
+        />
+      )}
+
       <div className="pd-split">
         <div className="pd-col">
           {/* ① 基本信息：所属区域 · 巡检点名称 · 巡检点坐标 同一行 */}
@@ -431,13 +462,9 @@ export function PointEdit({
             extra={<Badge>{editing ? editing.id : "新建"}</Badge>}
           >
             <div className="pd-basic">
-              <Field label="所属区域" required>
-                <Cascader
-                  options={mapOptions}
-                  value={mapId}
-                  placeholder="请选择"
-                  onChange={MAP}
-                />
+              <Field label="所属区域">
+                {/* 由地图逆推 / 沿用新增时的设定：只读展示，避免与地图区域打架 */}
+                <p className="pd-value">{areaNameOfMap}</p>
               </Field>
               <Field label="巡检点名称" required>
                 <input
@@ -458,19 +485,20 @@ export function PointEdit({
                     保存
                   </Btn>
                 </div>
+                {/* 坐标回显跟着「巡检点坐标」走：放在本字段内，不再单独占面板一整行 */}
+                <p className="muted pd-coord-line">
+                  {coordText
+                    ? `采集坐标：${coordText}`
+                    : field
+                      ? "把机器带到点位停稳后点「采集当前位置」"
+                      : "该巡检点尚无现场采集坐标"}
+                </p>
               </Field>
             </div>
-            <p className="muted pd-coord-line">
-              {coordText
-                ? `采集坐标：${coordText}`
-                : field
-                  ? "把机器带到点位停稳后点「采集当前位置」"
-                  : "该巡检点尚无现场采集坐标"}
-            </p>
           </Panel>
 
           {/* ② 机器控制：双路视频 + 机器人移动 + 云台，常驻 */}
-          <Panel title="机器控制" className="pd-grow">
+          <Panel className="pd-grow pd-flat">
             <ControlCockpit
               draft={cockpitDraft}
               recordingAction={recAct}
@@ -499,7 +527,8 @@ export function PointEdit({
               />
               <div className="pd-foot">
                 <Btn onClick={cancelItem}>取消</Btn>
-                <Btn primary onClick={saveItem}>
+                {/* 保存前弹二次确认：把本项参数记录摊开让人核对一遍 */}
+                <Btn primary onClick={askSaveItem}>
                   保存
                 </Btn>
               </div>
@@ -519,9 +548,15 @@ export function PointEdit({
                   <li
                     key={sp.id}
                     className={drag === i ? "dragging" : undefined}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", String(i));
+                      dragRef.current = i;
+                      DRAG(i);
+                    }}
                     onDragOver={(e) => e.preventDefault()}
                     onDragEnter={() => {
-                      // 拖到哪一行就即时换位：不再要求落点精准，松手即生效
                       const from = dragRef.current;
                       if (from === null || from === i) return;
                       moveItem(from, i);
@@ -538,25 +573,18 @@ export function PointEdit({
                       DRAG(null);
                     }}
                   >
-                    {/* 排序手柄：列表顺序即机器狗执行顺序 */}
-                    <span
-                      className="pd-grip"
-                      title="拖动排序"
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.effectAllowed = "move";
-                        e.dataTransfer.setData("text/plain", String(i));
-                        dragRef.current = i;
-                        DRAG(i);
-                      }}
-                      aria-label={`拖动排序 ${sp.name}`}
-                    >
-                      <ArrowUpDown size={14} />
+                    {/* 排序手柄：draggable 已挂到整行 li 上，grip 仅作视觉提示 */}
+                    <span className="pd-grip" aria-label={`拖动排序 ${sp.name}`}>
+                      <GripVertical size={14} />
                     </span>
                     <span className="pd-item-name">{sp.name}</span>
-                    <span className="pd-edit" title="编辑巡检项">
+                    <span
+                      className="pd-edit"
+                      title="编辑巡检项"
+                      onDragStart={(e) => e.stopPropagation()}
+                    >
                       <Btn onClick={() => ASKEDIT(sp)} aria-label={`编辑 ${sp.name}`}>
-                        ✎
+                        <Pencil size={13} />
                       </Btn>
                     </span>
                   </li>
@@ -626,6 +654,58 @@ export function PointEdit({
           }
         >
           <p>删除后该巡检点及其巡检项一并移除，占用的定位ID自动释放；已被巡检路线引用时不能删除。</p>
+        </Modal>
+      )}
+
+      {/* 保存巡检项：二次确认 —— 把「本项参数记录」摊开核对，确认后才落库 */}
+      {confirmItem && draft && (
+        <Modal
+          title={`保存巡检项「${draft.name || "未命名"}」`}
+          wide
+          onClose={() => SETCONFIRMITEM(false)}
+          footer={
+            <>
+              <Btn onClick={() => SETCONFIRMITEM(false)}>返回修改</Btn>
+              <Btn primary onClick={saveItem}>
+                确认保存
+              </Btn>
+            </>
+          }
+        >
+          <p className="muted">
+            保存后本条巡检项的名称、目标台账、所需能力与下列参数将随巡检点一起落库，请核对：
+          </p>
+          <ParamSummary draft={draft} action={recAct} cfgOf={cfgOf} />
+        </Modal>
+      )}
+
+      {/* 保存巡检点：二次确认 —— 名称 / 区域 / 坐标 / 巡检项数一次过目 */}
+      {confirmPoint && (
+        <Modal
+          title={`保存巡检点「${name.trim()}」`}
+          onClose={() => SETCONFIRMPOINT(false)}
+          footer={
+            <>
+              <Btn onClick={() => SETCONFIRMPOINT(false)}>返回修改</Btn>
+              <Btn primary onClick={savePoint}>
+                确认保存
+              </Btn>
+            </>
+          }
+        >
+          <div className="ps-kv">
+            <b>巡检点名称</b>
+            <span>{name.trim()}</span>
+            <b>所属区域</b>
+            <span>{areaNameOfMap}</span>
+            <b>巡检点坐标</b>
+            <span>{coordText || "—"}</span>
+            <b>巡检项</b>
+            <span>{items.length} 项</span>
+          </div>
+          <p className="muted">
+            保存后该巡检点连同上述 {items.length} 条巡检项一起落库；取消则本次改动全部丢弃。
+          </p>
         </Modal>
       )}
 

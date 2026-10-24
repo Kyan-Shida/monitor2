@@ -15,6 +15,7 @@ import { useStore } from "../data/store";
 import { Badge, Btn, Modal, Note, Steps } from "./UI";
 import { Can } from "./Can";
 import { PERMS } from "../data/roles";
+import { fmtDate } from "../data/types";
 
 /** 接管须知：均为系统真实约束（engine 的会话校验），不是泛泛提示 */
 const NOTES = [
@@ -54,9 +55,8 @@ export function TakeoverDialog({
         ? 2
         : 3
     : 0;
-  const until = new Date(x?.expires ?? 0).toLocaleTimeString("zh-CN", {
-    hour12: false,
-  });
+  // 有效期只到分钟：与全平台时间口径一致（YYYY-MM-DD HH:mm 取时刻部分）
+  const until = fmtDate(new Date(x?.expires ?? 0)).slice(11);
   return (
     <Modal
       title={`接管会话 · ${r.id} ${r.name}`}

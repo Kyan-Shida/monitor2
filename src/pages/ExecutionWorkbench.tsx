@@ -2,7 +2,7 @@ import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import { stages, type Robot, type Task } from "../data/types";
+import { stages, fmtDateTime, type Robot, type Task } from "../data/types";
 import { stageOf, terminal, judgeOf } from "../data/selectors";
 import {
   Btn,
@@ -263,9 +263,7 @@ function LiveTaskMonitor({ id }: { id: string }) {
         <div className="execution-summary-meta">
           <span>
             <small>开始时间</small>
-            {t.startedAt
-              ? new Date(t.startedAt).toLocaleTimeString()
-              : t.created}
+            {t.startedAt ? fmtDateTime(t.startedAt) : t.created}
           </span>
           <span>
             <small>版本</small>V{t.mapVersion}

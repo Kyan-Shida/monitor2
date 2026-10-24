@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import { Badge, Btn, Panel } from "../components/UI";
+import { Badge, Btn, Panel, Confirm } from "../components/UI";
 import { deviceTypes, profileOf } from "../data/deviceProfile";
 import { areaOptions } from "../data/deviceMaster";
 import { captureKinds } from "../data/types";
@@ -32,6 +32,8 @@ export function RobotNew() {
   const [railSection, RAIL] = useState("");
   const [firmware, FW] = useState("");
   const [err, ERR] = useState("");
+  /** 取消二次确认：放弃已填内容 */
+  const [ask, ASK] = useState(false);
   const idTaken = !!rid.trim() && s.robots.some((r) => r.id === rid.trim());
   const snTaken = !!sn.trim() && s.robots.some((r) => r.sn === sn.trim());
   /**
@@ -52,6 +54,8 @@ export function RobotNew() {
     !!sn.trim() &&
     !snTaken &&
     !!name.trim() &&
+    !!region.trim() &&
+    !!firmware.trim() &&
     caps.length > 0;
 
   /** 提交新增：校验通过后写入台账并回到机器台账 */
@@ -80,6 +84,7 @@ export function RobotNew() {
       <div className="context-bar">
         <b>新增机器人</b>
         <div className="actions">
+          <Btn onClick={() => ASK(true)}>取消</Btn>
           <Btn primary disabled={!valid} onClick={save}>
             确认新增
           </Btn>
@@ -149,7 +154,9 @@ export function RobotNew() {
                 <th colSpan={2}>② 机型与硬件</th>
               </tr>
               <tr>
-                <th>机型</th>
+                <th>
+                  机型<em className="req">*</em>
+                </th>
                 <td>
                   <select
                     value={deviceType}
@@ -170,13 +177,17 @@ export function RobotNew() {
                 </td>
               </tr>
               <tr>
-                <th>所属区域</th>
+                <th>
+                  所属区域<em className="req">*</em>
+                </th>
                 <td>
                   <select
                     value={region}
                     onChange={(e) => REGION(e.target.value)}
                   >
-                    <option value="">未指定</option>
+                    <option value="" disabled>
+                      请选择区域
+                    </option>
                     {areaOptions(s).map((x) => (
                       <option key={x} value={x}>
                         {x}
@@ -186,7 +197,9 @@ export function RobotNew() {
                 </td>
               </tr>
               <tr>
-                <th>固件版本（选填）</th>
+                <th>
+                  固件版本<em className="req">*</em>
+                </th>
                 <td>
                   <input
                     value={firmware}
@@ -200,7 +213,9 @@ export function RobotNew() {
                 <th colSpan={2}>③ 机型约束</th>
               </tr>
               <tr>
-                <th>最低派单电量（%）</th>
+                <th>
+                  最低派单电量（%）<em className="req">*</em>
+                </th>
                 <td>
                   <input
                     type="number"
@@ -212,7 +227,9 @@ export function RobotNew() {
                 </td>
               </tr>
               <tr>
-                <th>是否参与充电排队规划</th>
+                <th>
+                  是否参与充电排队规划<em className="req">*</em>
+                </th>
                 <td>
                   <label className="inline-filter">
                     <input
@@ -297,6 +314,18 @@ export function RobotNew() {
         <p role="alert" className="reference-upload-error">
           {err}
         </p>
+      )}
+
+      {/* 取消二次确认：放弃已填写内容，不落库 */}
+      {ask && (
+        <Confirm
+          title="放弃新增"
+          message="已填写的内容将不会保存。"
+          confirmText="放弃"
+          danger
+          onClose={() => ASK(false)}
+          onConfirm={() => go("robots")}
+        />
       )}
     </>
   );

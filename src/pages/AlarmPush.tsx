@@ -18,14 +18,16 @@ import {
 import {
   Badge,
   Btn,
+  Drawer,
   Field,
-  Modal,
   MultiSelect,
   Panel,
+  Switch,
   Table,
 } from "../components/UI";
 import { FilterPanel } from "../components/FilterPanel";
 import { Pager } from "../components/Business";
+import { useListDelete } from "../components/ListDelete";
 
 /** 新建一条空白名单（「+ 添加推送人员」用） */
 const blankStaff = (): AlarmPushStaff => ({
@@ -64,7 +66,6 @@ export function AlarmPush() {
   };
   /** 筛选面板展开态：条件默认收起，点「筛选」才显示 */
   const [filterOpen, SETFILTEROPEN] = useState(false);
-  const [checked, SETCHECKED] = useState<string[]>([]);
   const [edit, E] = useState<AlarmPushStaff | null>(null);
   /** 绑定范围可选项：区域（主数据 ∪ 设备归属）/ 设备（设备台账） */
   const areaOptions = areaScopeOptionsOf(s);
@@ -82,10 +83,27 @@ export function AlarmPush() {
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const cur = Math.min(Math.max(1, pn), pages);
   const pageRows = filtered.slice((cur - 1) * pageSize, cur * pageSize);
-  const toggleChecked = (id: string) =>
-    SETCHECKED((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
+  /**
+   * 批量删除：点工具栏「删除」才进多选态（平时不占列宽），确认弹窗与其它列表同一套
+   * @description 仅管理员可维护名单，非管理员点删除会被引擎拦下并提示
+   */
+  const del = useListDelete({
+    onDelete: (ids) => {
+      for (const id of ids)
+        if (act({ type: "REMOVE_ALARM_PUSH", id }) === false) return false;
+    },
+    batch: {
+      pageIds: pageRows.map((p) => p.id),
+      title: (n) => `删除选中的 ${n} 位推送人员`,
+      nameOf: (id) => list.find((p) => p.id === id)?.name || id,
+      text: (n) => (
+        <>
+          本次将删除 <b>{n}</b> 位推送人员；删除后这些人不再收到任何告警推送，历史告警记录不受影响。
+        </>
+      ),
+    },
+  });
+  const multi = del.sel !== null;
   const toggleLevel = (lv: AlarmLevel) =>
     edit &&
     E({
@@ -107,16 +125,7 @@ export function AlarmPush() {
           <Btn primary onClick={() => E(blankStaff())}>
             + 添加推送人员
           </Btn>
-          <Btn
-            danger
-            disabled={!checked.length}
-            onClick={() => {
-              for (const id of checked) act({ type: "REMOVE_ALARM_PUSH", id });
-              SETCHECKED([]);
-            }}
-          >
-            删除
-          </Btn>
+          {del.bar}
         </div>
       }
     >
@@ -133,8 +142,9 @@ export function AlarmPush() {
         />
         )}
       <Table
+        className={del.tableClass}
         heads={[
-          "",
+          ...(multi ? [del.head] : []),
           "姓名",
           "手机号",
           "用户登录名",
@@ -142,16 +152,12 @@ export function AlarmPush() {
           "告警等级",
           "推送范围",
           "是否发送短信",
+          "启停",
           "最后更新人",
           "更新时间",
         ]}
         rows={pageRows.map((p) => [
-          <input
-            type="checkbox"
-            aria-label={`选择 ${p.name}`}
-            checked={checked.includes(p.id)}
-            onChange={() => toggleChecked(p.id)}
-          />,
+          ...(multi ? [del.cell(p.id, p.name)] : []),
           // 姓名即编辑入口
           <button type="button" className="rt-link" onClick={() => E({ ...p })}>
             {p.name}
@@ -166,6 +172,18 @@ export function AlarmPush() {
           // 未绑定任何维度 = 全部范围
           <span className="muted">{pushScopeLabel(p)}</span>,
           p.sms ? "是" : "否",
+          // 启停：停用后该人员不再收到推送（名单与配置保留），与「是否发送短信」独立
+          <Switch
+            checked={p.enabled !== false}
+            disabled={s.roleId !== "admin"}
+            label={`${p.name} 推送启停`}
+            onChange={() =>
+              act({
+                type: "SAVE_ALARM_PUSH",
+                staff: { ...p, enabled: p.enabled === false },
+              })
+            }
+          />,
           p.updatedBy || "—",
           <span className="muted">{p.updatedAt || "—"}</span>,
         ])}
@@ -180,12 +198,16 @@ export function AlarmPush() {
           PN(1);
         }}
       />
+      {/* 批量删除的二次确认（与其它列表共用同一套交互） */}
+      {del.modal}
       {edit && (
-        <Modal
+        <Drawer
           title={edit.id ? "编辑推送人员" : "添加推送人员"}
+          subtitle={edit.name.trim() || undefined}
           onClose={() => E(null)}
           footer={
-            <div className="actions">
+            <>
+              <Btn onClick={() => E(null)}>关闭</Btn>
               <Btn
                 primary
                 disabled={!edit.name.trim() || !edit.login.trim() || !edit.phone.trim()}
@@ -195,8 +217,7 @@ export function AlarmPush() {
               >
                 保存
               </Btn>
-              <Btn onClick={() => E(null)}>关闭</Btn>
-            </div>
+            </>
           }
         >
           <Field label="姓名" required>
@@ -264,7 +285,7 @@ export function AlarmPush() {
               onChange={(e) => E({ ...edit, sms: e.target.checked })}
             />
           </Field>
-        </Modal>
+        </Drawer>
       )}
     </Panel>
   );

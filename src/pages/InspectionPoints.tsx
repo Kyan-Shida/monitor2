@@ -22,7 +22,16 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go, usePageSize, useViewState } from "../data/navigation";
-import { Badge, Btn, Empty, Modal, Note, Panel, Table } from "../components/UI";
+import {
+  Btn,
+  Confirm,
+  Empty,
+  Modal,
+  Note,
+  Panel,
+  Switch,
+  Table,
+} from "../components/UI";
 import { Pager } from "../components/Business";
 import { PointCalibration } from "../components/PointCalibration";
 import { FilterPanel } from "../components/FilterPanel";
@@ -39,6 +48,8 @@ export function InspectionPoints({ id }: { id?: string }) {
   const { s, act } = useStore();
   /** 巡检点导入抽屉：先选数据来源机器人，再拉取 / 上传表格文件（与「地图管理」并列的第二个模块） */
   const [calOpen, SETCAL] = useState(false);
+  /** 启停二次确认：列表状态列的开关点一下先问一次，确认后才落库 */
+  const [togglePoint, ASKTOGGLE] = useState<Point | null>(null);
   /** 筛选面板展开态：展开时才显示 FilterPanel（触发按钮在「巡检点列表」面板头部） */
   const [filterOpen, SETFILTEROPEN] = useState(false);
   /** 筛选草稿：字段与 FilterPanel 的 fields 一一对应（点「查询」才写回生效值） */
@@ -210,7 +221,7 @@ export function InspectionPoints({ id }: { id?: string }) {
             )}
             <Table
               heads={[
-                "巡检点 ID",
+                "巡检点编码",
                 "巡检点名称",
                 "统一坐标（米）",
                 "区域",
@@ -230,16 +241,14 @@ export function InspectionPoints({ id }: { id?: string }) {
                   areasOfPoint(p).join(" / ") || "—",
                   specs.map((sp) => sp.name).join(" / ") || "—",
                   devs.map((d) => d.name).join(" / ") || "—",
-                  <Badge tone={p.state === "已启用" ? "green" : "amber"}>{p.state}</Badge>,
+                  // 状态 = 开关：与地图 / 路线同一套交互，点一下弹二次确认
+                  <Switch
+                    checked={p.state !== "停用"}
+                    label={`${p.name} 启停状态`}
+                    onChange={() => ASKTOGGLE(p)}
+                  />,
                   <div className="actions">
                     <Btn onClick={() => go("point-edit", p.id)}>编辑巡检点</Btn>
-                    <Btn
-                      onClick={() =>
-                        act({ type: "TOGGLE_POINT_STATE", id: p.id })
-                      }
-                    >
-                      {p.state === "停用" ? "启用" : "停用"}
-                    </Btn>
                   </div>,
                 ];
               })}
@@ -272,6 +281,24 @@ export function InspectionPoints({ id }: { id?: string }) {
           {/* 从地图详情带 mapId 进入时，导入抽屉默认选中该地图；列表本身不按地图筛选 */}
           <PointCalibration mapId={id} />
         </Modal>
+      )}
+      {/* 启停二次确认：停用后该点不再参与任务生成，启用前先说明影响 */}
+      {togglePoint && (
+        <Confirm
+          title={togglePoint.state === "停用" ? "启用巡检点" : "停用巡检点"}
+          message={
+            togglePoint.state === "停用"
+              ? `启用「${togglePoint.name}」后，可重新被巡检计划 / 临时任务引用。`
+              : `停用「${togglePoint.name}」后，该点不再被新的任务引用；已生成的历史结果照常保留。`
+          }
+          confirmText={togglePoint.state === "停用" ? "启用" : "停用"}
+          danger={togglePoint.state !== "停用"}
+          onClose={() => ASKTOGGLE(null)}
+          onConfirm={() => {
+            act({ type: "TOGGLE_POINT_STATE", id: togglePoint.id });
+            ASKTOGGLE(null);
+          }}
+        />
       )}
     </>
   );

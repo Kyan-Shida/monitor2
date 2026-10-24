@@ -5,6 +5,7 @@ import {
   type ReactNode,
   type ButtonHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import { X, ChevronRight, ChevronDown } from "lucide-react";
 export const Btn = ({
   children,
@@ -43,7 +44,7 @@ export const Badge = ({
     tone ??
     (/失败|异常|歧义|离线|超限|待确认|已驳回|超期|取消|一级|紧急/.test(text)
       ? "red"
-      : /已启用|已同步|完成|空闲|已恢复|已确认|已通过|通过|正常|已落位/.test(
+      : /已启用|已同步|完成|空闲|已关闭|已确认|已通过|通过|正常|已落位/.test(
             text,
           )
         ? "green"
@@ -60,16 +61,19 @@ export const Panel = ({
   children,
   className = "",
 }: {
-  title: string;
+  /** 面板标题；传 undefined / 空串则不渲染 panel-head（无标题面板） */
+  title?: string;
   extra?: ReactNode;
   children: ReactNode;
   className?: string;
 }) => (
   <section className={"panel " + className}>
-    <div className="panel-head">
-      <h3>{title}</h3>
-      {extra}
-    </div>
+    {title ? (
+      <div className="panel-head">
+        <h3>{title}</h3>
+        {extra}
+      </div>
+    ) : null}
     <div className="panel-body">{children}</div>
   </section>
 );
@@ -80,19 +84,26 @@ export const Panel = ({
 export const Field = ({
   label,
   required = false,
+  error,
   children,
 }: {
   label: string;
   /** 必填：标签后加红星标识 */
   required?: boolean;
   children: ReactNode;
+  /**
+   * 字段级校验提示
+   * @description 有值时标签变红、控件下方给出原因；比只在角落弹一条 toast 更容易定位
+   */
+  error?: string;
 }) => (
-  <label className="field">
+  <label className={"field" + (error ? " has-err" : "")}>
     <span>
       {label}
       {required && <em className="req">*</em>}
     </span>
     {children}
+    {error && <i className="field-err">{error}</i>}
   </label>
 );
 /**
@@ -264,7 +275,8 @@ export function Modal({
     </div>
   );
   const body = <div className="modal-body">{children}</div>;
-  return (
+  /* 挂到 body：页面根若有 transform（整页等比缩放），fixed 会以它为基准，弹窗就会偏位、跟着缩小 */
+  return createPortal(
     <div className="overlay" onClick={onClose}>
       <div
         role="dialog"
@@ -276,6 +288,157 @@ export function Modal({
         {body}
         {footer && <div className="modal-footer">{footer}</div>}
       </div>
+    </div>,
+    document.body,
+  );
+}
+/**
+ * 二次确认
+ * @description 保存 / 重置 / 删除这类一按就落库、不能撤回的操作，执行前再问一次；
+ *              复用 Modal 窄版，尺寸、圆角、按钮与全站弹窗完全一套
+ * @param danger 危险操作：确认按钮转红
+ */
+export function Confirm({
+  title,
+  message,
+  confirmText = "确定",
+  danger = false,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  /** 一句话说清后果，可省 */
+  message?: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      title={title}
+      slim
+      onClose={onClose}
+      footer={
+        <>
+          <Btn onClick={onClose}>取消</Btn>
+          <Btn primary={!danger} danger={danger} onClick={onConfirm}>
+            {confirmText}
+          </Btn>
+        </>
+      }
+    >
+      {message && <p>{message}</p>}
+    </Modal>
+  );
+}
+/**
+ * 通用抽屉（右侧滑出，约 2/3 页面宽）
+ * @description 与 Modal 的分工：**需要一边填一边看列表上下文**的编辑走抽屉，
+ *              极轻的确认 / 少量按钮走 Modal，字段多又要长期停留的走内置页。
+ *              抽屉只压暗不位移，关闭后列表仍停在原滚动位置。
+ * @param footer 固定底栏（取消 / 保存），与滚动内容分离
+ * @param subtitle 标题下一行小字（如编码 / 归属），省掉正文里重复的说明
+ */
+export function Drawer({
+  title,
+  subtitle,
+  children,
+  onClose,
+  footer,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  onClose: () => void;
+  /** 固定底栏：按钮不随内容滚动，也不悬浮在内容之上 */
+  footer?: ReactNode;
+}) {
+  /* 同样挂 body：页面根有 transform 时 fixed 会以它为基准，抽屉会偏位并跟着缩放 */
+  return createPortal(
+    <div className="overlay drawer-overlay" onClick={onClose}>
+      <aside
+        role="dialog"
+        aria-label={title}
+        className="drawer"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="drawer-head">
+          <div>
+            <h3>{title}</h3>
+            {subtitle && <small>{subtitle}</small>}
+          </div>
+          <button aria-label="关闭" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </div>
+        <div className="drawer-body">{children}</div>
+        {footer && <div className="drawer-foot">{footer}</div>}
+      </aside>
+    </div>,
+    document.body,
+  );
+}
+/**
+ * 开关（滑块）
+ * @description 二态字段用它替代下拉「启用 / 停用」：一眼看到当前状态，一次点击切换
+ */
+export function Switch({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  /** 无障碍名称（视觉上不显示） */
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      className={"ui-switch" + (checked ? " on" : "")}
+      onClick={() => onChange(!checked)}
+    >
+      <i />
+    </button>
+  );
+}
+
+/**
+ * 内置页容器（整页表单）
+ * @description 容器选型的第三档：字段多、需要长期停留、含图上绘制的编辑场景，
+ *              用整页替代弹窗 / 抽屉；顶栏常驻（标题 + 取消 / 保存），主体就是页面内容
+ * @param actions 顶栏右侧操作（取消 / 保存）
+ */
+export function InnerPage({
+  title,
+  subtitle,
+  actions,
+  children,
+  className = "",
+}: {
+  title: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={"inner-page " + className}>
+      <div className="context-bar">
+        <div>
+          <b>{title}</b>
+          {subtitle && <span>{subtitle}</span>}
+        </div>
+        {actions && <div className="actions">{actions}</div>}
+      </div>
+      {children}
     </div>
   );
 }

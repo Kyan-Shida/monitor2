@@ -2,9 +2,52 @@ import { useState } from "react";
 import { useStore } from "../data/store";
 import { go, usePageSize, useViewState } from "../data/navigation";
 import { pointOf, fmtTime, judgeOf, isAbnormal } from "../data/selectors";
-import { Btn, Badge, Panel, Table, Field, Note, Empty, Modal } from "../components/UI";
+import { Btn, Badge, Panel, Table, Field, Note, Empty, Modal, Drawer } from "../components/UI";
 import { Pager } from "../components/Business";
-import type { Result } from "../data/types";
+import { now, type Result } from "../data/types";
+
+/**
+ * 生成一份最小可渲染的 PDF 占位（纯 ASCII，无外部依赖）。
+ * 浏览器内置 PDF viewer 即可打开，显示一行标题 + 一段说明。
+ */
+function buildPlaceholderPdf(title: string, subtitle: string): string {
+  const lines = [
+    "BT",
+    "/F1 20 Tf",
+    "72 760 Td",
+    `(${title}) Tj`,
+    "0 -28 Td",
+    "/F1 13 Tf",
+    `(${subtitle}) Tj`,
+    "0 -24 Td",
+    "/F1 11 Tf",
+    "(演示占位 PDF \u00b7 生产环境将替换为真实巡检结果报告) Tj",
+    "ET",
+  ].join("\n");
+  const pdf = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj
+4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+5 0 obj<</Length ${lines.length}>>stream
+${lines}
+endstream endobj
+xref
+0 6
+0000000000 65535 f 
+0000000010 00000 n 
+0000000053 00000 n 
+0000000098 00000 n 
+0000000183 00000 n 
+0000000245 00000 n 
+trailer<</Size 6/Root 1 0 R>>
+startxref
+${285 + lines.length}
+%%EOF`;
+  // UTF-8 → 二进制 → base64 → data URL
+  const bin = btoa(unescape(encodeURIComponent(pdf)));
+  return `data:application/pdf;base64,${bin}`;
+}
 /**
  * 巡检报表：分析与报表 › 巡检报表
  * 按任务聚合的巡检结果报表，支持关键词 / 任务 / 状态筛选（默认展示"完成"任务），
@@ -167,18 +210,16 @@ export function InspectionReport() {
           <Table
             heads={
               multi
-                ? ["", "任务", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]
-                : ["任务", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]
+                ? ["", "任务编码", "任务名称", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]
+                : ["任务编码", "任务名称", "机器人", "结束时间", "检测项", "异常", "状态", "操作"]
             }
             rows={pageRows.map(([taskId, list]) => {
               const t = s.tasks.find((x) => x.id === taskId);
               const abn = list.filter(isAbnormal).length;
               const canExport = canExportOf(list);
               const base = [
-                <>
-                  <b>{t?.name || taskId}</b>
-                  <small>{taskId}</small>
-                </>,
+                <b>{taskId}</b>,
+                t?.name || <span className="dim">—</span>,
                 t?.robotId || "—",
                 fmtTime(t?.finishedAt || t?.created),
                 list.length,
@@ -215,93 +256,27 @@ export function InspectionReport() {
           />
         )}
       </Panel>
-      {/* 巡检结果文档预览：只读查看该任务全部点位明细，版式仿报告文档 */}
+      {/* 巡检结果报告 · PDF 预览（占位）：零依赖 · 抽屉承载 iframe */}
       {previewId && (() => {
         const pt = s.tasks.find((t) => t.id === previewId);
         const plist = s.results.filter((x) => x.taskId === previewId);
-        const abn = plist.filter(isAbnormal).length;
+        const pdfUrl = buildPlaceholderPdf(
+          `巡检结果报告 · ${pt?.name || previewId}`,
+          `任务 ${previewId} · 机器人 ${pt?.robotId || "—"} · 检测项 ${plist.length}`,
+        );
         return (
-          <Modal
-            title={`巡检结果报告 · ${pt?.name || previewId}`}
-            wide
+          <Drawer
+            title={`巡检结果报告`}
+            subtitle={`${pt?.name || previewId} · ${previewId}`}
             onClose={() => PREVIEW(null)}
-            footer={
-              <>
-                <Btn onClick={() => PREVIEW(null)}>关闭</Btn>
-                <Btn
-                  primary
-                  onClick={() => {
-                    PREVIEW(null);
-                    go("results", previewId);
-                  }}
-                >
-                  查看完整列表
-                </Btn>
-              </>
-            }
+            footer={<Btn onClick={() => PREVIEW(null)}>关闭</Btn>}
           >
-            <div className="report-doc">
-              <header className="rd-head">
-                <div>
-                  <h4>智能机器巡检 · 巡检结果报告</h4>
-                  <p className="rd-sub">
-                    {pt?.name}（{previewId}）
-                  </p>
-                </div>
-                <span className="rd-logo">巡检平台</span>
-              </header>
-              <div className="rd-meta">
-                <span>机器人：{pt?.robotId || "—"}</span>
-                <span>结束时间：{fmtTime(pt?.finishedAt || pt?.created)}</span>
-                <span>生成时间：{new Date().toLocaleString("zh-CN")}</span>
-                <span>数据范围：当前演示角色</span>
-              </div>
-              <div className="rd-summary">
-                <div className="rd-stat">
-                  <b>{plist.length}</b>
-                  <span>检测项</span>
-                </div>
-                <div className="rd-stat ok">
-                  <b>{plist.length - abn}</b>
-                  <span>正常</span>
-                </div>
-                <div className="rd-stat warn">
-                  <b>{abn}</b>
-                  <span>异常</span>
-                </div>
-                <div className="rd-stat">
-                  <b>{pt?.state}</b>
-                  <span>任务状态</span>
-                </div>
-              </div>
-              <h5 className="rd-sec">点位检测明细</h5>
-              <Table
-                heads={["设备 / 对象", "业务点位 / 检测项", "识别 → 最终值", "判断 / 状态", "采集时间"]}
-                rows={plist.map((rr) => {
-                  const pp = pointOf(s, rr);
-                  return [
-                    <>
-                      {pp?.device}
-                      <small>{pp?.object}</small>
-                    </>,
-                    <>
-                      {pp?.name}
-                      <small>{rr.item}</small>
-                    </>,
-                    `${rr.recognized} → ${rr.final} ${rr.unit}`,
-                    <>
-                      <Badge>{judgeOf(rr)}</Badge>
-                      <Badge>{rr.status}</Badge>
-                    </>,
-                    rr.time,
-                  ];
-                })}
-              />
-              <p className="rd-foot">
-                本报告由演示环境生成，数据为模拟示例，仅供界面预览，不代表真实机器人采集结果。
-              </p>
-            </div>
-          </Modal>
+            <iframe
+              src={pdfUrl}
+              title={`巡检结果报告 ${previewId}`}
+              style={{ width: "100%", height: "76vh", border: 0, background: "#e9ecef" }}
+            />
+          </Drawer>
         );
       })()}
       {/* 导出占位：演示环境点击提示，生产环境将导出已勾选任务的巡检结果报告（仅 PDF） */}

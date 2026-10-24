@@ -221,6 +221,10 @@ const paths: Record<string, string> = {
   "alarm-classes": "alarms/classes",
   /** 告警设置：一个台账一个告警设置（可含多个告警项），与巡检目标台账同一份数据 */
   "alarm-settings": "alarms/settings",
+  /** 告警设置 › 添加 / 编辑（内置页）：台账 + 告警项清单装不下，弹窗改为整页 */
+  "alarm-setting-edit": "alarms/settings-edit",
+  /** 告警设置 › 机器人预警分类配置（内置页）：机器人预警不绑台账，按分类维护 */
+  "alarm-robot-edit": "alarms/robot-edit",
   /** 告警推送：告警按等级 + 区域 / 设备范围推送给对应人员的名单 */
   "alarm-push": "alarms/push",
   alarm: "alarms/detail",
@@ -274,6 +278,8 @@ const parents: Record<string, string> = {
   "point-annotate": "annotation",
   /** 台账编辑内置页归属「巡检目标台账」 */
   "business-target-edit": "points",
+  "alarm-setting-edit": "alarm-settings",
+  "alarm-robot-edit": "alarm-settings",
   "plan-edit": "plans",
   review: "results",
   "result-detail": "archive",
@@ -390,6 +396,22 @@ export const routeMeta = [
     name: "编辑巡检路线",
     path: paths["route-edit"],
     parent: "templates",
+  },
+  {
+    // 告警设置编辑（内置页）：列表「配置 / ＋添加告警配置」进入（原弹窗装不下台账 + 告警项清单）
+    ...pages.find((x) => x.id === "alarm-settings")!,
+    id: "alarm-setting-edit",
+    name: "添加 / 编辑告警配置",
+    path: paths["alarm-setting-edit"],
+    parent: "alarm-settings",
+  },
+  {
+    // 机器人预警分类配置（内置页）：告警设置 › 机器人预警 的「新增 / 配置」进入
+    ...pages.find((x) => x.id === "alarm-settings")!,
+    id: "alarm-robot-edit",
+    name: "机器人预警告警配置",
+    path: paths["alarm-robot-edit"],
+    parent: "alarm-settings",
   },
   {
     // 路线导航（内置页）：复用地图导航页，但归属「巡检路线」，不切到地图管理目录
@@ -602,20 +624,24 @@ export function parentTargetOf(page: string): string | undefined {
  */
 export function back() {
   const r = parse();
-  // 详情页带回了显式来源页时，优先沿该来源返回（含来源页的 id），保持上下文一致
-  if (r.from) {
+  // ① 显式来源优先：从哪来回哪去，且带上来源自己的 id
+  //    （典型场景：巡检结果详情 → 任务回溯，返回要落回结果详情；
+  //     若只看目录父级，任务回溯挂在「设备巡检档案」下却带的是任务 id，会落到空壳页）
+  if (r.from && r.from.page !== r.page) {
     go(r.from.page, r.from.id);
     return;
   }
-  // 其次回到来时的页面（应用内轨迹）
-  const prev = trail.pop();
-  if (prev && prev !== location.hash) {
-    location.hash = prev;
+  // ② 按导航目录层级返回「上级页面」，不看「来时的页面 / 访问历史」：
+  // 详情 / 内置页 → 所属二级列表页；目录树里的二级列表页是返回链终点；
+  // 不在目录树中的页面（驾驶舱等）回落到角色工作台
+  const target = parentTargetOf(r.page);
+  if (target) {
+    go(target);
     return;
   }
-  // 兜底：按导航目录层级向上（刷新后无轨迹，或来处即当前页时）
-  const target = parentTargetOf(r.page);
-  if (target) go(target);
+  // 返回链终点（二级列表页 / 工作台）：不再上跳一级中心；
+  // 不在目录树中的页面兜底回到角色工作台
+  if (!routeMeta.some((x) => x.id === r.page)) go("workbench");
 }
 export function goCenter(page: string) {
   location.hash = href(page);

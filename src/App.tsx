@@ -49,6 +49,10 @@ import {
   ArrowLeft,
   LogOut,
   Check,
+  UserCog,
+  LockKeyhole,
+  EyeOff,
+  Eye as EyeOn,
   FileText,
   CalendarDays,
   Users,
@@ -66,7 +70,6 @@ import {
   activeMenuId,
   activeGroupOf,
   back,
-  backTrailPage,
   initTrail,
   parentTargetOf,
 } from "./data/navigation";
@@ -91,12 +94,16 @@ import { Scheduling } from "./pages/Scheduling";
 import { Execution, ExecutionMonitor } from "./pages/Execution";
 import { Results, Alarms } from "./pages/Results";
 import { AlarmClasses } from "./pages/AlarmClasses";
-import { AlarmSettings } from "./pages/AlarmSettings";
+import {
+  AlarmRobotEdit,
+  AlarmSettingEdit,
+  AlarmSettings,
+} from "./pages/AlarmSettings";
 import { AlarmPush } from "./pages/AlarmPush";
 import { Tenants } from "./pages/Tenants";
 import { Operations } from "./pages/Operations";
 import { Supporting } from "./pages/Supporting";
-import { Btn, Modal, Note } from "./components/UI";
+import { Btn, Modal, Note, Drawer, Field } from "./components/UI";
 import { FeedbackReview } from "./components/FeedbackReview";
 import { PageTabs } from "./components/PageTabs";
 import { AlarmCenter } from "./components/AlarmCenter";
@@ -143,6 +150,8 @@ const pageIcons: Record<string, LucideIcon> = {
   alarms: BellRing,
   "alarm-classes": Layers,
   "alarm-settings": SlidersHorizontal,
+  "alarm-setting-edit": SlidersHorizontal,
+  "alarm-robot-edit": SlidersHorizontal,
   "alarm-push": Send,
   metrics: LineChart,
   report: FileText,
@@ -208,6 +217,14 @@ export default function App() {
     [userMenu, SETUSER] = useState(false),
     /** 退出登录演示弹窗 */
     [logoutOpen, SETLOGOUT] = useState(false),
+    /** 个人信息抽屉 */
+    [profileOpen, SETPROFILE] = useState(false),
+    /** 修改密码弹窗（演示级：8-16 位 + 大小写 + 数字 + 特殊符号 _!@#$%^&*） */
+    [pwdOpen, SETPWD] = useState(false),
+    [oldPwd, SETOLD] = useState(""),
+    [newPwd, SETNEW] = useState(""),
+    [newPwd2, SETNEW2] = useState(""),
+    [pwdShow, SETSHOW] = useState<"old" | "new" | "new2" | null>(null),
     /** 侧边栏折叠：隐藏后工作区自动占满；记忆到本地，刷新保持 */
     [sidebarCollapsed, SETSC] = useState(() => {
       try { return localStorage.getItem("inspection-sidebar-collapsed") === "true"; } catch { return false; }
@@ -285,6 +302,16 @@ export default function App() {
     // 仅在登录态变化时执行
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
+  /**
+   * 全站缩放系数下发到根元素
+   * @description 弹窗 / 抽屉 portal 到 body，读不到 main 上的变量；
+   *              挂到根上一处控制，浮层与页面内容保持同一缩放比例。
+   *              驾驶舱大屏按视口自绘，保持 1（不缩放）
+   */
+  useEffect(() => {
+    const big = ["bigscreen", "overview", "screen", "video"].includes(route.page);
+    document.documentElement.style.setProperty("--ui-scale", big ? "1" : "0.82");
+  }, [route.page]);
   const meta = routeMeta.find((p) => p.id === route.page) || routeMeta[0];
   const { page, id, tab } = route;
   /**
@@ -314,12 +341,12 @@ export default function App() {
     )
       centerNos.set(name, centerNos.size + 1);
   /**
-   * 返回目标：显式来源页 → 来时的页面（访问轨迹）→ 导航目录父级；
-   * 顺序与 back() 的执行顺序保持一致，按钮提示即实际返回目标
+   * 返回目标：与 back() 同口径 —— 有显式来源时回来源页，否则按导航目录层级取上级页面
    */
-  const backTarget = fromMeta
-    ? fromMeta.id
-    : backTrailPage() || parentTargetOf(page);
+  const backTarget =
+    (route.from && route.from.page !== page
+      ? route.from.page
+      : undefined) || parentTargetOf(page);
   const backName = backTarget
     ? routeMeta.find((x) => x.id === backTarget)?.name || backTarget
     : "";
@@ -419,6 +446,12 @@ export default function App() {
   else if (page === "alarm-classes") body = <AlarmClasses />;
   // 告警管理 › 告警设置：一个台账一个告警设置（可含多个告警项），与巡检目标台账同一份数据
   else if (page === "alarm-settings") body = <AlarmSettings />;
+  // 告警设置 › 添加 / 编辑告警配置（内置页）：台账 + 告警项清单装不下，弹窗改为整页
+  else if (page === "alarm-setting-edit")
+    body = <AlarmSettingEdit id={id} key={id || "new"} />;
+  // 告警设置 › 机器人预警分类配置（内置页）：机器人预警不绑台账，按分类维护
+  else if (page === "alarm-robot-edit")
+    body = <AlarmRobotEdit id={id} key={id || "new"} />;
   // 告警管理 › 推送设置：推送人员名单 + 区域 / 设备绑定范围
   else if (page === "alarm-push") body = <AlarmPush />;
   // 系统设置 › 租户管理：平台级租户清单（新增 / 改编码 / 启用停用，停用由引擎校验）
@@ -763,13 +796,36 @@ export default function App() {
                             SETUSER(false);
                           }}
                         >
-                          <ShieldCheck size={15} />
                           切换为 {r.person}（{r.name}）
                           {r.id === role.id && <Check size={14} className="user-menu-check" />}
                         </button>
                       ))}
                     </>
                   )}
+                  <div className="user-menu-sep" />
+                  <button
+                    role="menuitem"
+                    className="user-menu-item"
+                    onClick={() => {
+                      SETUSER(false);
+                      SETPROFILE(true);
+                    }}
+                  >
+                    <UserCog size={15} />
+                    个人信息
+                  </button>
+                  <button
+                    role="menuitem"
+                    className="user-menu-item"
+                    onClick={() => {
+                      SETUSER(false);
+                      SETOLD(""); SETNEW(""); SETNEW2(""); SETSHOW(null);
+                      SETPWD(true);
+                    }}
+                  >
+                    <LockKeyhole size={15} />
+                    修改密码
+                  </button>
                   <div className="user-menu-sep" />
                   <button
                     role="menuitem"
@@ -789,12 +845,13 @@ export default function App() {
         </header>
         {/* 页签导航：仿浏览器多标签，记录访问过的页面，便于多功能页并存与快速切换 */}
         <PageTabs route={route} role={role} iconOf={pageIcons} />
-        {/* 工作台 / 巡检点详情：main 锁一屏（整页不滚，溢出由卡片内部滚动兜底）；其余页面维持整页滚动 */}
+        {/* 全站统一缩放（CSS 一处控制：main.main-zoom）：常规页按 82% 排版后铺满内容区；
+            驾驶舱大屏按视口自绘，保持不缩放 */}
         <main
           className={
-            page === "workbench" || page === "point-edit" || page === "point-onsite"
-              ? "main-fill"
-              : ""
+            ["bigscreen", "overview", "screen", "video"].includes(page)
+              ? ""
+              : "main-zoom"
           }
         >
           {allowed ? (
@@ -830,6 +887,111 @@ export default function App() {
           </div>
         </Modal>
       )}
+
+      {/* ── 个人信息抽屉：只读展示账号字段，参考图 1 ── */}
+      {profileOpen && (() => {
+        const curRole = roles.find((r) => r.id === role.id);
+        const tenantName = account.level === "super"
+          ? `全部租户（${s.tenants?.length || 0} 个）`
+          : s.tenants?.find((t) => t.id === s.tenantId)?.name || "所属租户";
+        return (
+          <Drawer
+            title="个人信息"
+            subtitle="登录账号 · 姓名 · 所属部门 · 所属角色"
+            onClose={() => SETPROFILE(false)}
+            footer={<Btn onClick={() => SETPROFILE(false)}>关闭</Btn>}
+          >
+            <div className="profile-fields">
+              <Field label="登录账号"><input value={account.username} readOnly /></Field>
+              <Field label="姓名"><input value={account.name} readOnly /></Field>
+              <Field label="岗位"><input value={account.title} readOnly /></Field>
+              <Field label="所属租户 / 数据范围"><input value={tenantName} readOnly /></Field>
+              <Field label="所属角色">
+                <input value={curRole ? `${curRole.person}（${curRole.name}）` : role.name} readOnly />
+              </Field>
+              <Field label="账号级别">
+                <input value={account.level === "super" ? "超级管理员" : "租户管理员"} readOnly />
+              </Field>
+              <Field label="账号 ID"><input value={account.id} readOnly /></Field>
+            </div>
+            <div className="modal-actions" style={{ marginTop: 16 }}>
+              <Btn
+                primary
+                onClick={() => {
+                  SETPROFILE(false);
+                  SETOLD(""); SETNEW(""); SETNEW2(""); SETSHOW(null);
+                  SETPWD(true);
+                }}
+              >
+                <LockKeyhole size={14} style={{ marginRight: 6 }} />
+                修改密码
+              </Btn>
+            </div>
+          </Drawer>
+        );
+      })()}
+
+      {/* ── 修改密码弹窗：原密码 / 新密码 / 确认新密码，参考图 2 ── */}
+      {pwdOpen && (() => {
+        const pwdOk = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[_!@#$%^&*]).{8,16}$/;
+        const errOld = oldPwd && oldPwd !== account.password ? "原密码不正确" : "";
+        const errNew = newPwd && !pwdOk.test(newPwd)
+          ? "密码需包含大小写字母、数字及特殊符号 _!@#$%^&*，8-16 位"
+          : "";
+        const errMatch = newPwd2 && newPwd2 !== newPwd ? "两次输入不一致" : "";
+        const canSubmit = oldPwd && pwdOk.test(newPwd) && newPwd === newPwd2 && !errOld;
+        const pwdField = (label: string, value: string, setter: (v: string) => void, key: "old" | "new" | "new2", err?: string) => {
+          const type = pwdShow === key ? "text" : "password";
+          return (
+            <div className="pwd-field">
+              <label>{label}</label>
+              <div className="pwd-input-wrap">
+                <input
+                  type={type}
+                  value={value}
+                  onChange={(e) => setter(e.target.value)}
+                  autoComplete="off"
+                  placeholder={pwdShow === key ? "已显示" : "请输入"}
+                />
+                <button
+                  type="button"
+                  className="pwd-toggle"
+                  onClick={() => SETSHOW(pwdShow === key ? null : key)}
+                  aria-label={pwdShow === key ? "隐藏密码" : "显示密码"}
+                  tabIndex={-1}
+                >
+                  {pwdShow === key ? <EyeOn size={15} /> : <EyeOff size={15} />}
+                </button>
+              </div>
+              {err && <small className="pwd-err">{err}</small>}
+            </div>
+          );
+        };
+        return (
+          <Modal title="修改密码" onClose={() => SETPWD(false)}>
+            {pwdField("原密码", oldPwd, SETOLD, "old", errOld)}
+            {pwdField("新密码", newPwd, SETNEW, "new", errNew)}
+            {pwdField("确认新密码", newPwd2, SETNEW2, "new2", errMatch)}
+            <p className="pwd-hint">
+              密码要求：需要包含大小写字母、数字及特殊符号 <code>_!@#$%^&amp;*</code>，且长度在 8-16 位之间。
+            </p>
+            <div className="modal-actions">
+              <Btn onClick={() => SETPWD(false)}>取消</Btn>
+              <Btn
+                primary
+                disabled={!canSubmit}
+                onClick={() => {
+                  SETPWD(false);
+                  SETOLD(""); SETNEW(""); SETNEW2(""); SETSHOW(null);
+                  window.alert("密码修改成功（演示占位，未写入本地账号）");
+                }}
+              >
+                确定
+              </Btn>
+            </div>
+          </Modal>
+        );
+      })()}
       {reset && (
         <Modal title="重置演示数据" onClose={() => R(false)}>
           <Note>

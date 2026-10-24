@@ -14,7 +14,7 @@ import { optimizePointOrder } from "../data/pointOrder";
 import { routeRenderMapId } from "../data/routeMaps";
 import { taskTypeOfActions, type AtomicAction } from "../data/types";
 import { actionsOfPoint } from "../data/deviceMaster";
-import { Modal, Field, Btn, Note } from "./UI";
+import { Drawer, InnerPage, Field, Btn, Note } from "./UI";
 import { PointPicker } from "./PointPicker";
 import { RoutePreview } from "./RoutePreview";
 
@@ -26,10 +26,16 @@ export function QuickTaskDrawer({
   pointIds,
   onClose,
   onCreated,
+  inline = false,
 }: {
   robotId?: string;
   /** 预选巡检点（如从执行监控当前点位直接下发） */
   pointIds?: string[];
+  /**
+   * 内置页模式：作为整页渲染（路由级「新建临时任务」入口）
+   * @description 左表单 + 右路线图要同屏且高度足够，浮层里会被压扁，整页才是它该待的地方
+   */
+  inline?: boolean;
   /** 关闭（取消 / 未接 onCreated 时的收尾） */
   onClose: () => void;
   /**
@@ -119,14 +125,13 @@ export function QuickTaskDrawer({
   ];
   /** 任务类型：由指令集反推（单一能力 → 对应类型，多种 → 综合巡检任务） */
   const type = taskTypeOfActions(actions);
-  return (
-    <Modal title="新建临时任务" wide onClose={onClose}>
-      {/*
-        两栏：左 = 表单 + 巡检点选择，右 = 临时路线图整列
-        与「巡检路线」编辑内置页同一形态（`route-edit-grid` / `re-map` / `re-fold` 直接复用），
-        地图不再在下方堆叠，画线看线时表单与已选清单同屏可见
-      */}
-      <div className={"route-edit-grid" + (sideOpen ? "" : " collapsed")}>
+  const body = (
+    /*
+      两栏：左 = 表单 + 巡检点选择，右 = 临时路线图整列
+      与「巡检路线」编辑内置页同一形态（`route-edit-grid` / `re-map` / `re-fold` 直接复用），
+      地图不再在下方堆叠，画线看线时表单与已选清单同屏可见
+    */
+    <div className={"route-edit-grid" + (sideOpen ? "" : " collapsed")}>
         {/* 左栏表单：点地图左缘的竖槽把手可整体收起，收起后只有地图一栏 */}
         {sideOpen && (
         <div className="route-edit-col">
@@ -233,35 +238,48 @@ export function QuickTaskDrawer({
             />
           </div>
         </div>
-      </div>
-      <div className="modal-actions">
-        <Btn onClick={onClose}>取消</Btn>
-        <Btn
-          primary
-          disabled={!name.trim() || !points.length || !actions.length || crossMap}
-          onClick={() =>
-            act(
-              {
-                type: rid ? "QUICK_DISPATCH" : "CREATE_TASK",
-                name,
-                points,
-                taskType: type,
-                // 指令集来自巡检点：提交时显式带上，与引擎推导一致
-                atomicActions: actions,
-                robotId: rid,
-              },
-              (n) => {
-                // 创建成功后的去向**只由调用方决定**：这里不再顺手 onClose ——
-                // 否则「关闭 = 回任务列表」这类入口会用后一次跳转把前一次顶掉（表现为留在列表、没进调度页）
-                if (onCreated) onCreated(n.tasks[0].id);
-                else onClose();
-              },
-            )
-          }
-        >
-          {rid ? "下发至队列" : "创建并待调度"}
-        </Btn>
-      </div>
-    </Modal>
+    </div>
+  );
+  const footActions = (
+    <>
+      <Btn onClick={onClose}>取消</Btn>
+      <Btn
+        primary
+        disabled={!name.trim() || !points.length || !actions.length || crossMap}
+        onClick={() =>
+          act(
+            {
+              type: rid ? "QUICK_DISPATCH" : "CREATE_TASK",
+              name,
+              points,
+              taskType: type,
+              // 指令集来自巡检点：提交时显式带上，与引擎推导一致
+              atomicActions: actions,
+              robotId: rid,
+            },
+            (n) => {
+              // 创建成功后的去向**只由调用方决定**：这里不再顺手 onClose ——
+              // 否则「关闭 = 回任务列表」这类入口会用后一次跳转把前一次顶掉（表现为留在列表、没进调度页）
+              if (onCreated) onCreated(n.tasks[0].id);
+              else onClose();
+            },
+          )
+        }
+      >
+        {rid ? "下发至队列" : "创建并待调度"}
+      </Btn>
+    </>
+  );
+  // 路由级入口：整页创建（左表单 + 右路线图同屏，高度不受浮层限制）
+  if (inline)
+    return (
+      <InnerPage title="新建临时任务" actions={footActions}>
+        {body}
+      </InnerPage>
+    );
+  return (
+    <Drawer title="新建临时任务" onClose={onClose} footer={footActions}>
+      {body}
+    </Drawer>
   );
 }

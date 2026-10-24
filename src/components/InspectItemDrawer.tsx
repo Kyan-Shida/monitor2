@@ -7,8 +7,8 @@
  * @interaction 被 pages/PointEdit.tsx、pages/PointOnsite.tsx 调用
  */
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Thermometer, Video } from "lucide-react";
-import { Badge, Btn, Field, Modal, Note, Table } from "./UI";
+import { Maximize2, Thermometer, Video } from "lucide-react";
+import { Badge, Btn, Drawer, Field, Modal, Note } from "./UI";
 import { Cascader, type CascaderOption } from "./Cascader";
 import { useStore } from "../data/store";
 import { areaNameOf } from "../data/deviceMaster";
@@ -245,8 +245,13 @@ export function InspectItemDrawer({
 
   /** 能力项清单（本项巡检要用哪些能力） */
   const abilities = draft.abilities || [];
-  /** 能力参数候选：取自「后台管理 › 机器人能力」两级清单里的**能力参数** */
-  const abilityParams = (s.robotAbilities || []).flatMap((k) => k.params);
+  /**
+   * 能力参数候选：取自「后台管理 › 机器人能力」两级清单里的**能力参数**
+   * @description 已停用的参数不再进候选（启停开关的实际落点）；已配置的老巡检项照旧走下面的回显分支
+   */
+  const abilityParams = (s.robotAbilities || []).flatMap((k) =>
+    k.params.filter((p) => p.state !== "停用"),
+  );
   /** 能力参数 → 能力类型（表格第二列只读带出） */
   const kindOfAbility = (param: string) =>
     (s.robotAbilities || []).find((k) =>
@@ -304,9 +309,18 @@ export function InspectItemDrawer({
   function removeAbility(i: number) {
     applyAbilities(abilities.filter((_, j) => j !== i));
   }
+  /**
+   * 正在配置的能力项下标（null = 抽屉关闭）
+   * @description 右栏宽度放不下「类型 / 参数 / 配置 / 操作」四列，改成摘要行 + 抽屉编辑；
+   *              改动仍然实时写回 draft（和原来表格内编辑同一套 setAbility*）
+   */
+  const [abIndex, SETABINDEX] = useState<number | null>(null);
+  const editingAb =
+    abIndex !== null ? abilities[abIndex] : undefined;
 
   const content = (
-    /* 巡检项详情：名称 / 目标台账 / 所需能力列表 / 当前巡检项记录参（操控台在页面左栏常驻） */
+    <>
+    {/* 巡检项详情：名称 / 目标台账 / 所需能力列表 / 当前巡检项记录参（操控台在页面左栏常驻） */}
     <div className="pd-detail">
       <Field label="巡检项名称" required>
         <input
@@ -337,106 +351,157 @@ export function InspectItemDrawer({
         </Note>
       )}
 
-      {/* 所需能力列表：选中台账时按其算法自动置开，也可手动增删 */}
+      {/*
+        所需能力列表：右栏只有 380px，四列表格会横向溢出被裁掉
+        → 这里只放「类型 · 能力 · 参数摘要」的摘要行，点行在右侧抽屉里配参数
+      */}
       <div className="pd-block">
         <div className="pd-block-head">
           <b>
             所需能力列表
             <em className="req">*</em>
           </b>
-          <Btn primary onClick={addAbility}>
+          <Btn
+            primary
+            onClick={() => {
+              addAbility();
+              // 新增后直接打开抽屉，省掉"先加一行再点进去"的一步
+              SETABINDEX(abilities.length);
+            }}
+          >
             新增
           </Btn>
         </div>
-        <Table
-          heads={["能力类型", "能力参数", "配置", "操作"]}
-          rows={abilities.map((ab, i) => {
+        <ul className="pd-abilities">
+          {abilities.map((ab, i) => {
             const kindName = kindOfAbility(ab.param);
-            const kindObj = (s.robotAbilities || []).find(
-              (k) => k.name === kindName,
+            const conf = (abilityFields[ab.param] || [])
+              .filter(
+                (f) => ab.fields[f.key] !== undefined && f.control !== "action",
+              )
+              .map((f) => `${f.label} ${ab.fields[f.key]}${f.unit || ""}`);
+            return (
+              <li key={ab.id}>
+                <button type="button" onClick={() => SETABINDEX(i)}>
+                  <span className="pd-ability-kind">{kindName || "未选类型"}</span>
+                  <b>{ab.param || "未选择能力"}</b>
+                  <small>{conf.length ? conf.join(" · ") : "默认参数"}</small>
+                </button>
+              </li>
             );
-            return [
-            <select
-              aria-label="能力类型"
-              value={kindName || ""}
-              onChange={(e) => setAbilityKind(i, e.target.value)}
-            >
-              {(s.robotAbilities || []).map((k) => (
-                <option key={k.id} value={k.name}>
-                  {k.name}
-                </option>
-              ))}
-            </select>,
-            <select
-              aria-label="能力参数"
-              value={ab.param}
-              onChange={(e) => setAbilityParam(i, e.target.value)}
-            >
-              {(kindObj?.params || []).map((p) => (
-                <option key={p.id} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>,
-            <div className="ability-fields">
-              {(abilityFields[ab.param] || []).map((f) =>
-                f.control === "switch" ? (
-                  <label key={f.key} className="inline-filter">
-                    <input
-                      type="checkbox"
-                      checked={!!ab.fields[f.key]}
-                      onChange={(e) => setAbilityField(i, f.key, e.target.checked)}
-                    />
-                    <span>{f.label}</span>
-                  </label>
-                ) : f.control === "number" ? (
-                  <label key={f.key} className="inline-filter">
-                    <span>{f.label}</span>
-                    <input
-                      type="number"
-                      aria-label={f.label}
-                      placeholder={`请输入${f.label}`}
-                      value={
-                        ab.fields[f.key] === undefined
-                          ? ""
-                          : Number(ab.fields[f.key])
-                      }
-                      onChange={(e) =>
-                        setAbilityField(i, f.key, Number(e.target.value))
-                      }
-                    />
-                    {f.unit && <span>{f.unit}</span>}
-                  </label>
-                ) : (
-                  <Btn
-                    key={f.key}
-                    onClick={() => setAbilityField(i, f.key, "已配置")}
-                  >
-                    {f.action || f.label}
-                  </Btn>
-                ),
-              )}
-              {!(abilityFields[ab.param] || []).length && (
-                <span className="muted">—</span>
-              )}
-            </div>,
-            <Btn danger onClick={() => removeAbility(i)}>
-              删除
-            </Btn>,
-            ];
           })}
-        />
+        </ul>
         {!draft.actions.length && (
           <Note>还没有能力参与：先选巡检目标，再点「新增」挑能力。</Note>
         )}
       </div>
-
-      {/* 当前巡检项记录参：左栏操控台实时记录，这里回显 */}
-      <div className="pd-block">
-        <b>当前巡检项记录参</b>
-        <ParamSummary draft={draft} action={recAct} cfgOf={cfgOf} />
-      </div>
     </div>
+    {/* 能力项抽屉：类型 / 参数 / 该能力的特有配置，都在这里配 */}
+    {editingAb && abIndex !== null && (
+      <Drawer
+        title="能力项配置"
+        subtitle={`${kindOfAbility(editingAb.param) || "未选类型"} · ${editingAb.param || "未选能力"}`}
+        onClose={() => SETABINDEX(null)}
+        footer={
+          <>
+            <Btn
+              danger
+              onClick={() => {
+                removeAbility(abIndex);
+                SETABINDEX(null);
+              }}
+            >
+              删除该能力
+            </Btn>
+            <Btn primary onClick={() => SETABINDEX(null)}>
+              完成
+            </Btn>
+          </>
+        }
+      >
+        <Field label="能力类型" required>
+          <select
+            value={kindOfAbility(editingAb.param) || ""}
+            onChange={(e) => setAbilityKind(abIndex, e.target.value)}
+          >
+            {(s.robotAbilities || []).map((k) => (
+              <option key={k.id} value={k.name}>
+                {k.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="能力参数" required>
+          <select
+            value={editingAb.param}
+            onChange={(e) => setAbilityParam(abIndex, e.target.value)}
+          >
+            {/* 停用的参数不再可选；但当前已选中的那条要留着，否则下拉回显不上、一保存就冲掉 */}
+            {(
+              (s.robotAbilities || []).find(
+                (k) => k.name === kindOfAbility(editingAb.param),
+              )?.params || []
+            )
+              .filter(
+                (p) => p.state !== "停用" || p.name === editingAb.param,
+              )
+              .map((p) => (
+                <option key={p.id} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+          </select>
+        </Field>
+        <div className="pd-block">
+          <b>参数配置</b>
+          <div className="ability-fields">
+            {(abilityFields[editingAb.param] || []).map((f) =>
+              f.control === "switch" ? (
+                <label key={f.key} className="inline-filter">
+                  <input
+                    type="checkbox"
+                    checked={!!editingAb.fields[f.key]}
+                    onChange={(e) =>
+                      setAbilityField(abIndex, f.key, e.target.checked)
+                    }
+                  />
+                  <span>{f.label}</span>
+                </label>
+              ) : f.control === "number" ? (
+                <label key={f.key} className="inline-filter">
+                  <span>{f.label}</span>
+                  <input
+                    type="number"
+                    aria-label={f.label}
+                    placeholder={`请输入${f.label}`}
+                    value={
+                      editingAb.fields[f.key] === undefined
+                        ? ""
+                        : Number(editingAb.fields[f.key])
+                    }
+                    onChange={(e) =>
+                      setAbilityField(abIndex, f.key, Number(e.target.value))
+                    }
+                  />
+                  {f.unit && <span>{f.unit}</span>}
+                </label>
+              ) : (
+                <Btn
+                  key={f.key}
+                  onClick={() => setAbilityField(abIndex, f.key, "已配置")}
+                >
+                  {f.action || f.label}
+                </Btn>
+              ),
+            )}
+            {!(abilityFields[editingAb.param] || []).length && (
+              <span className="muted">该能力没有额外参数，选好即可。</span>
+            )}
+          </div>
+        </div>
+      </Drawer>
+    )}
+    </>
   );
 
   // 内置页（bare）：标题与动作条搬到页面顶栏，这里只留内容
@@ -540,8 +605,11 @@ function Switch({
   );
 }
 
-/** 参数总览（右栏）：实时回显当前巡检项所有已记录参数，并提供保存入口 */
-function ParamSummary({
+/**
+ * 参数总览（右栏）：实时回显当前巡检项所有已记录参数
+ * @description 同时被「保存巡检项」二次确认弹窗复用（保存前让用户核对一遍参数）
+ */
+export function ParamSummary({
   draft,
   action,
   cfgOf,
@@ -604,34 +672,6 @@ function ParamSummary({
           <span>{c.dwellSec ?? 5}s</span>
           <b>预置位</b>
           <span>{c.preset || "—"}</span>
-          {a === "采集气体" && (
-            <>
-              <b>采集方式</b>
-              <span>{c.gasMode ?? "泵吸式"}</span>
-              <b>传感器</b>
-              <span>{c.sensorKind || "—"}</span>
-            </>
-          )}
-          {a === "采集红外热像" && (
-            <>
-              <b>发射率</b>
-              <span>{c.emissivity ?? "—"}</span>
-              <b>测温距离</b>
-              <span>{c.thermalDistance ?? "—"}m</span>
-            </>
-          )}
-          {a === "录制声音" && (
-            <>
-              <b>关注频段</b>
-              <span>{c.soundBand || "—"}</span>
-            </>
-          )}
-          {a === "分析不安全行为" && (
-            <>
-              <b>行为类别</b>
-              <span>{(c.behaviorTypes || []).join(" / ") || "—"}</span>
-            </>
-          )}
           {aux.length > 0 && (
             <>
               <b>辅助</b>
@@ -662,9 +702,6 @@ export function ControlCockpit({
   /** 移动后坐标回写到巡检项主视角（保存巡检项时一并落库） */
   onPoseAt?: (at: { x: number; y: number; z: number }) => void;
 }) {
-  /** 上装 / 下装两块默认收起：点标题按钮才展开对应操控内容（一块展开后很占地方） */
-  const [openUpper, SET_OPEN_UPPER] = useState(false);
-  const [openLower, SET_OPEN_LOWER] = useState(false);
   const a = (recordingAction || draft.actions[0]) as AtomicAction;
   const c = cfgOf(a);
   const ptz = c.ptz || draft.pose.ptz;
@@ -673,6 +710,12 @@ export function ControlCockpit({
   const setAt = (v: { x: number; y: number; z: number }) => {
     updCfg(a, { at: v, source: "cockpit" });
     onPoseAt?.(v);
+  };
+  /** 视频窗全屏：把该窗本身投满屏（Esc / 再次点击退出） */
+  const toggleFs = (el: HTMLElement | null) => {
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen?.();
   };
   /** 移动按钮：按 0.5 米步进改变坐标（原型模拟机器人位移） */
   const moveBy = (dx: number, dy: number) =>
@@ -696,6 +739,7 @@ export function ControlCockpit({
   return (
     <div className="cockpit">
       <div className="cockpit-video-row">
+        {/* 两路画面各自带全屏按钮：点按钮把该窗本身投满屏，Esc / 再点一次退出 */}
         <div className="video-pane">
           <span className="video-label">
             <Video size={14} /> 可见光
@@ -703,6 +747,15 @@ export function ControlCockpit({
           <div className="video-placeholder">
             <span>演示画面 · 非真实机器人推流</span>
           </div>
+          <button
+            type="button"
+            className="video-fs"
+            title="全屏查看"
+            aria-label="全屏查看可见光画面"
+            onClick={(e) => toggleFs(e.currentTarget.parentElement)}
+          >
+            <Maximize2 size={13} />
+          </button>
         </div>
         <div className="video-pane">
           <span className="video-label">
@@ -711,97 +764,94 @@ export function ControlCockpit({
           <div className="video-placeholder thermal">
             <span>演示画面 · 非真实机器人推流</span>
           </div>
+          <button
+            type="button"
+            className="video-fs"
+            title="全屏查看"
+            aria-label="全屏查看红外热像画面"
+            onClick={(e) => toggleFs(e.currentTarget.parentElement)}
+          >
+            <Maximize2 size={13} />
+          </button>
         </div>
       </div>
 
       {/* 上装块：云台状态 + 镜头控制（相机 / 云台自己的调整）；默认收起，点标题展开 */}
       <section className="cockpit-block">
-        <button
-          type="button"
-          className={"cockpit-block-head" + (openUpper ? " on" : "")}
-          onClick={() => SET_OPEN_UPPER(!openUpper)}
-        >
-          {openUpper ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          上装 · 云台与镜头
-        </button>
-        {openUpper && (
-        <>
-        <div className="cockpit-cols">
-        {/* 云台控制：转向 / 升降 */}
+        <div className="cockpit-cols cockpit-cols-4">
+        {/* 云台控制：转向 / 升降 并列，下方接升降高度 */}
         <div className="cockpit-section">
-          <>
-              <div className="cockpit-sub2">
-                <div>
-                  <label className="inline-filter">
-                    <span>单次转动速度</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={extraNum("turnSpeed", 30)}
-                      onChange={(e) =>
-                        setExtra({ turnSpeed: Number(e.target.value) })
-                      }
-                    />
-                    <span>{extraNum("turnSpeed", 30)}%</span>
-                  </label>
-                  <b>云台转向控制</b>
-                  <div className="dpad">
-                    <button onClick={() => setPtz({ tilt: ptz.tilt + 1 })}>上</button>
-                    <div className="dpad-mid">
-                      <button onClick={() => setPtz({ pan: ptz.pan - 1 })}>左</button>
-                      <button onClick={() => setPtz({ pan: ptz.pan + 1 })}>右</button>
-                    </div>
-                    <button onClick={() => setPtz({ tilt: ptz.tilt - 1 })}>下</button>
-                  </div>
+          <div className="cockpit-sub2">
+            <div>
+              <b>云台转向控制</b>
+              <label className="inline-filter">
+                <span>单次转动速度</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={extraNum("turnSpeed", 30)}
+                  onChange={(e) =>
+                    setExtra({ turnSpeed: Number(e.target.value) })
+                  }
+                />
+                <span>{extraNum("turnSpeed", 30)}%</span>
+              </label>
+              <div className="dpad">
+                <button onClick={() => setPtz({ tilt: ptz.tilt + 1 })}>上</button>
+                <div className="dpad-mid">
+                  <button onClick={() => setPtz({ pan: ptz.pan - 1 })}>左</button>
+                  <button onClick={() => setPtz({ pan: ptz.pan + 1 })}>右</button>
                 </div>
-                <div>
-                  <label className="inline-filter">
-                    <span>单次升降速度</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={extraNum("liftSpeed", 30)}
-                      onChange={(e) =>
-                        setExtra({ liftSpeed: Number(e.target.value) })
-                      }
-                    />
-                    <span>{extraNum("liftSpeed", 30)}%</span>
-                  </label>
-                  <b>云台升降控制</b>
-                  <div className="dpad small">
-                    <button
-                      onClick={() =>
-                        updCfg(a, {
-                          lift: (c.lift ?? 0) + 1,
-                          source: "cockpit",
-                        })
-                      }
-                    >
-                      上升
-                    </button>
-                    <button
-                      onClick={() =>
-                        updCfg(a, {
-                          lift: Math.max(0, (c.lift ?? 0) - 1),
-                          source: "cockpit",
-                        })
-                      }
-                    >
-                      下降
-                    </button>
-                  </div>
-                </div>
+                <button onClick={() => setPtz({ tilt: ptz.tilt - 1 })}>下</button>
               </div>
-              <QuerySet
-                label="升降高度"
-                min={0}
-                max={100}
-                value={c.lift ?? 0}
-                onSet={(v) => updCfg(a, { lift: v, source: "cockpit" })}
-              />
-            </>
+            </div>
+            <div>
+              <b>云台升降控制</b>
+              <label className="inline-filter">
+                <span>单次升降速度</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={extraNum("liftSpeed", 30)}
+                  onChange={(e) =>
+                    setExtra({ liftSpeed: Number(e.target.value) })
+                  }
+                />
+                <span>{extraNum("liftSpeed", 30)}%</span>
+              </label>
+              <div className="dpad small">
+                <button
+                  onClick={() =>
+                    updCfg(a, {
+                      lift: (c.lift ?? 0) + 1,
+                      source: "cockpit",
+                    })
+                  }
+                >
+                  上升
+                </button>
+                <button
+                  onClick={() =>
+                    updCfg(a, {
+                      lift: Math.max(0, (c.lift ?? 0) - 1),
+                      source: "cockpit",
+                    })
+                  }
+                >
+                  下降
+                </button>
+              </div>
+            </div>
+          </div>
+          <QuerySet
+            label="升降高度"
+            min={0}
+            max={100}
+            value={c.lift ?? 0}
+            onSet={(v) => updCfg(a, { lift: v, source: "cockpit" })}
+          />
         </div>
 
         {/* 中列：云台状态 */}
@@ -958,21 +1008,10 @@ export function ControlCockpit({
           </div>
         </div>
       )}
-        </>
-        )}
       </section>
 
-      {/* 下装块：机器人移动 + 位姿（移动后坐标随移动按钮记录，保存巡检项时落库） */}
+      {/* 下装块：机器人移动 + 位姿（移动后坐标随移动按钮记录，保存巡检项时落库）；区块标题已去掉，减少一行留白 */}
       <section className="cockpit-block">
-        <button
-          type="button"
-          className={"cockpit-block-head" + (openLower ? " on" : "")}
-          onClick={() => SET_OPEN_LOWER(!openLower)}
-        >
-          {openLower ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          下装 · 机器人移动
-        </button>
-        {openLower && (
         <div className="cockpit-cols">
           <div className="cockpit-section">
             <b>移动控制</b>
@@ -1004,7 +1043,7 @@ export function ControlCockpit({
             </div>
           </div>
           {/* 位姿与移动后坐标：点位坐标先记录，保存巡检项时一并落库 */}
-          <div className="cockpit-section">
+          <div className="cockpit-section cockpit-pose">
             <b>位姿与移动后坐标</b>
             <QuerySet
               label="坐标 X"
@@ -1037,7 +1076,6 @@ export function ControlCockpit({
             />
           </div>
         </div>
-        )}
       </section>
 
       {/* 底部通栏：辅助功能 */}

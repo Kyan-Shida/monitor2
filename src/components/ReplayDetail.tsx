@@ -12,7 +12,6 @@ import { fmtTime, judgeOf } from "../data/selectors";
 import { Badge, Btn, Note, Panel } from "./UI";
 import { MapCanvas } from "./MapCanvas";
 import { Video } from "./Video";
-import { EventTimeline } from "./Business";
 import type { Task } from "../data/types";
 
 export function ReplayDetail({
@@ -22,8 +21,8 @@ export function ReplayDetail({
   task: Task;
 }) {
   const { s } = useStore();
-  /** 右侧分页：巡检结果 / 告警记录 / 执行事件 */
-  const [tab, SETTAB] = useState<"结果" | "告警" | "事件">("结果");
+  /** 右侧分页：巡检结果 / 告警记录（执行事件已移到「巡检结果详情」页，避免两处各存一份） */
+  const [tab, SETTAB] = useState<"结果" | "告警">("结果");
   /** 全部展开 / 收起，以及逐项展开的点位 */
   const [allOpen, SETALL] = useState(false);
   const [openIds, SETOPEN] = useState<string[]>([]);
@@ -140,11 +139,9 @@ export function ReplayDetail({
         <Panel
           title="巡检结果与告警记录"
           extra={
-            tab !== "事件" && (
-              <Btn onClick={() => SETALL(!allOpen)}>
-                {allOpen ? "全部收起" : "全部展开"}
-              </Btn>
-            )
+            <Btn onClick={() => SETALL(!allOpen)}>
+              {allOpen ? "全部收起" : "全部展开"}
+            </Btn>
           }
         >
           <div className="rv-tabs">
@@ -152,7 +149,6 @@ export function ReplayDetail({
               [
                 ["结果", `巡检结果（${results.length}）`],
                 ["告警", `告警记录（${riskTotal}）`],
-                ["事件", "执行事件"],
               ] as const
             ).map(([k, label]) => (
               <button
@@ -165,9 +161,7 @@ export function ReplayDetail({
             ))}
           </div>
 
-          {tab === "事件" ? (
-            <EventTimeline taskId={task.id} />
-          ) : tab === "结果" ? (
+          {tab === "结果" ? (
             <div className="rv-rows">
               {!rows.length && <Note>该任务没有巡检点位。</Note>}
               {rows.map((r, i) => (

@@ -5,6 +5,7 @@
  * @interaction DispatchDesk.tsx（调度中心两栏布局的中左栏）；数据来自 data/selectors 的 queueFor / robotAvailability / stageOf
  */
 import { useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { useStore } from "../data/store";
 import { queueFor, robotAvailability, stageOf } from "../data/selectors";
 import { mapVer } from "../data/versionLabel";
@@ -35,7 +36,7 @@ export function DispatchFleetOverview({
   return (
     <>
       <div className="segmented fleet-filter">
-        {["全部", "执行中", "空闲", "需关注"].map((x) => (
+        {["全部", "执行中", "空闲"].map((x) => (
           <button
             key={x}
             className={filter === x ? "active" : ""}
@@ -81,24 +82,12 @@ export function DispatchFleetOverview({
               <div className="fleet-card-meta">
                 {r.region} · 电量 {r.battery}% · {mapVer(r.mapVersion)}
               </div>
-              <div className="fleet-card-task">
-                {current ? (
-                  <>
-                    {current.name}
-                    <small>
-                      {stageOf(current)} · {current.done.length}/
-                      {current.items.length} 项
-                    </small>
-                  </>
-                ) : (
-                  <span className="muted">暂无执行任务</span>
-                )}
-              </div>
-              <div className="fleet-card-foot">
-                <span>待执行 {waiting.length} 项</span>
-                <span>{robotAvailability(s, r)}</span>
-              </div>
-              {hint && <div className="fleet-card-note">⚠ {hint}</div>}
+              {hint && (
+                <div className="fleet-card-note">
+                  <AlertTriangle size={12} strokeWidth={2} />
+                  {hint}
+                </div>
+              )}
             </div>
           );
         })}

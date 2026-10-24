@@ -167,6 +167,11 @@ export interface DeleteConfirmState {
   text: ReactNode;
   /** 执行删除；返回 false 表示被引擎拦截，弹窗不关闭 */
   run: () => boolean | void;
+  /**
+   * 确认按钮文案，默认「确认删除」
+   * @description 启停 / 撤回这类非删除的二次确认也复用本组件，文案跟着动作走
+   */
+  okText?: string;
 }
 
 /**
@@ -196,7 +201,7 @@ export function DeleteConfirm({
             if (state.run() !== false) onClose();
           }}
         >
-          确认删除
+          {state.okText ?? "确认删除"}
         </Btn>
       </div>
     </Modal>

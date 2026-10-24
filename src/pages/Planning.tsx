@@ -2,7 +2,17 @@ import { useEffect, useState } from "react";
 import { useStore } from "../data/store";
 import { optimizePointOrder } from "../data/pointOrder";
 import { go, usePageSize, useViewState } from "../data/navigation";
-import { Btn, Badge, Panel, Field, Table, Note, Modal } from "../components/UI";
+import {
+  Btn,
+  Badge,
+  Drawer,
+  Panel,
+  Field,
+  Switch,
+  Table,
+  Note,
+  Modal,
+} from "../components/UI";
 import { FilterPanel } from "../components/FilterPanel";
 import { Pager } from "../components/Business";
 import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
@@ -18,11 +28,18 @@ import { targetsOf } from "../data/mapCalibration";
 import { constraints } from "../data/engine";
 import { businessDate, planKindOf, planOccurrences } from "../data/planSchedule";
 import { routeMapIds, routeRenderMapId } from "../data/routeMaps";
-import { planCycles, planKinds, routeModes } from "../data/types";
+import {
+  planCycles,
+  planKinds,
+  planUnitMax,
+  planUnits,
+  routeModes,
+} from "../data/types";
 import type {
   MapAsset,
   PlanCycle,
   PlanKind,
+  PlanUnit,
   Point,
   RouteMode,
   RouteNode,
@@ -43,6 +60,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     [start, ST] = useState(initial?.start || "2026-09-22"),
     [end, EN] = useState(initial?.end || "2026-12-31"),
     [time, TM] = useState(initial?.time || "10:00"),
+    /** 周期任务新口径：间隔单位（天/时/分）+ 执行间隔 + 每日时段（开始 / 结束时间） */
+    [unit, UN] = useState<PlanUnit>(initial?.unit || "天"),
+    [interval, IV] = useState<number>(initial?.interval || 1),
+    [fromTime, FT] = useState(initial?.fromTime || "08:00"),
+    [toTime, TT] = useState(initial?.toTime || "18:00"),
     [query, Q] = useViewState("planning." + page + ".query", ""),
     [srcFilter, SF] = useViewState<string>("planning.tasks.srcFilter", "全部"),
     [statusFilter, STF] = useViewState<string>(
@@ -56,7 +78,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     /** TASK-02：时间范围筛选，默认「当天」；最大跨度锁 30 天，避免列表爆量 */
     [timeRange, TR] = useViewState<string>("planning.tasks.timeRange", "今日"),
     [srcPage, SP] = useState(1),
-    [quickOpen, setQuickOpen] = useState(false),
     /** 任务列表筛选面板展开态：条件默认收起，点「筛选」才显示 */
     [taskFilterOpen, SETTASKFILTEROPEN] = useState(false),
     /** TASK-04：派单（未分配任务选机器人一键派单） */
@@ -69,8 +90,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
      * @description 常态每行长驻复选框会抢占操作列的视觉焦点，改为按需展开
      */
     [pickMode, setPickMode] = useState(false),
-    [planOpen, setPlanOpen] = useState(false),
-    [planEditingId, setPlanEditingId] = useState<string | undefined>(),
     /** 计划操作的二次确认：取消 / 开始 共用一个确认弹窗 */
     [confirm, setConfirm] = useState<{
       title: string;
@@ -195,6 +214,10 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     KD("周期任务");
     CY("每天");
     TM("10:00");
+    UN("天");
+    IV(1);
+    FT("08:00");
+    TT("18:00");
     ST("2026-09-22");
     EN("2026-12-31");
     AD(15);
@@ -212,6 +235,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     KD(planKindOf(p));
     CY(p.cycle);
     TM(p.time);
+    // 新口径计划带上间隔与时段；老计划回落默认值（保存时按新口径写入）
+    UN(p.unit || "天");
+    IV(p.interval || 1);
+    FT(p.fromTime || p.time || "08:00");
+    TT(p.toTime || "18:00");
     ST(p.start);
     EN(p.end);
     AD(p.advance);
@@ -425,6 +453,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
   if (page === "quick")
     return (
       <QuickTaskDrawer
+        inline
         onClose={() => go("tasks")}
         onCreated={(id) => go("dispatch", id)}
       />
@@ -459,7 +488,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         go("templates");
     };
     return (
-      <>
+      /* route-edit-page：整页等比缩放锁一屏，左栏（基础信息 / 巡检点）在栏内滚动，右栏地图吃满剩余高度 */
+      <div className="route-edit-page">
         <div className="route-edit-head">
           <b>
             {editing
@@ -555,12 +585,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 }
                 path={routePath}
                 onPathChange={(next) => RP(next)}
-                height={430}
+                height="100%"
               />
             </div>
           </div>
         </div>
-      </>
+      </div>
     );
   }
   if (page === "templates") {
@@ -619,10 +649,22 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               t.mode || "预设路线",
               `${t.points.length} 个`,
               <span className="cell-muted">{t.updatedAt || "—"}</span>,
+              // 状态 = 开关：与地图 / 巡检点同一套交互，点一下先二次确认
               <>
-                <span className={"badge " + (t.state === "启用" ? "green" : "")}>
-                  {t.state}
-                </span>
+                <Switch
+                  checked={t.state === "启用"}
+                  label={`${t.name} 启停状态`}
+                  onChange={() =>
+                    setConfirm({
+                      title: t.state === "启用" ? "停用路线" : "启用路线",
+                      text:
+                        t.state === "启用"
+                          ? `确认停用路线「${t.name}」？停用后计划将不再引用该路线生成任务。`
+                          : `确认启用路线「${t.name}」？`,
+                      run: () => act({ type: "TOGGLE_TEMPLATE_STATE", id: t.id }),
+                    })
+                  }
+                />
                 {t.mode === "自建路线" && (
                   <small className="cell-muted">
                     {t.verified
@@ -645,20 +687,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                   导航
                 </Btn>
                 <Btn onClick={() => openEdit(t)}>编辑</Btn>
-                <Btn
-                  onClick={() =>
-                    setConfirm({
-                      title: t.state === "启用" ? "停用路线" : "启用路线",
-                      text:
-                        t.state === "启用"
-                          ? `确认停用路线「${t.name}」？停用后计划将不再引用该路线生成任务。`
-                          : `确认启用路线「${t.name}」？`,
-                      run: () => act({ type: "TOGGLE_TEMPLATE_STATE", id: t.id }),
-                    })
-                  }
-                >
-                  {t.state === "启用" ? "停用" : "启用"}
-                </Btn>
               </div>,
             ])}
           />
@@ -724,8 +752,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               primary
               onClick={() => {
                 resetPlanForm();
-                setPlanEditingId(undefined);
-                setPlanOpen(true);
+                go("plan-edit");
               }}
             >
               ＋ 新建计划
@@ -756,20 +783,39 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               // 定时任务没有周期：直接显示「执行日期 + 时刻」并标注一次性
               k === "定时任务"
                 ? `${p.start} ${p.time}（一次）`
-                : `${p.cycle} ${p.time}`,
+                : p.unit
+                  ? `每 ${p.interval || 1} ${p.unit} · ${p.fromTime}-${p.toTime}`
+                  : p.cycle === "每小时"
+                    ? "每小时 · 整点"
+                    : `${p.cycle} ${p.time}`,
               p.robotId || "待绑定",
               k === "定时任务"
                 ? `${p.start} 当日一次`
                 : `${p.start} 至 ${p.end}`,
-              <Badge tone={p.state === "停用" ? "amber" : undefined}>
-                {p.state}
-              </Badge>,
+              // 状态 = 开关：停用即停止后续自动生成，启用即恢复按时生成
+              <Switch
+                checked={p.state === "启用"}
+                label={`${p.name} 启停状态`}
+                onChange={() =>
+                  setConfirm({
+                    title: p.state === "启用" ? "停用计划" : "启用计划",
+                    text:
+                      p.state === "启用"
+                        ? `确认停用计划「${p.name}」？停用后停止后续自动生成任务。`
+                        : `确认启用计划「${p.name}」？将恢复按时自动生成任务。`,
+                    run: () =>
+                      act({
+                        type: p.state === "启用" ? "STOP_PLAN" : "START_PLAN",
+                        id: p.id,
+                      }),
+                  })
+                }
+              />,
               <div className="actions">
                 <Btn
                   onClick={() => {
                     loadPlanForm(p.id);
-                    setPlanEditingId(p.id);
-                    setPlanOpen(true);
+                    go("plan-edit", p.id);
                   }}
                 >
                   编辑
@@ -783,32 +829,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 >
                   模拟当前时刻到点
                 </Btn>
-                {p.state === "启用" ? (
-                  <Btn
-                    danger
-                    onClick={() =>
-                      setConfirm({
-                        title: "停用计划",
-                        text: `确认停用计划「${p.name}」？停用后停止后续自动生成任务。`,
-                        run: () => act({ type: "STOP_PLAN", id: p.id }),
-                      })
-                    }
-                  >
-                    停用
-                  </Btn>
-                ) : (
-                  <Btn
-                    onClick={() =>
-                      setConfirm({
-                        title: "启用计划",
-                        text: `确认启用计划「${p.name}」？将恢复按时自动生成任务。`,
-                        run: () => act({ type: "START_PLAN", id: p.id }),
-                      })
-                    }
-                  >
-                    启用
-                  </Btn>
-                )}
               </div>,
               ];
             })}
@@ -824,37 +844,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             }}
           />
         </Panel>
-        {planOpen && (
-          <PlanModal
-            boundRobot={boundRobot}
-            setBoundRobot={BR}
-            editingId={planEditingId}
-            onClose={() => setPlanOpen(false)}
-            onSave={() => setPlanOpen(false)}
-            name={name}
-            setName={N}
-            templateId={templateId}
-            setTemplateId={TI}
-            kind={kind}
-            setKind={KD}
-            cycle={cycle}
-            setCycle={CY}
-            time={time}
-            setTime={TM}
-            start={start}
-            setStart={ST}
-            end={end}
-            setEnd={EN}
-            advance={advance}
-            setAdvance={AD}
-            timeout={timeout}
-            setTimeout={TO}
-            wait={wait}
-            setWait={WA}
-            templates={s.templates}
-            act={act}
-          />
-        )}
         {confirm && (
           <Modal
             title={confirm.title}
@@ -884,134 +873,184 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       <>
         <Panel
           title={initial ? "编辑计划 · 新版本仅影响未来任务" : "新建巡检计划"}
-        >
-          <div className="form-grid">
-            <Field label="计划名称" required>
-              <input value={name} onChange={(e) => N(e.target.value)} />
-            </Field>
-            <Field label="巡检路线" required>
-              <select value={templateId} onChange={(e) => TI(e.target.value)}>
-                {s.templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} · v{t.version}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <PlanRobotBinding
-              value={boundRobot}
-              onChange={BR}
-              templateId={templateId}
-            />
-            <Field label="任务类型" required>
-              <select
-                value={kind}
-                onChange={(e) => KD(e.target.value as PlanKind)}
+          extra={
+            <div className="actions">
+              <Btn onClick={() => go("plans")}>取消</Btn>
+              <Btn
+                primary
+                onClick={() => {
+                  if (
+                    act({
+                      type: "SAVE_PLAN",
+                      id: initial?.id,
+                      name,
+                      kind,
+                      templateId,
+                      robotId: boundRobot,
+                      cycle,
+                      unit,
+                      interval,
+                      fromTime,
+                      toTime,
+                      start,
+                      end,
+                      time,
+                      advance,
+                      timeout,
+                      wait,
+                    })
+                  )
+                    go("plans");
+                }}
               >
-                {planKinds.map((k) => (
-                  <option key={k}>{k}</option>
-                ))}
-              </select>
-            </Field>
-            {kind === "周期任务" ? (
-              <Field label="执行周期" required>
-                <select
-                  value={cycle}
-                  onChange={(e) => CY(e.target.value as PlanCycle)}
-                >
-                  {planCycles.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </Field>
-            ) : (
-              <Field label="执行日期" required>
-                <input
-                  type="date"
-                  value={start}
-                  onChange={(e) => ST(e.target.value)}
+                保存计划版本
+              </Btn>
+            </div>
+          }
+        >
+          <div className="plan-form">
+            <section className="form-section">
+              <h4>基本信息</h4>
+              <div className="form-grid">
+                <Field label="计划名称" required>
+                  <input value={name} onChange={(e) => N(e.target.value)} />
+                </Field>
+                <Field label="巡检路线" required>
+                  <select
+                    value={templateId}
+                    onChange={(e) => TI(e.target.value)}
+                  >
+                    {s.templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} · v{t.version}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <PlanRobotBinding
+                  value={boundRobot}
+                  onChange={BR}
+                  templateId={templateId}
                 />
-              </Field>
-            )}
-            <Field label="执行时间" required>
-              <input
-                type="time"
-                value={time}
-                onChange={(e) => TM(e.target.value)}
-              />
-            </Field>
-            {kind === "周期任务" && (
-              <>
-                <Field label="有效期开始" required>
+                <Field label="任务类型" required>
+                  <select
+                    value={kind}
+                    onChange={(e) => KD(e.target.value as PlanKind)}
+                  >
+                    {planKinds.map((k) => (
+                      <option key={k}>{k}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </section>
+            <section className="form-section">
+              <h4>排程规则</h4>
+              <div className="form-grid">
+                {/* 周期任务：间隔单位（天/时/分）+ 执行间隔 + 每日执行时段；定时任务：开始日期 + 时间 */}
+                {kind === "周期任务" ? (
+                  <>
+                    <Field label="间隔单位" required>
+                      <select
+                        value={unit}
+                        onChange={(e) => UN(e.target.value as PlanUnit)}
+                      >
+                        {planUnits.map((u) => (
+                          <option key={u}>{u}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label={`执行间隔 / ${unit}`} required>
+                      <input
+                        type="number"
+                        min={1}
+                        max={planUnitMax[unit]}
+                        value={interval}
+                        onChange={(e) => IV(+e.target.value)}
+                      />
+                    </Field>
+                    <Field label="开始时间" required>
+                      <input
+                        type="time"
+                        value={fromTime}
+                        onChange={(e) => FT(e.target.value)}
+                      />
+                    </Field>
+                    <Field label="结束时间" required>
+                      <input
+                        type="time"
+                        value={toTime}
+                        onChange={(e) => TT(e.target.value)}
+                      />
+                    </Field>
+                    <Field label="有效期开始" required>
+                      <input
+                        type="date"
+                        value={start}
+                        onChange={(e) => ST(e.target.value)}
+                      />
+                    </Field>
+                    <Field label="有效期结束" required>
+                      <input
+                        type="date"
+                        value={end}
+                        onChange={(e) => EN(e.target.value)}
+                      />
+                    </Field>
+                  </>
+                ) : (
+                  <>
+                    <Field label="开始日期" required>
+                      <input
+                        type="date"
+                        value={start}
+                        onChange={(e) => ST(e.target.value)}
+                      />
+                    </Field>
+                    <Field label="开始时间" required>
+                      <input
+                        type="time"
+                        value={time}
+                        onChange={(e) => TM(e.target.value)}
+                      />
+                    </Field>
+                  </>
+                )}
+              </div>
+            </section>
+            <section className="form-section">
+              <h4>执行参数</h4>
+              <div className="form-grid">
+                <Field label="提前下发 / 分钟" required>
                   <input
-                    type="date"
-                    value={start}
-                    onChange={(e) => ST(e.target.value)}
+                    type="number"
+                    min={1}
+                    value={advance}
+                    onChange={(e) => AD(+e.target.value)}
                   />
                 </Field>
-                <Field label="有效期结束" required>
+                <Field label="执行超时 / 分钟" required>
                   <input
-                    type="date"
-                    value={end}
-                    onChange={(e) => EN(e.target.value)}
+                    type="number"
+                    min={1}
+                    value={timeout}
+                    onChange={(e) => TO(+e.target.value)}
                   />
                 </Field>
-              </>
-            )}
-            <Field label="提前生成 / 分钟" required>
-              <input
-                type="number"
-                min={1}
-                value={advance}
-                onChange={(e) => AD(+e.target.value)}
-              />
-            </Field>
-            <Field label="执行超时 / 分钟" required>
-              <input
-                type="number"
-                min={1}
-                value={timeout}
-                onChange={(e) => TO(+e.target.value)}
-              />
-            </Field>
-            <Field label="允许等待 / 分钟" required>
-              <input
-                type="number"
-                min={1}
-                value={wait}
-                onChange={(e) => WA(+e.target.value)}
-              />
-            </Field>
+                <Field label="允许等待 / 分钟" required>
+                  <input
+                    type="number"
+                    min={1}
+                    value={wait}
+                    onChange={(e) => WA(+e.target.value)}
+                  />
+                </Field>
+              </div>
+            </section>
           </div>
           <Note>
-            计划按北京时间自动生成、下发并执行；提前下发不提前启动。浏览器打开期间运行模拟时钟，异常进入调度中心。每月按有效期首日的日号执行；每小时以所填时间为起点，当日内每小时一次。<b>定时任务</b>只在「执行日期 + 执行时间」执行一次，错过不补跑。
+            计划按北京时间自动生成、下发并执行；提前下发不提前启动。浏览器打开期间运行模拟时钟，异常进入调度中心。周期任务按「间隔单位 + 执行间隔」在每日时段内循环，超出有效期不再生成。<b>定时任务</b>只在「开始日期 + 开始时间」执行一次，错过不补跑。
           </Note>
-          <Btn onClick={() => go("plans")}>取消</Btn>
-          <Btn
-            primary
-            onClick={() => {
-              if (
-                act({
-                  type: "SAVE_PLAN",
-                  id: initial?.id,
-                  name,
-                  kind,
-                  templateId,
-                  robotId: boundRobot,
-                  cycle,
-                  start,
-                  end,
-                  time,
-                  advance,
-                  timeout,
-                  wait,
-                })
-              )
-                go("plans");
-            }}
-          >
-            保存计划版本
-          </Btn>
         </Panel>
       </>
     );
@@ -1183,7 +1222,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 {taskFilterOpen ? "收起筛选" : "筛选"}
               </Btn>
             )}
-            <Btn primary onClick={() => setQuickOpen(true)}>
+            {/* 建临时任务要「左表单 + 右路线图」同屏，直接进内置页而不是盖一层浮层 */}
+            <Btn primary onClick={() => go("quick")}>
               ＋ 临时巡检任务
             </Btn>
             {taskView === "任务记录" && (
@@ -1214,13 +1254,13 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           </div>
         }
       >
-        {/* 视图切换：今日计划（含未到点下发的）/ 任务记录（已生成的任务） */}
+        {/* 视图切换：今日待生成（含未到点下发的）/ 任务记录（已生成的任务） */}
         <div className="segmented task-view-tabs">
           <button
             className={taskView === "今日计划" ? "active" : ""}
             onClick={() => TASKVIEW("今日计划")}
           >
-            今日计划 {todayRows.length}
+            今日待生成 {todayRows.length}
           </button>
           <button
             className={taskView === "任务记录" ? "active" : ""}
@@ -1420,12 +1460,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           <Btn onClick={() => go("results", t.id)}>查看任务结果</Btn>
         </Panel>
       )}
-      {quickOpen && (
-        <QuickTaskDrawer
-          onClose={() => setQuickOpen(false)}
-          onCreated={(id) => go("dispatch", id)}
-        />
-      )}
       {/* TASK-04：派单弹窗（按调度约束列出适配机器人，选其一即可一键派单） */}
       {dispatchTask && (
         <Modal
@@ -1489,9 +1523,9 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       )}
       {/* 任务详情抽屉：列表里就地看完整详情（与「任务详情」内置页共用 TaskDetailPanel），主操作由面板内按钮提供 */}
       {taskPeek && (
-        <Modal
+        <Drawer
           title={`任务详情 · ${taskPeek.id}`}
-          wide
+          subtitle={taskPeek.name}
           onClose={() => setTaskPeek(undefined)}
           footer={<Btn onClick={() => setTaskPeek(undefined)}>关闭</Btn>}
         >
@@ -1499,7 +1533,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             task={taskPeek}
             onAfterNav={() => setTaskPeek(undefined)}
           />
-        </Modal>
+        </Drawer>
       )}
       {/* 操作二次确认（单条取消 / 批量删除）：列表内的危险操作统一走这一个确认弹窗 */}
       {confirm && (
@@ -1525,208 +1559,5 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         </Modal>
       )}
     </>
-  );
-}
-
-/**
- * 新建/编辑巡检计划弹窗
- * @description 复用 plan-edit 页面的 9 字段表单，避免页面跳转
- * @interaction Planning.tsx plans 页新建按钮、plans 页编辑按钮、templates 页创建按钮均打开此弹窗
- */
-function PlanModal({
-  boundRobot,
-  setBoundRobot,
-  editingId,
-  onClose,
-  onSave,
-  name,
-  setName,
-  templateId,
-  setTemplateId,
-  kind,
-  setKind,
-  cycle,
-  setCycle,
-  time,
-  setTime,
-  start,
-  setStart,
-  end,
-  setEnd,
-  advance,
-  setAdvance,
-  timeout,
-  setTimeout,
-  wait,
-  setWait,
-  templates,
-  act,
-}: {
-  boundRobot: string;
-  setBoundRobot: (id: string) => void;
-  editingId?: string;
-  onClose: () => void;
-  onSave: () => void;
-  name: string;
-  setName: (v: string) => void;
-  templateId: string;
-  setTemplateId: (v: string) => void;
-  kind: PlanKind;
-  setKind: (v: PlanKind) => void;
-  cycle: PlanCycle;
-  setCycle: (v: PlanCycle) => void;
-  time: string;
-  setTime: (v: string) => void;
-  start: string;
-  setStart: (v: string) => void;
-  end: string;
-  setEnd: (v: string) => void;
-  advance: number;
-  setAdvance: (v: number) => void;
-  timeout: number;
-  setTimeout: (v: number) => void;
-  wait: number;
-  setWait: (v: number) => void;
-  templates: { id: string; name: string; version: number }[];
-  act: (action: { type: string; [k: string]: any }) => boolean;
-}) {
-  return (
-    <Modal
-      title={editingId ? "编辑计划 · 新版本仅影响未来任务" : "新建巡检计划"}
-      wide
-      onClose={onClose}
-      footer={
-        <>
-          <Btn onClick={onClose}>取消</Btn>
-          <Btn
-            primary
-            onClick={() => {
-              if (
-                act({
-                  type: "SAVE_PLAN",
-                  id: editingId,
-                  name,
-                  kind,
-                  templateId,
-                  robotId: boundRobot,
-                  cycle,
-                  start,
-                  end,
-                  time,
-                  advance,
-                  timeout,
-                  wait,
-                })
-              )
-                onSave();
-            }}
-          >
-            保存计划版本
-          </Btn>
-        </>
-      }
-    >
-      <div className="form-grid">
-        <Field label="计划名称" required>
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="巡检路线" required>
-          <select
-            value={templateId}
-            onChange={(e) => setTemplateId(e.target.value)}
-          >
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name} · v{t.version}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <PlanRobotBinding
-          value={boundRobot}
-          onChange={setBoundRobot}
-          templateId={templateId}
-        />
-        <Field label="任务类型" required>
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value as PlanKind)}
-          >
-            {planKinds.map((k) => (
-              <option key={k}>{k}</option>
-            ))}
-          </select>
-        </Field>
-        {kind === "周期任务" ? (
-          <Field label="执行周期" required>
-            <select
-              value={cycle}
-              onChange={(e) => setCycle(e.target.value as PlanCycle)}
-            >
-              {planCycles.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
-          </Field>
-        ) : (
-          <Field label="执行日期" required>
-            <input
-              type="date"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-            />
-          </Field>
-        )}
-        <Field label="执行时间" required>
-          <input
-            type="time"
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
-          />
-        </Field>
-        {kind === "周期任务" && (
-          <>
-            <Field label="有效期开始" required>
-              <input
-                type="date"
-                value={start}
-                onChange={(e) => setStart(e.target.value)}
-              />
-            </Field>
-            <Field label="有效期结束" required>
-              <input
-                type="date"
-                value={end}
-                onChange={(e) => setEnd(e.target.value)}
-              />
-            </Field>
-          </>
-        )}
-        <Field label="提前下发 / 分钟" required>
-          <input
-            type="number"
-            min={1}
-            value={advance}
-            onChange={(e) => setAdvance(+e.target.value)}
-          />
-        </Field>
-        <Field label="执行超时 / 分钟" required>
-          <input
-            type="number"
-            min={1}
-            value={timeout}
-            onChange={(e) => setTimeout(+e.target.value)}
-          />
-        </Field>
-        <Field label="允许等待 / 分钟" required>
-          <input
-            type="number"
-            min={1}
-            value={wait}
-            onChange={(e) => setWait(+e.target.value)}
-          />
-        </Field>
-      </div>
-    </Modal>
   );
 }

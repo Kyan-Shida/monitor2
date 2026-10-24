@@ -29,7 +29,12 @@ import type {
   BusinessTarget,
   Area,
 } from "./types";
-import { ROOT_AREA_ID, ROOT_AREA_NAME } from "./types";
+import {
+  ROOT_AREA_ID,
+  ROOT_AREA_NAME,
+  ensureAreaCodes,
+  fmtDateTime,
+} from "./types";
 
 /**
  * 区域树固定根规整（幂等）：保证存在且仅存在一个「全厂区」根（AREA-ROOT）
@@ -92,7 +97,7 @@ function keyOf(tid: string): string {
   return tid === DEFAULT_TENANT ? BASE_KEY : `${BASE_KEY}:${tid}`;
 }
 /** 当前数据模型版本，须与 types.ts 的 State.schema 一致 */
-const SCHEMA = 12;
+const SCHEMA = 13;
 /**
  * 老缓存升级：schema 1 → 2 时补齐接管/反馈等新增集合，
  * 并按序回填机型、约束、健康度、固件字段、已激活的地图版本号，
@@ -106,8 +111,12 @@ const SCHEMA = 12;
 export function migrate(raw: unknown): State | null {
   if (!raw || typeof raw !== "object") return null;
   const old = raw as Record<string, any>;
-  if (old.schema === SCHEMA) return old as State;
-  if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(old.schema)) {
+  if (old.schema === SCHEMA) {
+    // 同一版本的老缓存里也可能残留 `2026/10/23 23:03:11` 这类写法，加载时就地归一
+    unifyTimes(old);
+    return old as State;
+  }
+  if ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(old.schema)) {
     const base = seed();
     const merged = { ...base, ...old, schema: SCHEMA } as State;
     // 告警处理口径 6→7：老缓存的告警带废弃的 validity 且缺处理时间，整体改用 seed
@@ -139,6 +148,8 @@ export function migrate(raw: unknown): State | null {
      * 10 → 11：参数条目新增「类型 / 数据字典键值对」。
      * 老缓存里的参数缺 type 就从种子同 id 补，种子新条目（如 DIC01）也一并补进来
      */
+    // 12 → 13：区域补业务编码（AR-01 顺延），老缓存只有名称
+    if (Array.isArray(merged.areas)) ensureAreaCodes(merged.areas);
     const oldExtras = (old.extras as any[]) || [];
     merged.extras = [
       ...oldExtras.map((x) => ({
@@ -316,6 +327,22 @@ function withSeedDefaults(s: State): State {
   const needAlgoMaster = !s.algoConfigs?.some((a) => a.id === "ALG-10");
   // 告警类别（告警管理 › 告警类别）：老缓存没有该集合时从 seed 回填，否则告警设置的可选类型与筛选为空
   const needAlarmClasses = !s.alarmClasses?.length;
+  // 「识别故障」分类归属机器人预警（采集链路问题）：缺失或挂在业务下时要修正
+  const needRecognizeFaultClass = !s.alarmClasses?.some(
+    (c) => c.name === "识别故障" && c.main === "机器人预警",
+  );
+  /**
+   * 识别失败口径：照片模糊 / 算法调用失败 / 传感器无数据这类告警应为
+   * 「机器人预警 + 分类=识别故障 + 带执行机器人」，老缓存里可能还记在业务下
+   */
+  const needRecognizeFaultAlarm = !!s.alarms?.some((a) => {
+    const r = s.results?.find((x) => x.id === a.resultId);
+    const failed = !!r?.aiAbnormal && !r.abnormal;
+    return (
+      failed && (a.category !== "机器人" || a.alarmClass !== "识别故障")
+    );
+  });
+
   // 告警类别口径切换（扁平 6 类 → 二级口径）：命中旧分类名时整体切到 seed 的新口径
   const needAlarmClassNorm = !!s.alarmClasses?.some(
     (c) => c.name in LEGACY_ALARM_CLASS,
@@ -371,6 +398,8 @@ function withSeedDefaults(s: State): State {
     !needReqMaster &&
     !needAlgoMaster &&
     !needAlarmClasses &&
+    !needRecognizeFaultClass &&
+    !needRecognizeFaultAlarm &&
     !needAlarmClassNorm &&
     !needAlarmPush &&
     !needPushScope &&
@@ -593,7 +622,14 @@ function withSeedDefaults(s: State): State {
       // 告警设置补齐（幂等）：schema 7 的老缓存缺告警名称 / 类型 / 开关 / 告警项
     ).map((b) => withAlarmSetting(alarmHost, b)),
     alarmClasses:
-      needAlarmClasses || needAlarmClassNorm ? base.alarmClasses : s.alarmClasses,
+      needAlarmClasses || needAlarmClassNorm
+        ? base.alarmClasses
+        : needRecognizeFaultClass
+          ? [
+              ...s.alarmClasses.filter((c) => c.name !== "识别故障"),
+              ...base.alarmClasses.filter((c) => c.name === "识别故障"),
+            ]
+          : s.alarmClasses,
     alarmPushStaff: needAlarmPush
       ? base.alarmPushStaff
       : (s.alarmPushStaff || []).map((p) => {
@@ -606,7 +642,25 @@ function withSeedDefaults(s: State): State {
           };
         }),
     // 告警口径切换时整体换 seed：老缓存的告警缺机器人本体告警的 alarmClass 字段
-    alarms: needAlarms || needAlarmClassNorm ? base.alarms : s.alarms,
+    alarms:
+      needAlarms || needAlarmClassNorm
+        ? base.alarms
+        : needRecognizeFaultAlarm
+          ? s.alarms.map((a) => {
+              const r = s.results?.find((x) => x.id === a.resultId);
+              if (!r?.aiAbnormal || r.abnormal) return a;
+              const task = s.tasks?.find((x) => x.id === a.taskId);
+              return {
+                ...a,
+                category: "机器人" as const,
+                alarmClass: "识别故障",
+                // 采集链路的责任落到执行机器人：老缓存缺 robotId 时从任务补
+                robotId: a.robotId || task?.robotId,
+                // 名称老口径「… AI 识别异常」同步为「… 识别故障」
+                name: a.name.replace(/\s*AI 识别异常\s*$/, " 识别故障"),
+              };
+            })
+          : s.alarms,
     syncs: needSyncs ? base.syncs : s.syncs,
     robotPayloads: needPayloads
       ? base.robotPayloads
@@ -638,11 +692,36 @@ function withSeedDefaults(s: State): State {
             : []),
         ],
   };
+  // 时间格式统一：老缓存里的 `2026/10/23 23:03:11`、带秒的写法一次性归一成 `YYYY-MM-DD HH:mm`
+  unifyTimes(merged);
   // 状态派生：以合并后的机器版本 + 下发记录为准重算，避免老缓存里的旧状态
   return {
     ...merged,
     maps: merged.maps.map((m) => ({ ...m, state: publishStateOf(merged, m) })),
   };
+}
+/**
+ * 递归把「整串就是一个时间」的字符串归一成 `YYYY-MM-DD HH:mm`
+ * @description 只改形如 `2026/10/23 23:03:11` 的独立时间字段，描述文本里出现的时间不动，避免误伤文案
+ */
+const ONLY_TIME_RE =
+  /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]\d{1,2}:\d{1,2}(?::\d{1,2})?)?$/;
+function unifyTimes(v: unknown): unknown {
+  if (typeof v === "string") {
+    const t = v.trim();
+    // ISO 串（notBefore / expires 等引擎内部用的绝对时间）不碰，只归一展示型写法
+    return ONLY_TIME_RE.test(t) ? fmtDateTime(t) : v;
+  }
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) v[i] = unifyTimes(v[i]);
+    return v;
+  }
+  if (v && typeof v === "object") {
+    const obj = v as Record<string, unknown>;
+    for (const k of Object.keys(obj)) obj[k] = unifyTimes(obj[k]);
+    return v;
+  }
+  return v;
 }
 /**
  * 会话可用性：租户管理员的租户被停用时视为未登录（需要重新选择账号）

@@ -31,16 +31,36 @@ export function planOccurrences(p: Plan, now: number): number[] {
     .filter((d) => d >= p.start && d <= p.end)
     .flatMap((d) => {
       const anchor = Date.parse(d + "T" + p.time + ":00+08:00");
+      // 新口径：间隔单位 + 执行间隔 + 每日时段（开始时间 ~ 结束时间）
+      if (p.unit) {
+        const step = Math.max(1, Math.floor(p.interval || 1));
+        const from = p.fromTime || p.time || "00:00";
+        const to = p.toTime || "23:59";
+        const dayStart = Date.parse(d + "T" + from + ":00+08:00");
+        const dayEnd = Date.parse(d + "T" + to + ":00+08:00");
+        // 天：每 N 天一次（按有效期首日算日差），当天在开始时间执行
+        if (p.unit === "天") {
+          const diff = Math.round(
+            (Date.parse(d) - Date.parse(p.start)) / 86400000,
+          );
+          return diff % step === 0 ? [dayStart] : [];
+        }
+        // 时 / 分：在每日时段内按间隔铺满（含两端点）
+        const stepMs = step * (p.unit === "时" ? 3600000 : 60000);
+        const out: number[] = [];
+        for (let t = dayStart; t <= dayEnd; t += stepMs) out.push(t);
+        return out;
+      }
       // 每月：只在与有效期首日同一个「日号」的那天执行（首日为 31 号时，小月跳过）
       if (
         p.cycle === "每月" &&
         new Date(d).getUTCDate() !== new Date(p.start).getUTCDate()
       )
         return [];
-      // 每小时：以执行时间为起点，当日内每小时一次（不跨到次日重复展开）
+      // 每小时：当日整点每小时一次（00:00 ~ 23:00），不再依赖「执行时间」
       if (p.cycle === "每小时")
-        return Array.from({ length: 24 }, (_, i) => anchor + i * 3600000).filter(
-          (x) => businessDate(x) === d,
+        return Array.from({ length: 24 }, (_, h) =>
+          Date.parse(d + "T" + String(h).padStart(2, "0") + ":00:00+08:00"),
         );
       return [anchor];
     })

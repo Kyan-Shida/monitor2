@@ -288,6 +288,22 @@ export const metrics: MetricDef[] = [
     },
   },
   {
+    key: "recognizeFailRate",
+    name: "识别失败率",
+    formula:
+      "AI 状态异常（照片模糊 / 算法调用失败 / 传感器无数据）的检测结果数 / 检测结果总数 × 100%；与业务告警分开统计",
+    unit: "%",
+    target: 5,
+    positive: false,
+    dims: ["机型", "点位", "算法版本"],
+    roles: "*",
+    calc: (s) =>
+      pct(
+        s.results.filter((r) => r.aiAbnormal).length,
+        s.results.length,
+      ),
+  },
+  {
     key: "falseRate",
     name: "误报率",
     formula: "被标注为误报的告警数 / 告警总数 × 100%",

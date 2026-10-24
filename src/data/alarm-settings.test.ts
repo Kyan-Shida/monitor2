@@ -53,6 +53,7 @@ test("告警类别二级口径：机器人与业务各自的分类，且能自�
     [
       "机器人预警/下装",
       "机器人预警/上装",
+      "机器人预警/识别故障",
       "业务预警/环境安全",
       "业务预警/生产运行",
       "业务预警/人员与作业",
@@ -66,11 +67,22 @@ test("告警类别二级口径：机器人与业务各自的分类，且能自�
       `${t.id} 的默认告警类型应随目标类型`,
     );
   }
-  // 机器人本体告警没有业务台账：类别由告警自身指定，且下装 / 上装 都有演示数据
+  // 机器人预警：本体故障（下装 / 上装）+ 识别失败（识别故障），各自带分类
   const robot = s.alarms.filter((a) => a.category === "机器人");
   assert.ok(robot.length > 0);
-  assert.ok(robot.every((a) => a.alarmClass === "下装" || a.alarmClass === "上装"));
+  assert.ok(
+    robot.every((a) =>
+      ["下装", "上装", "识别故障"].includes(a.alarmClass || ""),
+    ),
+  );
   assert.ok(robot.some((a) => a.alarmClass === "上装"), "上装应有演示数据");
+  // 识别失败（照片模糊 / 算法调用失败 / 传感器无数据）归机器人预警 › 识别故障，但仍保留业务点位用于追溯
+  const aiAbnormalAlarm = s.alarms.find((a) => a.id === "AL022");
+  assert.ok(aiAbnormalAlarm);
+  assert.equal(aiAbnormalAlarm!.category, "机器人");
+  assert.equal(aiAbnormalAlarm!.alarmClass, "识别故障");
+  assert.ok(aiAbnormalAlarm!.pointId, "识别故障仍要能定位到点位");
+  assert.ok(aiAbnormalAlarm!.taskId, "识别故障仍要能回溯来源任务");
 });
 
 test("告警设置保存后与台账判定口径同步，并进入点位规则", () => {

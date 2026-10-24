@@ -18,7 +18,7 @@ import {
   deviceOf,
   defaultInspectItemName,
 } from "../data/deviceMaster";
-import { deviceKinds } from "../data/types";
+import { deviceKinds, fmtDateTime } from "../data/types";
 import type { DeviceKind, Point, State } from "../data/types";
 
 /**
@@ -231,7 +231,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
             <input ref={upload} type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传参考图像" hidden onChange={event => { void uploadImage(event.target.files?.[0]); event.target.value = ""; }} />
             {uploadError && <p role="alert" className="reference-upload-error">{uploadError}</p>}
             {preview ? <div className="annotation-reference">
-              {candidate?.referenceImage ? <><img src={candidate.referenceImage.dataUrl} alt={`${p?.name || candidate.id}的人工参考图像`} /><small>人工上传 · {candidate.referenceImage.name} · {new Date(candidate.referenceImage.uploadedAt).toLocaleString("zh-CN")}</small></> : <div className="empty">暂无参考图像，请选择目标后上传现场照片。</div>}
+              {candidate?.referenceImage ? <><img src={candidate.referenceImage.dataUrl} alt={`${p?.name || candidate.id}的人工参考图像`} /><small>人工上传 · {candidate.referenceImage.name} · {fmtDateTime(candidate.referenceImage.uploadedAt)}</small></> : <div className="empty">暂无参考图像，请选择目标后上传现场照片。</div>}
             </div> : (
             <MapImageCanvas
               image={m.image}

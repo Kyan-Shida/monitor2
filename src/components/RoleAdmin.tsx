@@ -4,7 +4,7 @@
  * @interaction 由 pages/Supporting.tsx 在 page === "roles" 时渲染
  */
 import { useState } from "react";
-import { Badge, Btn, Field, Modal, Panel, Table } from "./UI";
+import { Badge, Btn, Confirm, Field, Modal, Panel, Switch, Table } from "./UI";
 import { Pager } from "./Business";
 import { FilterPanel } from "./FilterPanel";
 import { Segmented } from "./Segmented";
@@ -38,46 +38,55 @@ function MemberForm({
   onClose: () => void;
 }) {
   const [picked, setPicked] = useState(role.members);
+  const [ask, ASK] = useState(false);
   const toggle = (id: string) =>
     setPicked(
       picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id],
     );
 
   return (
-    <Modal
-      title={`分配成员 · ${role.name}`}
-      onClose={onClose}
-      footer={
-        <>
-          <Btn onClick={onClose}>取消</Btn>
-          <Btn
-            primary
-            onClick={() => {
-              assignMembers(role.id, picked);
-              onClose();
-            }}
-          >
-            保存
-          </Btn>
-        </>
-      }
-    >
-      <div className="role-members">
-        {accounts.map((u) => (
-          <label className="perm-action" key={u.id}>
-            <input
-              type="checkbox"
-              checked={picked.includes(u.id)}
-              onChange={() => toggle(u.id)}
-            />
-            {u.name}
-            <small>
-              {u.login} · {u.dept}
-            </small>
-          </label>
-        ))}
-      </div>
-    </Modal>
+    <>
+      <Modal
+        title={`分配成员 · ${role.name}`}
+        onClose={onClose}
+        footer={
+          <>
+            <Btn onClick={onClose}>取消</Btn>
+            <Btn primary onClick={() => ASK(true)}>
+              保存
+            </Btn>
+          </>
+        }
+      >
+        <div className="role-members">
+          {accounts.map((u) => (
+            <label className="perm-action" key={u.id}>
+              <input
+                type="checkbox"
+                checked={picked.includes(u.id)}
+                onChange={() => toggle(u.id)}
+              />
+              {u.name}
+              <small>
+                {u.login} · {u.dept}
+              </small>
+            </label>
+          ))}
+        </div>
+      </Modal>
+      {ask && (
+        <Confirm
+          title="保存成员分配"
+          message={`「${role.name}」的成员将变更为 ${picked.length} 人。`}
+          confirmText="保存"
+          onClose={() => ASK(false)}
+          onConfirm={() => {
+            assignMembers(role.id, picked);
+            onClose();
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -100,6 +109,7 @@ function AccountForm({
     account?.status ?? "启用",
   );
   const [roleId, ROLEID] = useState(current?.id ?? roles[0]?.id ?? "");
+  const [ask, ASK] = useState(false);
   const ready =
     !!login.trim() &&
     !!name.trim() &&
@@ -107,70 +117,82 @@ function AccountForm({
     (!!account || !!password.trim());
 
   return (
-    <Modal
-      title={account ? "编辑账号" : "新增账号"}
-      onClose={onClose}
-      footer={
-        <>
-          <Btn onClick={onClose}>取消</Btn>
-          <Btn
-            primary
-            disabled={!ready}
-            onClick={() => {
-              if (account)
-                updateAccount(account.id, {
-                  login,
-                  name,
-                  dept,
-                  status,
-                  roleId,
-                });
-              else addAccount({ login, password, name, dept, roleId });
-              onClose();
-            }}
-          >
-            保存
-          </Btn>
-        </>
-      }
-    >
-      <Field label="登录账号" required>
-        <input value={login} onChange={(e) => LOGIN(e.target.value)} />
-      </Field>
-      {!account && (
-        <Field label="初始密码" required>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => PWD(e.target.value)}
-          />
+    <>
+      <Modal
+        title={account ? "编辑账号" : "新增账号"}
+        onClose={onClose}
+        footer={
+          <>
+            <Btn onClick={onClose}>取消</Btn>
+            <Btn primary disabled={!ready} onClick={() => ASK(true)}>
+              保存
+            </Btn>
+          </>
+        }
+      >
+        <Field label="登录账号" required>
+          <input value={login} onChange={(e) => LOGIN(e.target.value)} />
         </Field>
+        {!account && (
+          <Field label="初始密码" required>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => PWD(e.target.value)}
+            />
+          </Field>
+        )}
+        <Field label="姓名" required>
+          <input value={name} onChange={(e) => NAME(e.target.value)} />
+        </Field>
+        <Field label="所属部门">
+          <input value={dept} onChange={(e) => DEPT(e.target.value)} />
+        </Field>
+        <Field label="所属角色" required>
+          <select value={roleId} onChange={(e) => ROLEID(e.target.value)}>
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="状态">
+          <div className="switch-row">
+            <Switch
+              checked={status === "启用"}
+              label="启用状态"
+              onChange={(on) => STATUS(on ? "启用" : "禁用")}
+            />
+            {status}
+          </div>
+        </Field>
+      </Modal>
+      {ask && (
+        <Confirm
+          title={account ? "保存账号信息" : "创建账号"}
+          message={
+            account
+              ? `「${login}」的信息保存后立即生效。`
+              : `将新建账号「${login}」并绑定角色。`
+          }
+          confirmText="保存"
+          onClose={() => ASK(false)}
+          onConfirm={() => {
+            if (account)
+              updateAccount(account.id, {
+                login,
+                name,
+                dept,
+                status,
+                roleId,
+              });
+            else addAccount({ login, password, name, dept, roleId });
+            onClose();
+          }}
+        />
       )}
-      <Field label="姓名" required>
-        <input value={name} onChange={(e) => NAME(e.target.value)} />
-      </Field>
-      <Field label="所属部门">
-        <input value={dept} onChange={(e) => DEPT(e.target.value)} />
-      </Field>
-      <Field label="所属角色" required>
-        <select value={roleId} onChange={(e) => ROLEID(e.target.value)}>
-          {roles.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="状态">
-        <select
-          value={status}
-          onChange={(e) => STATUS(e.target.value as Account["status"])}
-        >
-          <option value="启用">启用</option>
-          <option value="禁用">禁用</option>
-        </select>
-      </Field>
-    </Modal>
+    </>
   );
 }
 
@@ -183,36 +205,45 @@ function ResetPasswordForm({
   onClose: () => void;
 }) {
   const [password, PWD] = useState("");
+  const [ask, ASK] = useState(false);
   const ready = !!password.trim();
 
   return (
-    <Modal
-      title={`重置密码 · ${account.name}`}
-      onClose={onClose}
-      footer={
-        <>
-          <Btn onClick={onClose}>取消</Btn>
-          <Btn
-            primary
-            disabled={!ready}
-            onClick={() => {
-              resetPassword(account.id, password);
-              onClose();
-            }}
-          >
-            确认重置
-          </Btn>
-        </>
-      }
-    >
-      <Field label="新密码" required>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => PWD(e.target.value)}
+    <>
+      <Modal
+        title={`重置密码 · ${account.name}`}
+        onClose={onClose}
+        footer={
+          <>
+            <Btn onClick={onClose}>取消</Btn>
+            <Btn primary disabled={!ready} onClick={() => ASK(true)}>
+              确认重置
+            </Btn>
+          </>
+        }
+      >
+        <Field label="新密码" required>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => PWD(e.target.value)}
+          />
+        </Field>
+      </Modal>
+      {ask && (
+        <Confirm
+          title="重置密码"
+          message={`重置后「${account.name}」需用新密码登录。`}
+          confirmText="确认重置"
+          danger
+          onClose={() => ASK(false)}
+          onConfirm={() => {
+            resetPassword(account.id, password);
+            onClose();
+          }}
         />
-      </Field>
-    </Modal>
+      )}
+    </>
   );
 }
 
@@ -606,54 +637,30 @@ export function RoleAdmin() {
         />
       )}
       {accountDel && (
-        <Modal
+        <Confirm
           title="删除账号"
-          slim
+          message={`删除后「${accountDel.name}」将无法登录，并从所属角色中解除关联。`}
+          confirmText="确认删除"
+          danger
           onClose={() => setAccountDelId("")}
-          footer={
-            <>
-              <Btn onClick={() => setAccountDelId("")}>取消</Btn>
-              <Btn
-                danger
-                onClick={() => {
-                  removeAccount(accountDel.id);
-                  setAccountDelId("");
-                }}
-              >
-                确认删除
-              </Btn>
-            </>
-          }
-        >
-          <p>
-            删除后「{accountDel.name}」将无法登录，并从所属角色中解除关联。
-          </p>
-        </Modal>
+          onConfirm={() => {
+            removeAccount(accountDel.id);
+            setAccountDelId("");
+          }}
+        />
       )}
       {delRole && (
-        <Modal
+        <Confirm
           title="删除角色"
-          slim
+          message={`删除后「${delRole.name}」的权限配置与成员关联将一并解除，成员回落为无角色状态。`}
+          confirmText="确认删除"
+          danger
           onClose={() => setDelId("")}
-          footer={
-            <>
-              <Btn onClick={() => setDelId("")}>取消</Btn>
-              <Btn
-                danger
-                onClick={() => {
-                  removeRole(delRole.id);
-                  setDelId("");
-                }}
-              >
-                确认删除
-              </Btn>
-            </>
-          }
-        >
-          <p>
-            删除后「{delRole.name}」的权限配置与成员关联将一并解除，成员回落为无角色状态。
-          </p>
-        </Modal>
+          onConfirm={() => {
+            removeRole(delRole.id);
+            setDelId("");
+          }}
+        />
       )}
     </>
   );

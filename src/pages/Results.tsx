@@ -15,6 +15,7 @@ import { archiveIdOf } from "../data/deviceMaster";
 import {
   alarmClassOfAlarm,
   enabledAlarmClassesOf,
+  mainOfAlarm,
   targetNameOf,
   targetOfAlarm,
 } from "../data/alarmSettings";
@@ -366,6 +367,7 @@ export function Results({ page, id }: { page: string; id?: string }) {
                   ? [
                       "任务ID",
                       "任务名称",
+                      "执行结果",
                       "开始时间",
                       "结束时间",
                       "触发告警",
@@ -397,6 +399,10 @@ export function Results({ page, id }: { page: string; id?: string }) {
                           <span className="rt-title">
                             <b>{t?.name || taskId}</b>
                           </span>
+                        </td>
+                        {/* 执行结果：任务自身终态（完成 / 中止 / 失败…），列表里直接可判，不必进详情 */}
+                        <td>
+                          <Badge>{t?.state || "—"}</Badge>
                         </td>
                         {/* RES-02：开始 / 结束分列，便于与其它系统对账 */}
                         <td className="rt-time">
@@ -634,11 +640,20 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
       : // 业务预警沿用原口径：只收录挂了业务台账（taskId）的告警，孤立告警不进列表
         a.category === "业务" && !!a.taskId,
   );
-  /** 告警归属名：机器人预警挂机器人名，业务预警挂点位所属设备 */
-  const ownerOf = (a: (typeof s.alarms)[number]) =>
-    isRobot
-      ? s.robots.find((rb) => rb.id === a.robotId)?.name
-      : s.points.find((x) => x.id === a.pointId)?.device;
+  /**
+   * 告警归属名（筛选 / 分组用）
+   * @description 业务预警挂点位所属设备；机器人预警优先台账 / 点位（识别故障发生在点位上），
+   *              本体故障没有点位时回落到机器人名
+   */
+  const ownerOf = (a: (typeof s.alarms)[number]) => {
+    if (!isRobot) return s.points.find((x) => x.id === a.pointId)?.device;
+    const bt = targetOfAlarm(s, a);
+    return (
+      (bt ? targetNameOf(s, bt) : undefined) ||
+      s.points.find((x) => x.id === a.pointId)?.device ||
+      s.robots.find((rb) => rb.id === a.robotId)?.name
+    );
+  };
   /**
    * 切换标签页：口径变了，残留的设备 / 分类 / 等级 / 日期筛选会把列表筛空，一律重置
    */
@@ -660,9 +675,9 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
     lv === "一级" ? "red" : lv === "二级" ? "amber" : lv === "三级" ? "blue" : undefined;
   const levelClass = (lv: string): string =>
     lv === "一级" ? "lv-urgent" : lv === "二级" ? "lv-important" : lv === "三级" ? "lv-minor" : "";
-  // 告警处理现状：仅实现「处理结果（受理 / 忽略）+ 是否误报」人工处理（ALM-05），未做处置闭环
-  /** 未处理 = 尚无人工处理（以处理时间为准；告警当前只做处理，不做处置推进） */
-  const openStates = ["待确认", "处理中", "待复查", "已恢复"];
+  // 告警三态：待确认 → 处理中 → 已关闭（ALM-05 处理；忽略直接结案，受理后由 ALM-06 标记结束）
+  /** 未结束 = 待确认 + 处理中 */
+  const openStates = ["待确认", "处理中"];
   const alarmsOpen = s.alarms.filter((a) => openStates.includes(a.state));
   /**
    * 告警类别口径（「告警管理 › 告警类别」）：筛选项 = 启用中的分类（与「等级」一致，
@@ -698,12 +713,13 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
     );
   });
   /**
-   * 告警记录列表：未处理置顶、已处理自动下移（sort 稳定，同组内保持原时序），再按页切片。
+   * 告警记录列表：按三态排序——待确认 → 处理中 → 已关闭（sort 稳定，同组内保持原时序），再按页切片。
    * @description 先排序后切片，保证翻页顺序稳定
    */
+  const alarmRank: Record<string, number> = { 待确认: 0, 处理中: 1, 已关闭: 2 };
   const alarmRows = (
-    showOpen ? alarmsFiltered.filter((a) => !a.handledAt) : alarmsFiltered
-  ).sort((x, y) => Number(!!x.handledAt) - Number(!!y.handledAt));
+    showOpen ? alarmsFiltered.filter((a) => a.state === "待确认") : alarmsFiltered
+  ).sort((x, y) => (alarmRank[x.state] ?? 3) - (alarmRank[y.state] ?? 3));
   const alarmPages = Math.max(1, Math.ceil(alarmRows.length / alarmsSize));
   const alarmCur = Math.min(Math.max(1, alarmPn), alarmPages);
   const alarmPageRows = alarmRows.slice(
@@ -768,7 +784,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             <span>未处理</span>
             <div className="metric-vals">
               <strong>
-                {s.alarms.filter((a) => a.taskId && !a.handledAt).length}
+                {s.alarms.filter((a) => a.taskId && a.state === "待确认").length}
               </strong>
               <i className="metric-hint">
                 {showOpen ? "已筛选 · 点击取消" : "点击筛选"}
@@ -836,7 +852,7 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               },
               {
                 key: "dev",
-                label: isRobot ? "机器人" : "设备",
+                label: isRobot ? "对象" : "设备",
                 options: ["全部", ...devicesInAlarms],
               },
               { key: "from", label: "起始日期", type: "date" },
@@ -862,8 +878,8 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
         <Table
           heads={[
             "告警编号",
-            isRobot ? "机器人" : "台账名称",
-            "告警分类",
+            isRobot ? "对象" : "台账名称",
+            "告警类别",
             "告警等级",
             "风险信息",
             "发生时间",
@@ -879,14 +895,8 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
             /** 告警所属台账：台账名称与「告警管理 › 告警设置」同一份口径 */
             const bt = targetOfAlarm(s, a);
             return [
-              // 告警编号即处理入口：直接进告警详情页（检查受理），不再弹窗
-              <button
-                className="rt-link"
-                title={a.handledAt ? "查看告警处理情况" : "处理该告警（检查受理）"}
-                onClick={() => go("alarm", a.id, undefined, { page: "alarms" })}
-              >
-                {a.id}
-              </button>,
+              // 告警编号只作业务主键展示，不做跳转入口（处理入口统一在操作列）
+              a.id,
               // 台账名称：告警经台账派生；机器人本体告警没有台账，回落到设备 / 机器人
               bt ? (
                 targetNameOf(s, bt)
@@ -912,19 +922,19 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                 {riskReasonOf(rd)}
               </span>,
               <span className="muted">{a.time}</span>,
-              // 处理状态：未处理 / 受理 / 忽略（误报单独标注，口径进报警准确率）
+              // 状态：待确认 / 处理中 / 已关闭；已关闭追加处理结果（误报单独标注，口径进报警准确率）
               <Badge
                 tone={
-                  a.handleResult === "受理"
+                  a.state === "处理中"
                     ? "amber"
-                    : a.handleResult === "忽略"
+                    : a.state === "已关闭"
                       ? "green"
                       : undefined
                 }
               >
-                {a.handledAt
-                  ? `${a.handleResult ?? "已处理"}${a.falsePositive ? " · 误报" : ""}`
-                  : "未处理"}
+                {a.state}
+                {a.handleResult ? ` · ${a.handleResult}` : ""}
+                {a.falsePositive ? " · 误报" : ""}
               </Badge>,
               <span className="muted">{a.handledAt || "—"}</span>,
               // 操作列：处理 / 查看（已处理只能查看，处理结果不可二次编辑）
@@ -1033,7 +1043,17 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
    * 机器人本体故障（category = 机器人）与业务告警是两套详情口径：
    * 前者没有业务台账 / 点位 / 检测项 / 读数 / 判定规则，改看机器人本体诊断信息
    */
-  const isRobotFault = a.category === "机器人";
+  /**
+   * 机器人本体故障：识别失败也归在机器人预警下，但它有业务点位、读数与阈值，
+   * 展示口径仍走业务（否则会被渲染成本体诊断面板，看不到证据与判定）
+   */
+  const isRobotFault =
+    a.category === "机器人" && a.alarmClass !== "识别故障";
+  /**
+   * 识别故障：告警分类为「识别故障」（照片模糊 / 算法调用失败 / 传感器无数据）。
+   * 它不由告警项判出，所以没有阈值与触发规则，风险也谈不上"异常"
+   */
+  const isRecognizeFault = alarmClassOfAlarm(s, a) === "识别故障";
   const rb = s.robots.find((x) => x.id === a.robotId);
   /** 故障部件补充说明（告警类别只有「下装 / 上装」，展开成能看懂的范围） */
   const partHintOf = (cls?: string) =>
@@ -1063,8 +1083,8 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               {/* 故障信息：这条故障"是什么、哪台机器、本体现在什么状况" */}
               <Panel title="故障信息">
                 <dl className="risk-dl">
-                  <dt>告警分类</dt>
-                  <dd>{a.category}</dd>
+                  <dt>告警大类</dt>
+                  <dd>{mainOfAlarm(a.category)}</dd>
                   {/* 故障部件：本体故障只有「下装 / 上装」两档，这里展开成人能看懂的范围 */}
                   <dt>故障部件</dt>
                   <dd>
@@ -1133,8 +1153,9 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
           <Panel title="风险信息">
             <dl className="risk-dl">
               {/* 告警等级 / 触发时间已在页头上，块内不再重复；块内按「是什么 → 在哪 → 判定 → 读数」组织 */}
-              <dt>告警分类</dt>
-              <dd>{a.category}</dd>
+              <dt>告警大类</dt>
+              {/* 告警类别（大类）：业务预警 / 机器人预警 */}
+              <dd>{mainOfAlarm(a.category)}</dd>
               <dt>当前状态</dt>
               <dd>
                 <Badge>{a.state}</Badge>
@@ -1165,19 +1186,21 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
                 </Badge>
               </dd>
               <dt>风险信息</dt>
-              <dd className={r && hasAlarm(r) ? "risk-abn" : undefined}>
-                {riskReasonOf(r)}
+              <dd className={r && r.abnormal ? "risk-abn" : undefined}>
+                {/* 识别失败没有风险判定结论：失败原因已在 AI 状态 / 说明里 */}
+                {isRecognizeFault ? "未判定（识别失败）" : riskReasonOf(r)}
               </dd>
               <dt>读数</dt>
               <dd className="risk-value">
-                {r ? `${r.final} ${r.unit}` : "—"}
-                {r && r.raw !== r.final && (
+                {/* 识别失败没有有效读数：直接给「无法展示」，不显示占位值 */}
+                {r ? (r.aiAbnormal ? "无法展示" : `${r.final} ${r.unit}`) : "—"}
+                {r && !r.aiAbnormal && r.raw !== r.final && (
                   <small>
                     原始采集 {r.raw} {r.unit}
                   </small>
                 )}
               </dd>
-              {r?.ruleSnapshot && (
+              {r?.ruleSnapshot && !isRecognizeFault && (
                 <>
                   <dt>告警阈值</dt>
                   <dd>{thresholdOf(r)}</dd>
@@ -1231,9 +1254,23 @@ export function Alarms({ page, id }: { page: string; id?: string }) {
               <Field label="处理结果">{a.handleResult || "—"}</Field>
               <Field label="是否误报">{a.falsePositive ? "是" : "否"}</Field>
               <Field label="处理说明 / 依据">{a.handleNote || "—"}</Field>
-              <Note>
-                该告警已处理，处理结果不可二次编辑；如需更正请联系管理员。
-              </Note>
+              {a.state === "处理中" ? (
+                <>
+                  <Note>已受理，现场处置完成后点「标记结束」结案。</Note>
+                  <div className="actions">
+                    <Btn
+                      primary
+                      onClick={() => act({ type: "ALARM_CLOSE", id: a.id })}
+                    >
+                      标记结束
+                    </Btn>
+                  </div>
+                </>
+              ) : (
+                <Note>
+                  该告警已处理，处理结果不可二次编辑；如需更正请联系管理员。
+                </Note>
+              )}
             </>
           ) : (
             <>

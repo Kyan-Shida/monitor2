@@ -14,9 +14,20 @@ import {
   type AlarmClass,
   type AlarmClassMain,
 } from "../data/types";
-import { Btn, Panel, Table, Field, Badge, Modal, Note } from "../components/UI";
+import {
+  Badge,
+  Btn,
+  Confirm,
+  Field,
+  Modal,
+  Panel,
+  Switch,
+  Table,
+} from "../components/UI";
+import { fmtDateTime } from "../data/types";
 import { FilterPanel } from "../components/FilterPanel";
 import { Pager } from "../components/Business";
+import { useListDelete } from "../components/ListDelete";
 
 /** 新建一条空白分类（「+ 添加分类」用） */
 const blankClass = (): AlarmClass => ({
@@ -49,10 +60,12 @@ export function AlarmClasses() {
     MF("全部");
     SF("全部");
   };
-  /** 勾选的分类 ID：删除操作按勾选批量执行 */
-  const [checked, SETCHECKED] = useState<string[]>([]);
   const [edit, E] = useState<AlarmClass | null>(null);
-  const [delOpen, DEL] = useState(false);
+  /**
+   * 启停二次确认：列表开关点一下先问一次
+   * @description 停用会从「告警设置」的可选类型与「告警记录」筛选项里消失，改前说明影响面
+   */
+  const [toggleClass, ASKTOGGLE] = useState<AlarmClass | null>(null);
   /** 筛选面板展开态：条件默认收起，点「筛选」才显示 */
   const [filterOpen, SETFILTEROPEN] = useState(false);
   const [pn, PN] = useViewState("alarmClasses.page", 1);
@@ -71,10 +84,27 @@ export function AlarmClasses() {
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const cur = Math.min(Math.max(1, pn), pages);
   const pageRows = filtered.slice((cur - 1) * pageSize, cur * pageSize);
-  const toggleChecked = (id: string) =>
-    SETCHECKED((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
+  /**
+   * 批量删除：点工具栏「删除」才进多选态（勾选列平时不占位）
+   * @description 被台账引用的分类由引擎拦下，弹窗保持打开便于先改引用
+   */
+  const del = useListDelete({
+    onDelete: (ids) => {
+      for (const id of ids)
+        if (act({ type: "REMOVE_ALARM_CLASS", id }) === false) return false;
+    },
+    batch: {
+      pageIds: pageRows.map((c) => c.id),
+      title: (n) => `删除选中的 ${n} 个告警类别`,
+      nameOf: (id) => filtered.find((c) => c.id === id)?.name || id,
+      text: (n) => (
+        <>
+          本次将删除 <b>{n}</b> 个告警类别；仍被台账告警设置引用的类别会被拦下，需先在告警设置里改类型。
+        </>
+      ),
+    },
+  });
+  const multi = del.sel !== null;
 
   return (
     <Panel
@@ -87,9 +117,7 @@ export function AlarmClasses() {
           <Btn primary onClick={() => E(blankClass())}>
             + 添加分类
           </Btn>
-          <Btn danger disabled={!checked.length} onClick={() => DEL(true)}>
-            删除
-          </Btn>
+          {del.bar}
         </div>
       }
     >
@@ -107,20 +135,16 @@ export function AlarmClasses() {
         />
         )}
       <Table
+        className={del.tableClass}
         heads={[
-          "",
+          ...(multi ? [del.head] : []),
           "分类名称",
           "告警大类",
           "是否启用",
           "更新时间",
         ]}
         rows={pageRows.map((c) => [
-          <input
-            type="checkbox"
-            aria-label={`选择 ${c.name}`}
-            checked={checked.includes(c.id)}
-            onChange={() => toggleChecked(c.id)}
-          />,
+          ...(multi ? [del.cell(c.id, c.name)] : []),
           // 分类名称即编辑入口：点开改名称 / 大类 / 启停
           <button type="button" className="rt-link" onClick={() => E({ ...c })}>
             {c.name}
@@ -128,22 +152,13 @@ export function AlarmClasses() {
           <Badge tone={c.main === "机器人预警" ? "blue" : undefined}>
             {c.main}
           </Badge>,
-          // 是否启用直接落库：停用后不再出现在告警设置的可选类型与告警记录筛选项里
-          <button
-            type="button"
-            role="switch"
-            aria-checked={c.enabled}
-            className={"switch-btn" + (c.enabled ? " on" : "")}
-            onClick={() =>
-              act({
-                type: "SAVE_ALARM_CLASS",
-                category: { ...c, enabled: !c.enabled },
-              })
-            }
-          >
-            {c.enabled ? "是" : "否"}
-          </button>,
-          <span className="muted">{c.updatedAt || "—"}</span>,
+          // 是否启用 = 开关：点一下先二次确认，停用后不再出现在告警设置的可选类型与告警记录筛选项里
+          <Switch
+            checked={c.enabled}
+            label={`${c.name} 是否启用`}
+            onChange={() => ASKTOGGLE(c)}
+          />,
+          <span className="muted">{fmtDateTime(c.updatedAt)}</span>,
         ])}
       />
       <Pager
@@ -156,6 +171,27 @@ export function AlarmClasses() {
           PN(1);
         }}
       />
+      {/* 启停二次确认 */}
+      {toggleClass && (
+        <Confirm
+          title={toggleClass.enabled ? "停用告警分类" : "启用告警分类"}
+          message={
+            toggleClass.enabled
+              ? `停用「${toggleClass.name}」后，该分类不再出现在告警设置的可选类型与告警记录筛选项里；已产生的告警记录照常保留。`
+              : `启用后「${toggleClass.name}」重新出现在告警设置的可选类型与告警记录筛选项里。`
+          }
+          confirmText={toggleClass.enabled ? "停用" : "启用"}
+          danger={toggleClass.enabled}
+          onClose={() => ASKTOGGLE(null)}
+          onConfirm={() => {
+            act({
+              type: "SAVE_ALARM_CLASS",
+              category: { ...toggleClass, enabled: !toggleClass.enabled },
+            });
+            ASKTOGGLE(null);
+          }}
+        />
+      )}
       {edit && (
         <Modal
           title={edit.id ? "编辑告警类别" : "添加分类"}
@@ -201,25 +237,8 @@ export function AlarmClasses() {
           </div>
         </Modal>
       )}
-      {delOpen && (
-        <Modal title="删除告警类别" onClose={() => DEL(false)}>
-          <Note>将删除已勾选的 {checked.length} 个告警类别。</Note>
-          <div className="modal-actions">
-            <Btn onClick={() => DEL(false)}>取消</Btn>
-            <Btn
-              danger
-              onClick={() => {
-                for (const id of checked)
-                  act({ type: "REMOVE_ALARM_CLASS", id });
-                SETCHECKED([]);
-                DEL(false);
-              }}
-            >
-              确认删除
-            </Btn>
-          </div>
-        </Modal>
-      )}
+      {/* 批量删除的二次确认（与设备台账等列表共用同一套交互） */}
+      {del.modal}
     </Panel>
   );
 }

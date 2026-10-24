@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { usePageSize, useViewState } from "../data/navigation";
-import { Btn, Badge, Panel, Table, Field, Modal } from "../components/UI";
+import { Btn, Badge, Drawer, Panel, Table, Field } from "../components/UI";
 import { Pager } from "../components/Business";
 import { DeleteConfirm } from "../components/ListDelete";
 import { atomicActions, atomicActionCapability, captureKinds } from "../data/types";
@@ -187,9 +187,34 @@ export function RobotPayloads() {
 
       {/* 上装：新增 / 编辑 */}
       {form && (
-        <Modal
+        <Drawer
           title={form.mode === "edit" ? "编辑上装" : "新增上装"}
+          subtitle={form.id || undefined}
           onClose={() => FORM(null)}
+          footer={
+            <>
+              <Btn onClick={() => FORM(null)}>取消</Btn>
+              <Btn
+                primary
+                disabled={!formValid}
+                onClick={() => {
+                  const ok = act({
+                    type:
+                      form.mode === "edit"
+                        ? "UPDATE_ROBOT_PAYLOAD"
+                        : "ADD_ROBOT_PAYLOAD",
+                    id: form.id.trim(),
+                    name: form.name.trim(),
+                    abilities: form.abilities,
+                    models: form.models,
+                  });
+                  if (ok) FORM(null);
+                }}
+              >
+                保存
+              </Btn>
+            </>
+          }
         >
           <Field label="上装编码">
             <input
@@ -278,29 +303,7 @@ export function RobotPayloads() {
               ))}
             </div>
           </Field>
-          <div className="modal-actions">
-            <Btn onClick={() => FORM(null)}>取消</Btn>
-            <Btn
-              primary
-              disabled={!formValid}
-              onClick={() => {
-                const ok = act({
-                  type:
-                    form.mode === "edit"
-                      ? "UPDATE_ROBOT_PAYLOAD"
-                      : "ADD_ROBOT_PAYLOAD",
-                  id: form.id.trim(),
-                  name: form.name.trim(),
-                  abilities: form.abilities,
-                  models: form.models,
-                });
-                if (ok) FORM(null);
-              }}
-            >
-              保存
-            </Btn>
-          </div>
-        </Modal>
+        </Drawer>
       )}
 
       {/* 删除二次确认（通用组件） */}

@@ -1,5 +1,6 @@
 import type {
   State,
+  Area,
   Task,
   Robot,
   Point,
@@ -25,6 +26,7 @@ import type {
   DeviceKind,
   PlanKind,
   PlanCycle,
+  PlanUnit,
   MapPacket,
   Roadnet,
   AlarmClass,
@@ -46,9 +48,15 @@ import {
   deviceKinds,
   planCycles,
   planKinds,
+  planUnits,
+  planUnitMax,
   ALARM_CLASS_MAINS,
   ROOT_AREA_ID,
   ROOT_AREA_NAME,
+  nextAreaCode,
+  nextMapNo,
+  fmtDate,
+  now,
 } from "./types";
 import {
   rulesOf,
@@ -116,7 +124,7 @@ function areaPolygon(a: Action): { x: number; y: number }[] | null {
  * @returns 合法父级 id
  */
 function resolveParent(
-  areas: { id: string; name: string; parentId?: string }[],
+  areas: Area[],
   raw: unknown,
   selfId?: string,
 ): string {
@@ -132,7 +140,13 @@ function resolveParent(
   }
   // 3) 名称不存在：按手填内容自动创建区域（直属全厂区）作为父级
   if (!hit) {
-    hit = { id: id("AREA"), name: v, parentId: ROOT_AREA_ID };
+    hit = {
+      id: id("AREA"),
+      code: nextAreaCode(areas),
+      name: v,
+      parentId: ROOT_AREA_ID,
+      updatedAt: now(),
+    };
     areas.push(hit);
   }
   // 4) 防环：目标父链上出现 selfId = 挂到了自己或自己后代
@@ -184,7 +198,7 @@ function continueQueue(s: State, r: Robot) {
  */
 function logVersion(m: MapAsset, note: string) {
   m.history ||= [];
-  const at = m.updatedAt || new Date().toLocaleString("zh-CN");
+  const at = m.updatedAt || now();
   const head = m.history[0];
   if (head && head.version === m.version) {
     head.note = note;
@@ -209,7 +223,7 @@ function publishMap(s: State, m: MapAsset) {
     s.points.some((p) => p.mapId === m.id),
     "至少需要一个已标注业务点位",
   );
-  m.updatedAt = new Date().toLocaleString("zh-CN");
+  m.updatedAt = now();
   // 地图只有空间版本 V；巡检点标定数据带自己的版本 c，不写进地图历史
   logVersion(m, "定版发布（纯点云底图）");
 }
@@ -305,7 +319,7 @@ function pushSync(s: State, m: MapAsset, r: Robot) {
     robotId: r.id,
     mapVersion: m.version,
     state: "传输中",
-    at: new Date().toLocaleString("zh-CN"),
+    at: now(),
   });
 }
 export function constraints(
@@ -315,9 +329,15 @@ export function constraints(
   start = false,
   now = Date.now(),
 ): string[] {
-  const m = s.maps.find((m) => m.id === t.mapId);
   return [
-    ...(r.region !== m?.region ? ["区域不匹配"] : []),
+    // 地图覆盖：机器人当前地图必须覆盖任务的全部巡检点
+    ...(r.mapId !== t.mapId ||
+    t.items.some((p) => {
+      const q = s.points.find((x) => x.id === p.id);
+      return !!q && q.mapId !== r.mapId;
+    })
+      ? ["机器人当前地图未覆盖任务全部巡检点"]
+      : []),
     // 检测能力按"采集方式"判定（J′）：业务类型（仪表 / 阀门）不参与调度校验
     ...(t.items.some((p) => !robotCoversPoint(s, p, r)) ? ["检测能力不足"] : []),
     ...((t.atomicActions || []).some(
@@ -356,9 +376,7 @@ export function constraints(
     )
       ? ["点位未启用"]
       : []),
-    ...(r.mapId !== t.mapId || r.mapVersion !== t.mapVersion
-      ? ["地图版本待同步"]
-      : []),
+    ...(r.mapVersion !== t.mapVersion ? ["地图版本待同步"] : []),
     ...(start && t.notBefore && Date.parse(t.notBefore) > now
       ? ["尚未到计划执行时间"]
       : []),
@@ -525,7 +543,7 @@ export function transition(state: State, a: Action): State {
       done: [],
       skipped: [],
       retries: 0,
-      created: new Date().toLocaleString("zh-CN"),
+      created: now(),
     };
     // 统一坐标系：任务快照已含巡检点 world；缺失者回退底图坐标并提示
     const noWorld = items.filter((p) => !p.world).length;
@@ -596,7 +614,7 @@ export function transition(state: State, a: Action): State {
         name,
         main: c.main,
         enabled: c.enabled !== false,
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       };
       s.alarmClasses = list.filter((x) => x.id !== next.id).concat(next);
       object = next.id;
@@ -636,7 +654,7 @@ export function transition(state: State, a: Action): State {
       const next: Tenant = {
         ...t,
         id: id("T-"),
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       };
       s.tenants = (s.tenants || []).concat(next);
       object = next.id;
@@ -669,7 +687,7 @@ export function transition(state: State, a: Action): State {
       const next: Tenant = {
         ...old!,
         ...t,
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       };
       s.tenants = list.map((x) => (x.id === next.id ? next : x));
       object = next.id;
@@ -740,7 +758,7 @@ export function transition(state: State, a: Action): State {
         devices: normalizeScope(p.devices),
         sms: p.sms !== false,
         updatedBy: roleOf(s.roleId).person,
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       };
       s.alarmPushStaff = list.filter((x) => x.id !== next.id).concat(next);
       object = next.id;
@@ -811,7 +829,7 @@ export function transition(state: State, a: Action): State {
             ? (req.expected || "").trim()
             : undefined,
         version: (old?.version || 0) + 1,
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       };
       s.requirements = list.filter((x) => x.id !== next.id).concat(next);
       object = next.id;
@@ -842,7 +860,7 @@ export function transition(state: State, a: Action): State {
           String(a.name || "").trim() ||
           `地图信息-${String(seq).padStart(2, "0")}-${r!.id}`,
         robotId: r!.id,
-        at: new Date().toLocaleString("zh-CN"),
+        at: now(),
         image: a.image,
         source: "机器人扫描回传",
       };
@@ -884,11 +902,14 @@ export function transition(state: State, a: Action): State {
       must(k, "未找到要构建的地图数据包");
       const name = String(a.name || "").trim() || k!.name;
       const m: MapAsset = {
-        id: id("MAP"),
+        // 主键即地图编号：统一 MAP-XXX 格式，展示层不再二次换算
+        id: nextMapNo(s.maps),
         name,
         region: String(a.region || "一期罐区"),
         version: 1,
         syncState: "未同步",
+        // 新建地图默认启用，可在列表的启停开关里停用
+        status: "启用",
         source: "机器人扫描构建",
         batch: k!.id,
         cloud: "scan-multimodal.pcd",
@@ -900,10 +921,10 @@ export function transition(state: State, a: Action): State {
           {
             version: 1,
             note: `由数据包「${k!.name}」构建（待标定：像素 → 全局坐标换算）`,
-            at: new Date().toLocaleString("zh-CN"),
+            at: now(),
           },
         ],
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       };
       s.maps.push(m);
       s.mapPackets = packets.filter((x) => x.id !== k!.id);
@@ -918,7 +939,7 @@ export function transition(state: State, a: Action): State {
       const name = String(a.name || "").trim();
       must(name, "请填写地图名称");
       hit!.name = name;
-      hit!.updatedAt = new Date().toLocaleString("zh-CN");
+      hit!.updatedAt = now();
       object = hit!.id;
       detail = `地图已重命名为「${name}」`;
       break;
@@ -960,7 +981,7 @@ export function transition(state: State, a: Action): State {
       const paths = (a.paths || []) as Roadnet["paths"];
       must(paths.length, "请先连线（直线 / 曲线）再保存路网");
       hit!.roadnet = { paths };
-      hit!.updatedAt = new Date().toLocaleString("zh-CN");
+      hit!.updatedAt = now();
       object = hit!.id;
       detail = `路网已保存：${paths.length} 条线`;
       break;
@@ -980,18 +1001,21 @@ export function transition(state: State, a: Action): State {
         if (a.video) m.video = a.video;
         m.version++;
         m.syncState = "未同步";
-        m.updatedAt = new Date().toLocaleString("zh-CN");
+        m.updatedAt = now();
         logVersion(m, "重新上传 SLAM 地图（点云底图更新）");
         object = m.id;
         detail = `已更新地图「${m.name}」至第 ${m.version} 版`;
         break;
       }
       const m = {
-        id: id("MAP"),
+        // 主键即地图编号：统一 MAP-XXX 格式，展示层不再二次换算
+        id: nextMapNo(s.maps),
         name: a.name,
         region: a.region || "一期罐区",
         version: 1,
         syncState: "未同步" as const,
+        // 新建地图默认启用，可在列表的启停开关里停用
+        status: "启用" as const,
         source: a.source || "机器人实采",
         batch: id("B"),
         cloud: a.cloud || "",
@@ -1006,10 +1030,10 @@ export function transition(state: State, a: Action): State {
           {
             version: 1,
             note: "导入纯点云地图（不含点位，待现场标定）",
-            at: new Date().toLocaleString("zh-CN"),
+            at: now(),
           },
         ],
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       };
       s.maps.unshift(m);
       object = m.id;
@@ -1157,7 +1181,7 @@ export function transition(state: State, a: Action): State {
           remark: r.remark,
           state: cur?.state === "停用" ? "停用" : "在用",
           // 导入即刷新「更新时间」（台账列表展示）
-          updatedAt: new Date().toLocaleString("zh-CN"),
+          updatedAt: now(),
         };
         if (cur) {
           devs[devs.indexOf(cur)] = rec;
@@ -1218,7 +1242,7 @@ export function transition(state: State, a: Action): State {
       };
       d!.items.push(item);
       // 检测项变动即刷新设备「更新时间」（设备台账列表展示）
-      d!.updatedAt = new Date().toLocaleString("zh-CN");
+      d!.updatedAt = now();
       // 检测目标即工厂树第三层的仪表（id 同源），一并新增
       if (s.instruments && !s.instruments.some((x) => x.id === item.id))
         s.instruments.push({
@@ -1268,7 +1292,7 @@ export function transition(state: State, a: Action): State {
           b.cycle = it!.cycle;
           b.priority = it!.priority;
         });
-      d!.updatedAt = new Date().toLocaleString("zh-CN");
+      d!.updatedAt = now();
       object = d!.id;
       detail = `${d!.name} 检测项「${it!.target}」已更新`;
       break;
@@ -1289,7 +1313,7 @@ export function transition(state: State, a: Action): State {
       (s.logicalPoints || []).forEach((lp) => {
         lp.itemIds = lp.itemIds.filter((x) => x !== removed.id);
       });
-      d!.updatedAt = new Date().toLocaleString("zh-CN");
+      d!.updatedAt = now();
       object = d!.id;
       detail = `${d!.name} 检测项「${removed.target}」已删除`;
       break;
@@ -1358,6 +1382,10 @@ export function transition(state: State, a: Action): State {
         targetKind,
         instrumentId: ins?.id,
         anchor: String(a.anchor || "").trim() || undefined,
+        // 锚点范围：抽屉里画的多边形（可空），坐标与区域配置同口径
+        anchorPolygon: Array.isArray(a.anchorPolygon)
+          ? a.anchorPolygon
+          : undefined,
         requirementId: req!.id,
         // 业务目标与业务要求：留空时按"仪表 / 区域 + 判定方式"和算法模板说明自动生成
         goal:
@@ -1385,7 +1413,7 @@ export function transition(state: State, a: Action): State {
         cycle: a.cycle || req!.cycle || "每日",
         priority: a.priority || "普通",
         inspect: a.inspect !== false,
-        createdAt: new Date().toLocaleString("zh-CN"),
+        createdAt: now(),
       };
       s.businessTargets = [rec, ...(s.businessTargets || [])];
       if (ins) syncInspectFlag(s, ins.id);
@@ -1400,6 +1428,13 @@ export function transition(state: State, a: Action): State {
       must(b, "巡检目标台账不存在");
       // 台账名称：留空 = 回到派生口径（清空自定义名）
       if (a.name !== undefined) b!.name = String(a.name).trim() || undefined;
+      // 区域 / 环境类目标的锚点与锚点范围（之前编辑时锚点没落库，这里一并补上）
+      if (a.anchor !== undefined)
+        b!.anchor = String(a.anchor).trim() || undefined;
+      if (a.anchorPolygon !== undefined)
+        b!.anchorPolygon = Array.isArray(a.anchorPolygon) && a.anchorPolygon.length
+          ? a.anchorPolygon
+          : undefined;
       if (a.algorithm !== undefined) {
         must(String(a.algorithm).trim(), "算法不能为空");
         b!.algorithm = String(a.algorithm).trim();
@@ -1579,7 +1614,7 @@ export function transition(state: State, a: Action): State {
       else s.points.push(p);
       target!.state = "已确认";
       target!.pointId = p.id;
-      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      cal.updatedAt = now();
       object = p.id;
       detail = `已保存巡检点（${normalized.length} 个巡检项 · 覆盖 ${new Set(created.map((c) => c.deviceId)).size} 台设备）`;
       break;
@@ -1642,7 +1677,7 @@ export function transition(state: State, a: Action): State {
         world: { x: Number(a.x), y: Number(a.y), z: 0 },
         state: "待确认",
       });
-      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      cal.updatedAt = now();
       object = cal.id;
       detail = `已采集现场点位 ${externalId}（底图投影 ${Math.round(a.x)}, ${Math.round(a.y)} · 采集机器人 ${r.id}）`;
       break;
@@ -1708,7 +1743,7 @@ export function transition(state: State, a: Action): State {
       s.trackSamples = [...samples, sample];
       // 轨迹属于地图内容：推进空间版本 → 同步状态派生为「未同步」，等重新下发给旧版本机器
       m.version++;
-      m.updatedAt = new Date().toLocaleString("zh-CN");
+      m.updatedAt = now();
       logVersion(m, `轨迹记录（${sample.kind} · 第 ${seq} 点）`);
       object = sample.id;
       detail = `轨迹已记录（${sample.kind} · 第 ${seq} 点）`;
@@ -1779,7 +1814,7 @@ export function transition(state: State, a: Action): State {
       else s.points.push(p);
       target!.state = "已确认";
       target!.pointId = p.id;
-      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      cal.updatedAt = now();
       object = p.id;
       detail = `已标注点位（一次停靠覆盖 ${created.length} 个检测对象）`;
       break;
@@ -1801,7 +1836,7 @@ export function transition(state: State, a: Action): State {
         floor: Number(a.floor ?? 0),
         floorLink: Number(a.floorLink ?? 0),
       });
-      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      cal.updatedAt = now();
       object = cal.id;
       detail = `已新增巡检点`;
       break;
@@ -1845,7 +1880,7 @@ export function transition(state: State, a: Action): State {
       must(t, "巡检点不存在");
       must(!t.pointId, "已关联业务点位的巡检点请先维护点位");
       t.state = "已剔除";
-      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      cal.updatedAt = now();
       // 同步清理本图路网中对该定位点的引用，避免父线出现悬空节点
       const keptPaths =
         m.roadnet?.paths
@@ -1866,7 +1901,7 @@ export function transition(state: State, a: Action): State {
       must(Array.isArray(a.targets), "巡检点标定数据格式错误");
       const cal = ensureCalibration(s, m.id);
       cal.targets = a.targets;
-      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      cal.updatedAt = now();
       s.points
         .filter((p) => p.mapId === m.id)
         .forEach((p) => {
@@ -1889,7 +1924,7 @@ export function transition(state: State, a: Action): State {
     case "IMPORT_POINT_CALIBRATION": {
       const rows = (a.points || []) as ParsedCalibrationPoint[];
       must(rows.length, "标定文件里没有解析到定位点");
-      const at = new Date().toLocaleString("zh-CN");
+      const at = now();
       if (!a.mapId || a.pending) {
         s.pendingCalibration = {
           file: a.file || "巡检点标定文件",
@@ -1925,7 +1960,7 @@ export function transition(state: State, a: Action): State {
       // 绑定暂存文件时，把来源机器人一并落到标定数据上
       cal.robotId = pending.robotId ?? cal.robotId;
       cal.importedAt = pending.at;
-      cal.updatedAt = new Date().toLocaleString("zh-CN");
+      cal.updatedAt = now();
       s.pendingCalibration = undefined;
       object = cal.id;
       detail = `标定文件已绑定到「${m.name}」（新增 ${added} · 按定位ID重绑 ${rebound}）`;
@@ -2053,7 +2088,7 @@ export function transition(state: State, a: Action): State {
       const m = s.maps.find((m) => m.id === c.mapId)!;
       m.version++;
       m.syncState = "未同步";
-      m.updatedAt = new Date().toLocaleString("zh-CN");
+      m.updatedAt = now();
       if (a.file) m.file = a.file;
       logVersion(m, `修订来源：${c.id}，原始资料保持归档`);
       c.version = m.version;
@@ -2121,7 +2156,7 @@ export function transition(state: State, a: Action): State {
         verifiedBy: pathChanged ? undefined : old?.verifiedBy,
         verifiedAt: pathChanged ? undefined : old?.verifiedAt,
         // 每次保存都刷新「更新时间」（路线列表展示）
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       };
       s.templates = old
         ? s.templates.map((x) => (x.id === old.id ? t : x))
@@ -2194,6 +2229,29 @@ export function transition(state: State, a: Action): State {
       const cycle: PlanCycle = planCycles.includes(a.cycle as PlanCycle)
         ? (a.cycle as PlanCycle)
         : "每天";
+      /**
+       * 新口径：周期任务按「间隔单位 + 执行间隔 + 每日时段」排程
+       * @description 单位缺失即走老口径（月 / 天 / 时），兼容历史计划
+       */
+      const unit: PlanUnit | undefined =
+        kind === "周期任务" && planUnits.includes(a.unit as PlanUnit)
+          ? (a.unit as PlanUnit)
+          : undefined;
+      if (unit) {
+        const max = planUnitMax[unit];
+        must(
+          Number.isInteger(+a.interval) &&
+            +a.interval >= 1 &&
+            +a.interval <= max,
+          `执行间隔需在 1-${max} ${unit}之间`,
+        );
+        must(
+          /^\d{2}:\d{2}$/.test(String(a.fromTime || "")) &&
+            /^\d{2}:\d{2}$/.test(String(a.toTime || "")) &&
+            String(a.fromTime) < String(a.toTime),
+          "结束时间需晚于开始时间",
+        );
+      }
       must(
         kind !== "定时任务" || /^\d{4}-\d{2}-\d{2}$/.test(String(a.start || "")),
         "请选择定时任务的执行日期",
@@ -2213,9 +2271,18 @@ export function transition(state: State, a: Action): State {
         templateId: a.templateId,
         robotId: a.robotId,
         cycle,
+        ...(unit
+          ? {
+              unit,
+              interval: +a.interval,
+              fromTime: String(a.fromTime),
+              toTime: String(a.toTime),
+            }
+          : {}),
         start,
         end,
-        time: a.time,
+        // 新口径下 time 取时段起点，老口径仍用「执行时间」
+        time: unit ? String(a.fromTime) : a.time,
         advance: +a.advance,
         timeout: +a.timeout,
         wait: +a.wait,
@@ -2266,7 +2333,7 @@ export function transition(state: State, a: Action): State {
       t.blockedReason = constraints(s, t, r!).join("；") || undefined;
       p.lastGenerated = key;
       p.generationError = undefined;
-      detail = `计划自动生成，绑定 ${r!.id}；${new Date(slot).toLocaleString("zh-CN")} 起执行`;
+      detail = `计划自动生成，绑定 ${r!.id}；${fmtDate(new Date(slot))} 起执行`;
       break;
     }
     case "STOP_PLAN": {
@@ -2633,7 +2700,7 @@ export function transition(state: State, a: Action): State {
           triggerReason: evaluation.valid ? undefined : evaluation.reason,
           source: "机器人自主采集 / AI v1.2（模拟）",
           confidence: 0.97,
-          time: new Date().toLocaleString("zh-CN"),
+          time: now(),
         };
         s.results.unshift(res);
         t.done.push(p.id);
@@ -2662,7 +2729,7 @@ export function transition(state: State, a: Action): State {
             const level = abnormal ? rule?.level || "二级" : "三级";
             const existing = s.alarms.find(
               (x) =>
-                x.pointId === p.id && !["已关闭", "已恢复"].includes(x.state),
+                x.pointId === p.id && x.state !== "已关闭",
             );
             if (existing)
               existing.notes.push(
@@ -2671,13 +2738,18 @@ export function transition(state: State, a: Action): State {
             else
               s.alarms.unshift({
                 id: id("AL"),
-                // 由业务结果触发的告警恒为"业务"分类（机器人本体异常由机器人事件生成）
-                category: "业务",
+                /**
+                 * 识别失败（照片模糊 / 算法调用失败 / 传感器无数据）是采集链路问题，归
+                 * 「机器人预警 › 识别故障」——不进台账告警配置，但保留任务 / 点位 / 结果用于追溯；
+                 * 风险信息异常才是业务预警（台账 × 告警项）。
+                 */
+                category: abnormal ? "业务" : "机器人",
+                alarmClass: abnormal ? undefined : "识别故障",
+                robotId: abnormal ? undefined : t.robotId,
                 resultId: res.id,
                 taskId: t.id,
                 pointId: p.id,
-                name:
-                  p.name + (abnormal ? " 风险异常" : " AI 识别异常"),
+                name: p.name + (abnormal ? " 风险异常" : " 识别故障"),
                 level,
                 state: "待确认",
                 notes: [
@@ -2836,7 +2908,7 @@ export function transition(state: State, a: Action): State {
             triggerReason: "人工遥控采集：图像待回传识别，暂无有效读数",
             source: "人工遥控采集 / " + x.id,
             confidence: 0,
-            time: new Date().toLocaleString("zh-CN"),
+            time: now(),
           });
       }
       detail = `${x.id} #${x.seq} ${a.command} · 模拟执行回执已确认${a.command === "采集照片" ? "；人工证据已留档，不覆盖自主结果" : ""}`;
@@ -2876,10 +2948,12 @@ export function transition(state: State, a: Action): State {
       );
       must(typeof a.falsePositive === "boolean", "请判定是否误报");
       must(a.reason, "请填写处理说明 / 依据");
-      al.handledAt = new Date().toLocaleString("zh-CN");
+      al.handledAt = now();
       al.handleResult = a.result;
       al.handleNote = a.reason;
       al.falsePositive = a.falsePositive;
+      // 三态：忽略 / 误报直接结案；受理转「处理中」，由 ALARM_CLOSE 标记结束
+      al.state = a.result === "忽略" ? "已关闭" : "处理中";
       al.notes.push(`处理：${a.result}${a.falsePositive ? "（误报）" : ""}`);
       al.notes.push("处理说明：" + a.reason);
       // 判定为误报时同步写入反馈队列：供"误报漏报分析 / 模型迭代"消费，
@@ -2903,6 +2977,19 @@ export function transition(state: State, a: Action): State {
         });
       }
       detail = `告警 ${al.id} 已处理为「${a.result}」`;
+      break;
+    }
+    /**
+     * 标记结束（ALM-06）：受理后现场处置完成，由「处理中」转「已关闭」。
+     * 只改状态，不改处理结果与处理说明（结论一次提交后锁定）。
+     */
+    case "ALARM_CLOSE": {
+      const al = s.alarms.find((x) => x.id === a.id)!;
+      must(al, "告警不存在");
+      must(al.state === "处理中", "仅「处理中」的告警可标记结束");
+      al.state = "已关闭";
+      al.notes.push(`标记结束：${now()}`);
+      detail = `告警 ${al.id} 已标记结束`;
       break;
     }
     case "EXTRA_SAVE": {
@@ -3076,6 +3163,63 @@ export function transition(state: State, a: Action): State {
       detail = `新增机器人 ${robot.name}（${robot.deviceType}${robot.region ? " · " + robot.region : " · 待归属区域"}）已接入台账`;
       break;
     }
+    // ── 机器人管理：编辑机型与硬件主数据（SN / 机型 / 区域 / 固件 / 约束），并刷新更新时间 ──
+    case "UPDATE_ROBOT": {
+      const r = s.robots.find((x) => x.id === a.id);
+      must(r, "机器人不存在");
+      const sn = String(a.sn ?? r.sn ?? "").trim();
+      must(
+        !sn || !s.robots.some((x) => x.id !== r.id && x.sn === sn),
+        `机器人编号（SN）${sn} 已存在`,
+      );
+      const region = String(a.region ?? r.region).trim();
+      must(
+        !region || areaOptions(s).includes(region),
+        `区域「${region}」不在区域配置中`,
+      );
+      const deviceType = (a.deviceType || r.deviceType) as Robot["deviceType"];
+      const constraints: Robot["constraints"] = {
+        minBattery: Number.isFinite(a.minBattery)
+          ? Number(a.minBattery)
+          : r.constraints.minBattery,
+        needChargingPlan:
+          a.needChargingPlan ?? r.constraints.needChargingPlan,
+      };
+      if (deviceType === "四轮车")
+        constraints.maxSpeed = Number.isFinite(a.maxSpeed)
+          ? Number(a.maxSpeed)
+          : r.constraints.maxSpeed;
+      if (deviceType === "挂轨" && a.railSectionId)
+        constraints.railSectionId = String(a.railSectionId);
+      Object.assign(r, {
+        sn: sn || undefined,
+        deviceType,
+        region,
+        firmware: String(a.firmware ?? r.firmware).trim(),
+        constraints,
+        updatedAt: now(),
+      });
+      object = r.id;
+      detail = `已更新机器人 ${r.name} 的机型与硬件`;
+      break;
+    }
+    // ── 机器人管理：启用 / 停用切换（停用后不参与调度派单），刷新更新时间 ──
+    case "TOGGLE_ROBOT": {
+      const r = s.robots.find((x) => x.id === a.id);
+      must(r, "机器人不存在");
+      // 关联状态：执行任务中（执行中 / 暂停 / 返航中）不允许停用，避免半路中断作业
+      const turningOff = r.enabled !== false;
+      if (turningOff)
+        must(
+          !["执行中", "暂停", "返航中"].includes(r.state),
+          `机器人 ${r.id} 正在${r.state}，任务未结束不能停用`,
+        );
+      r.enabled = !turningOff;
+      r.updatedAt = now();
+      object = r.id;
+      detail = `机器人 ${r.id} 已${r.enabled === false ? "停用" : "启用"}`;
+      break;
+    }
     // ── 后台管理：工厂已有基础数据（区域 / 设备 / 仪表）增删改 ──
     case "ADD_AREA": {
       const name = String(a.name || "").trim();
@@ -3092,6 +3236,8 @@ export function transition(state: State, a: Action): State {
       must(!areas.some((x) => x.name === name), `区域「${name}」已存在`);
       areas.push({
         id: id("AREA"),
+        // 编码由系统顺延分配，前端只做只读展示
+        code: nextAreaCode(areas),
         name,
         ...(parentId ? { parentId } : {}),
         ...(String(a.owner || "").trim() ? { owner: String(a.owner).trim() } : {}),
@@ -3099,6 +3245,7 @@ export function transition(state: State, a: Action): State {
           ? { department: String(a.department).trim() }
           : {}),
         ...(polygon ? { polygon } : {}),
+        updatedAt: now(),
       });
       object = name;
       detail = `已新增区域「${name}」`;
@@ -3132,6 +3279,7 @@ export function transition(state: State, a: Action): State {
       hit!.department = String(a.department || "").trim() || undefined;
       // 范围轮廓跟随表单更新：未闭合即视为清掉范围，只保留名称
       hit!.polygon = areaPolygon(a) || undefined;
+      hit!.updatedAt = now();
       // 设备按安装位置前缀归属：区域改名后同步前缀，避免设备掉落「未分区」
       (s.devices || []).forEach((d) => {
         if (d.region === old) d.region = name;
@@ -3200,7 +3348,7 @@ export function transition(state: State, a: Action): State {
         items: [],
         state: "在用",
         // 建档时间 = 「更新时间」的起点（台账列表展示，编辑 / 导入 / 检测项变动时刷新）
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
       });
       object = did;
       detail = `已新增设备「${name}」`;
@@ -3231,7 +3379,7 @@ export function transition(state: State, a: Action): State {
       hit!.region = String(a.region || "").trim() || undefined;
       hit!.locationDesc =
         String(a.locationDesc ?? "").trim() || hit!.locationDesc;
-      hit!.updatedAt = new Date().toLocaleString("zh-CN");
+      hit!.updatedAt = now();
       object = hit!.id;
       detail = `已更新设备「${name}」`;
       break;
@@ -3348,6 +3496,16 @@ export function transition(state: State, a: Action): State {
       detail = `上装「${hit!.name}」已${hit!.state === "停用" ? "停用" : "启用"}`;
       break;
     }
+    // 机器人能力：参数级启停（停用后不再作为巡检项「能力项」的可选项，已配置的巡检项不受影响）
+    case "SET_ABILITY_STATE": {
+      const kinds = (s.robotAbilities ??= []);
+      const hit = kinds.flatMap((k) => k.params).find((p) => p.id === a.id);
+      must(hit, "未找到该能力参数");
+      hit!.state = a.state === "停用" ? "停用" : "启用";
+      object = hit!.id;
+      detail = `能力参数「${hit!.name}」已${hit!.state === "停用" ? "停用" : "启用"}`;
+      break;
+    }
     // ── 算法（后台管理 › 算法）：厂区**不手写算法**，只从平台算法库勾选启用 ──
     case "ENABLE_ALGOS": {
       const ids: string[] = Array.isArray(a.ids) ? a.ids.map(String) : [];
@@ -3390,7 +3548,7 @@ export function transition(state: State, a: Action): State {
         id: aid,
         name,
         ...algoFields(a),
-        updatedAt: new Date().toLocaleString("zh-CN"),
+        updatedAt: now(),
         state: "启用",
       });
       object = aid;
@@ -3408,7 +3566,7 @@ export function transition(state: State, a: Action): State {
         `算法名称「${name}」已存在`,
       );
       Object.assign(hit!, { name, ...algoFields(a) });
-      hit!.updatedAt = new Date().toLocaleString("zh-CN");
+      hit!.updatedAt = now();
       object = hit!.id;
       detail = `已更新算法「${name}」`;
       break;
@@ -3436,7 +3594,7 @@ export function transition(state: State, a: Action): State {
   }
   s.logs.unshift({
     id: id("LOG"),
-    time: new Date().toLocaleTimeString("zh-CN"),
+    time: now(),
     action: a.type,
     object,
     detail: detail || "张工 · 操作成功（Mock）",

@@ -6,7 +6,7 @@
  *              原型阶段以此代替真实后端，形状与真实接口一致，日后可整体替换。
  * @interaction 被 data/engine.ts 的新 action（GEN_CANDIDATE_BY_COORD / BY_AI / TRIAL_RECEIPT）消费
  */
-import type { PTZ, TrialReceipt } from "./types";
+import { now, type PTZ, type TrialReceipt } from "./types";
 
 /** 位姿误差阈值（cm）：超过则标记「待校准」（与阶段⑤⑧ 一致） */
 export const POSE_ERROR_THRESHOLD_CM = 10;
@@ -89,7 +89,7 @@ export function mockTrialReceipt(pointId: string, robotId: string): TrialReceipt
     angleOk: hash01("angle-" + key) > 0.2,
     distance: Math.round((1 + hash01("dist-" + key) * 9) * 10) / 10,
     poseErrorCm: Math.round(hash01("pose-" + key) * 30),
-    at: new Date().toLocaleString("zh-CN"),
+    at: now(),
   };
 }
 

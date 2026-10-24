@@ -3,6 +3,7 @@ import { FieldControls } from "../components/FieldControls";
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { mapVer } from "../data/versionLabel";
+import { fmtDateTime, fmtDate } from "../data/types";
 import { go } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note, Field } from "../components/UI";
 import { MapCanvas } from "../components/MapCanvas";
@@ -58,7 +59,7 @@ export function ControlConsole({ robotId }: { robotId: string }) {
           <Panel title="本次接管 · 采集与处理" extra={<Badge>{outcome}</Badge>}>
             {session ? <><div className="manual-readout"><span>采集证据 <b>{evidence.length}</b> 条</span><span>会话 {session.id}</span></div>
               {evidence.length ? <Table heads={["采集项", "处理状态", "操作"]} rows={evidence.slice(0,3).map(result => [result.item, <Badge>{result.status}</Badge>, <Btn onClick={() => go("result-detail", result.id)}>查看结果</Btn>])}/> : <p className="muted">本次尚未采集证据。人工采集结果独立留档，不覆盖自主结果。</p>}
-              {latest?.resumedAt && !x && <p>原任务已于 {new Date(latest.resumedAt).toLocaleTimeString("zh-CN")} 恢复自主执行。</p>}
+              {latest?.resumedAt && !x && <p>原任务已于 {fmtDateTime(latest.resumedAt)} 恢复自主执行。</p>}
             </> : <p className="muted">接管后，这里展示本次采集证据和处理状态。</p>}
             <details className="manual-history"><summary>查看完整接管记录、证据与操作回执</summary><TakeoverOutcome robotId={r.id}/></details>
           </Panel>
@@ -136,7 +137,7 @@ export function ControlConsole({ robotId }: { robotId: string }) {
           )}
           {x?.state === "已接管" && (
             <>
-              <p>有效至 {new Date(x.expires).toLocaleTimeString()}</p>
+              <p>有效至 {fmtDate(new Date(x.expires)).slice(11)}</p>
               <div className="remote-pad">
                 {["前进", "停止", "后退", "左移", "右移"].map((cmd) => (
                   <Btn

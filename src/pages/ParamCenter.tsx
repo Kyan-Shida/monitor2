@@ -6,9 +6,20 @@
  * @interaction 路由 `settings`；引擎 action：SAVE_SYSTEM_RULES / EXTRA_SAVE / EXTRA_TOGGLE
  */
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useStore } from "../data/store";
 import { usePageSize, useViewState } from "../data/navigation";
-import { Badge, Btn, Empty, Field, Modal, Panel, Table } from "../components/UI";
+import {
+  Badge,
+  Btn,
+  Confirm,
+  Empty,
+  Field,
+  Modal,
+  Panel,
+  Switch,
+  Table,
+} from "../components/UI";
 import { Pager } from "../components/Business";
 import { Segmented } from "../components/Segmented";
 import { systemRulesOf } from "../data/alarmRules";
@@ -111,7 +122,26 @@ function AlarmParams() {
 }
 
 /* ── Tab2：字典与业务参数 ── */
-const TYPES = ["全部类型", "业务参数", "数据字典"] as const;
+/** 类型筛选：按钮组替代下拉，选中态一眼可见 */
+const TYPE_FILTERS: { key: string; label: string }[] = [
+  { key: "全部类型", label: "全部" },
+  { key: "业务参数", label: "业务参数" },
+  { key: "数据字典", label: "数据字典" },
+];
+
+/**
+ * 编号自动生成：随类型取前缀，同前缀最大号 +1
+ * @description 业务参数 PARxx、数据字典 DICxx；编号由系统给出，用户只读
+ */
+function nextCode(items: Extra[], type: Extra["type"]) {
+  const prefix = type === "数据字典" ? "DIC" : "PAR";
+  const max = items.reduce((m, x) => {
+    if (!x.id.startsWith(prefix)) return m;
+    const n = Number(x.id.slice(prefix.length));
+    return Number.isFinite(n) ? Math.max(m, n) : m;
+  }, 0);
+  return prefix + String(max + 1).padStart(2, "0");
+}
 
 function DictParams() {
   const { s, act } = useStore();
@@ -146,17 +176,14 @@ function DictParams() {
                 PAGE(1);
               }}
             />
-            <select
+            <Segmented
+              items={TYPE_FILTERS}
               value={type}
-              onChange={(e) => {
-                TYPE(e.target.value);
+              onChange={(k) => {
+                TYPE(k);
                 PAGE(1);
               }}
-            >
-              {TYPES.map((t) => (
-                <option key={t}>{t}</option>
-              ))}
-            </select>
+            />
             <Btn primary onClick={() => E("")}>
               ＋ 新增参数
             </Btn>
@@ -206,6 +233,7 @@ function DictParams() {
       {editId !== null && (
         <ParamDrawer
           item={all.find((x) => x.id === editId)}
+          existing={s.extras}
           onClose={() => E(null)}
         />
       )}
@@ -214,9 +242,17 @@ function DictParams() {
 }
 
 /* ── 参数抽屉：新增 / 编辑 ── */
-function ParamDrawer({ item, onClose }: { item?: Extra; onClose: () => void }) {
+function ParamDrawer({
+  item,
+  existing,
+  onClose,
+}: {
+  item?: Extra;
+  /** 已有参数：新增时用来推算下一个编号 */
+  existing: Extra[];
+  onClose: () => void;
+}) {
   const { act } = useStore();
-  const [code, CODE] = useState(item?.id ?? "");
   const [name, NAME] = useState(item?.name ?? "");
   const [type, TYPE] = useState<Extra["type"]>(item?.type ?? "业务参数");
   const [detail, DETAIL] = useState(
@@ -226,6 +262,10 @@ function ParamDrawer({ item, onClose }: { item?: Extra; onClose: () => void }) {
     item?.values?.length ? item.values : [{ key: "", value: "" }],
   );
   const [status, STATUS] = useState(item?.status ?? "启用");
+  const [ask, ASK] = useState(false);
+
+  /* 编号不让人填：编辑沿用原编号，新增按当前类型自动生成（切类型即跟着变） */
+  const code = item?.id ?? nextCode(existing, type);
 
   const dict = type === "数据字典";
   const ready =
@@ -248,7 +288,9 @@ function ParamDrawer({ item, onClose }: { item?: Extra; onClose: () => void }) {
     if (ok) onClose();
   }
 
-  return (
+  /* 挂 body：应用根 .app 带 transform: scale(整页缩放)，fixed 子元素会以它为基准被二次缩放，
+     抽屉就不贴右边、也不满屏高度了，所以和 Modal 一样走 portal */
+  return createPortal(
     <div className="overlay drawer-overlay" onClick={onClose}>
       <aside
         className="drawer param-drawer"
@@ -271,13 +313,8 @@ function ParamDrawer({ item, onClose }: { item?: Extra; onClose: () => void }) {
         </div>
 
         <div className="drawer-body">
-          <Field label="编号" required>
-            <input
-              value={code}
-              placeholder="例如 PAR03 / DIC02"
-              readOnly={!!item}
-              onChange={(e) => CODE(e.target.value)}
-            />
+          <Field label="编号">
+            <input value={code} readOnly />
           </Field>
           <Field label="名称" required>
             <input value={name} onChange={(e) => NAME(e.target.value)} />
@@ -347,21 +384,40 @@ function ParamDrawer({ item, onClose }: { item?: Extra; onClose: () => void }) {
           )}
 
           <Field label="状态">
-            <select value={status} onChange={(e) => STATUS(e.target.value)}>
-              <option>启用</option>
-              <option>停用</option>
-            </select>
+            <div className="switch-row">
+              <Switch
+                checked={status === "启用"}
+                label="启用状态"
+                onChange={(on) => STATUS(on ? "启用" : "停用")}
+              />
+              {status}
+            </div>
           </Field>
         </div>
 
         <div className="drawer-foot">
           <Btn onClick={onClose}>取消</Btn>
-          <Btn primary disabled={!ready} onClick={submit}>
+          <Btn primary disabled={!ready} onClick={() => ASK(true)}>
             保存
           </Btn>
         </div>
+        {/* 二次确认：挂在 .drawer 内部，点遮罩只关确认框、不连带关抽屉 */}
+        {ask && (
+          <Confirm
+            title={item ? "保存参数" : "新增参数"}
+            message={
+              item
+                ? `「${code} · ${name}」保存后立即生效。`
+                : `将新增参数「${code} · ${name}」并立即生效。`
+            }
+            confirmText="保存"
+            onClose={() => ASK(false)}
+            onConfirm={submit}
+          />
+        )}
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -1,19 +1,23 @@
 /**
  * @file AlarmItems.tsx
  * @description 告警项清单（巡检目标台账「告警设置」与「告警管理 › 告警设置」共用）：
- *              **列表只做展示与删除，参数填写走弹窗**——字段就地编辑会挤成宽表格（旧版 minWidth=1500），
+ *              **列表只做展示与删除，参数填写走抽屉**——字段就地编辑会挤成宽表格（旧版 minWidth=1500），
  *              改成只读行之后每格都是纯文本，宽度用 `fr` 分配，永远等于容器宽、不用左右拉动。
- *              「+ 告警等级配置」→ 弹窗填参数 → 保存；点列表任意一行 → 同一个弹窗编辑该条。
+ *              「+ 告警等级配置」→ 抽屉填参数 → 保存；点列表任意一行 → 同一个抽屉编辑该条。
+ *              走抽屉而非弹窗：填告警项时要对照上方列表已有条目（分类 / 等级 / 阈值口径）。
  *              第一条（主告警项）与台账的判定口径同源（judge / min / max / expected / level / 声光报警）。
  * @interaction data/alarmSettings.ts（upsertAlarmItem / checkAlarmItems）、
  *              pages/BusinessTargets.tsx、pages/AlarmSettings.tsx
  */
 import { useState } from "react";
-import { Btn, Field, Modal } from "./UI";
+import { Btn, Drawer, Field } from "./UI";
 import { ENV_RECOGNIZE_KINDS, checkAlarmItems } from "../data/alarmSettings";
+import { Cascader, type CascaderOption } from "./Cascader";
 import {
   ALARM_ITEM_KINDS,
   ALARM_LEVELS,
+  type AlarmClass,
+  type AlarmClassMain,
   type AlarmItem,
   type AlarmItemKind,
 } from "../data/types";
@@ -31,20 +35,27 @@ const HEADS = [
   "操作",
 ];
 
-/** 一条告警项的列表展示值（与 HEADS 顺序对应） */
-function cellsOf(x: AlarmItem): string[] {
+/**
+ * 一条告警项的列表展示值（与 HEADS 顺序对应）
+ * @param simple 机器人预警：没有阈值判定与触发逻辑，这两列留「—」
+ */
+function cellsOf(x: AlarmItem, simple: boolean): string[] {
   return [
     x.alarmClass || "—",
     x.category,
     x.envKind || "—",
     x.level,
-    x.judge === "数值范围"
-      ? `${x.from ?? "—"} ~ ${x.to ?? "—"}`
-      : x.value || "—",
+    simple
+      ? "—"
+      : x.judge === "数值范围"
+        ? `${x.from ?? "—"} ~ ${x.to ?? "—"}`
+        : x.value || "—",
     x.abnormalName || "—",
-    x.triggerMode === "连续确认"
-      ? `连续确认（${x.consecutive ?? 2} 次）`
-      : "识别即触发",
+    simple
+      ? "—"
+      : x.triggerMode === "连续确认"
+        ? `连续确认（${x.consecutive ?? 2} 次）`
+        : "识别即触发",
     String(x.alarmSeconds ?? 0),
   ];
 }
@@ -59,23 +70,44 @@ function AlarmItemDialog({
   index,
   item,
   alarmClasses,
+  main,
+  simple,
   onClose,
   onSave,
 }: {
   index: number | null;
   item: AlarmItem;
-  alarmClasses: string[];
+  alarmClasses: AlarmClass[];
+  /** 当前告警大类：级联只列该大类下的分类 */
+  main: AlarmClassMain;
+  /** 机器人预警：不配阈值判定与触发逻辑 */
+  simple: boolean;
   onClose: () => void;
   onSave: (item: AlarmItem) => void;
 }) {
   const [d, SETD] = useState<AlarmItem>(item);
   const range = d.judge === "数值范围";
-  /** 复用台账保存时的同一套校验：非法值在弹窗里就拦住，不让它等到落库才报错 */
+  /** 机器人预警 / 识别故障都不是告警项判出来的：不配阈值判定与触发逻辑 */
+  const hideRule = simple || d.alarmClass === "识别故障";
+  /**
+   * 告警分类级联：只列当前大类下的分类（业务预警的告警项不该选到机器人分类，反之亦然）
+   * @description 叶子值 = 分类名，数据里只存分类名
+   */
+  const classOptions: CascaderOption[] = [main]
+    .map((m) => ({
+      value: `m:${m}`,
+      label: m,
+      children: alarmClasses
+        .filter((c) => c.main === m)
+        .map((c) => ({ value: c.name, label: c.name })),
+    }))
+    .filter((g) => g.children.length > 0);
+  /** 复用台账保存时的同一套校验：非法值在抽屉里就拦住，不让它等到落库才报错 */
   const err = checkAlarmItems([d]);
   return (
-    <Modal
+    <Drawer
       title={index === null ? "添加告警项" : `编辑告警项 ${index + 1}`}
-      wide
+      subtitle={d.abnormalName || undefined}
       onClose={onClose}
       footer={
         <>
@@ -88,16 +120,14 @@ function AlarmItemDialog({
       }
     >
       <div className="form-grid ai-form">
+        {/* 告警分类：级联选择（告警大类 › 分类），与巡检目标台账的选择器同款 */}
         <Field label="告警分类" required>
-          <select
+          <Cascader
+            options={classOptions}
             value={d.alarmClass || ""}
-            onChange={(e) => SETD({ ...d, alarmClass: e.target.value })}
-          >
-            <option value="">未指定</option>
-            {alarmClasses.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
+            onChange={(v) => SETD({ ...d, alarmClass: v })}
+            placeholder="请选择告警分类"
+          />
         </Field>
         <Field label="预警类型" required>
           <select
@@ -141,82 +171,87 @@ function AlarmItemDialog({
             onChange={(e) => SETD({ ...d, abnormalName: e.target.value })}
           />
         </Field>
-        <Field label="判断规则" required>
-          <span className="ai-rule">
-            <select
-              aria-label="判断类型"
-              value={d.judge}
-              onChange={(e) => {
-                const judge = e.target.value as AlarmItem["judge"];
-                SETD({
-                  ...d,
-                  judge,
-                  ...(judge === "数值范围"
-                    ? { value: undefined }
-                    : { from: undefined, to: undefined }),
-                });
-              }}
-            >
-              <option>数值范围</option>
-              <option>期望状态</option>
-            </select>
-            {range ? (
-              <>
-                <input
-                  aria-label="起始值"
-                  type="number"
-                  step="any"
-                  value={d.from ?? 0}
-                  onChange={(e) => SETD({ ...d, from: +e.target.value })}
-                />
-                <i>~</i>
-                <input
-                  aria-label="结束值"
-                  type="number"
-                  step="any"
-                  value={d.to ?? 0}
-                  onChange={(e) => SETD({ ...d, to: +e.target.value })}
-                />
-              </>
-            ) : (
-              <input
-                aria-label="判断值"
-                value={d.value || ""}
-                placeholder="例如 开启"
-                onChange={(e) => SETD({ ...d, value: e.target.value })}
-              />
-            )}
-          </span>
-        </Field>
-        <Field label="触发逻辑" required>
-          <span className="ai-rule">
-            <select
-              aria-label="触发逻辑"
-              value={d.triggerMode || "识别即触发"}
-              onChange={(e) =>
-                SETD({
-                  ...d,
-                  triggerMode: e.target.value as AlarmItem["triggerMode"],
-                })
-              }
-            >
-              <option>识别即触发</option>
-              <option>连续确认</option>
-            </select>
-            {d.triggerMode === "连续确认" && (
-              <input
-                aria-label="连续确认次数"
-                type="number"
-                min={2}
-                placeholder="次数"
-                value={d.consecutive ?? 2}
-                onChange={(e) =>
-                  SETD({ ...d, consecutive: Math.max(2, +e.target.value) })
-                }
-              />
-            )}
-          </span>
-        </Field>
+        {/* 机器人预警 / 识别故障没有阈值判定与触发逻辑：这两项不出现（其余业务告警项保持原样） */}
+        {!hideRule && (
+          <>
+            <Field label="判断规则" required>
+              <span className="ai-rule">
+                <select
+                  aria-label="判断类型"
+                  value={d.judge}
+                  onChange={(e) => {
+                    const judge = e.target.value as AlarmItem["judge"];
+                    SETD({
+                      ...d,
+                      judge,
+                      ...(judge === "数值范围"
+                        ? { value: undefined }
+                        : { from: undefined, to: undefined }),
+                    });
+                  }}
+                >
+                  <option>数值范围</option>
+                  <option>期望状态</option>
+                </select>
+                {range ? (
+                  <>
+                    <input
+                      aria-label="起始值"
+                      type="number"
+                      step="any"
+                      value={d.from ?? 0}
+                      onChange={(e) => SETD({ ...d, from: +e.target.value })}
+                    />
+                    <i>~</i>
+                    <input
+                      aria-label="结束值"
+                      type="number"
+                      step="any"
+                      value={d.to ?? 0}
+                      onChange={(e) => SETD({ ...d, to: +e.target.value })}
+                    />
+                  </>
+                ) : (
+                  <input
+                    aria-label="判断值"
+                    value={d.value || ""}
+                    placeholder="例如 开启"
+                    onChange={(e) => SETD({ ...d, value: e.target.value })}
+                  />
+                )}
+              </span>
+            </Field>
+            <Field label="触发逻辑" required>
+              <span className="ai-rule">
+                <select
+                  aria-label="触发逻辑"
+                  value={d.triggerMode || "识别即触发"}
+                  onChange={(e) =>
+                    SETD({
+                      ...d,
+                      triggerMode: e.target.value as AlarmItem["triggerMode"],
+                    })
+                  }
+                >
+                  <option>识别即触发</option>
+                  <option>连续确认</option>
+                </select>
+                {d.triggerMode === "连续确认" && (
+                  <input
+                    aria-label="连续确认次数"
+                    type="number"
+                    min={2}
+                    placeholder="次数"
+                    value={d.consecutive ?? 2}
+                    onChange={(e) =>
+                      SETD({ ...d, consecutive: Math.max(2, +e.target.value) })
+                    }
+                  />
+                )}
+              </span>
+            </Field>
+          </>
+        )}
         <Field label="声光报警（秒）">
           <input
             type="number"
@@ -228,7 +263,7 @@ function AlarmItemDialog({
           />
         </Field>
       </div>
-    </Modal>
+    </Drawer>
   );
 }
 
@@ -246,13 +281,17 @@ export function AlarmItems({
   makeItem,
   onSave,
   onRemove,
+  main = "业务预警",
 }: {
   items: AlarmItem[];
-  alarmClasses: string[];
+  alarmClasses: AlarmClass[];
   makeItem: () => AlarmItem;
   onSave: (index: number | null, item: AlarmItem) => void;
   onRemove: (index: number) => void;
+  /** 告警大类：机器人预警不配阈值判定与触发逻辑 */
+  main?: AlarmClassMain;
 }) {
+  const simple = main === "机器人预警";
   /** 正在编辑的告警项：index = null 表示新增 */
   const [draft, SETDRAFT] = useState<{
     index: number | null;
@@ -262,13 +301,19 @@ export function AlarmItems({
    * 告警分类候选：已引用的分类被停用后仍要能回显，
    * 否则打开弹窗下拉对不上值、一保存就把原分类冲掉
    */
-  const classes = (() => {
-    const names = [...alarmClasses];
+  const classes: AlarmClass[] = (() => {
+    const list = [...alarmClasses];
     items.forEach((x) => {
-      if (x.alarmClass && !names.includes(x.alarmClass))
-        names.push(x.alarmClass);
+      if (x.alarmClass && !list.some((c) => c.name === x.alarmClass))
+        // 已引用但已停用 / 删除的分类也要能回显，大类未知时按业务预警兜底
+        list.push({
+          id: "",
+          name: x.alarmClass,
+          main: "业务预警",
+          enabled: true,
+        });
     });
-    return names;
+    return list;
   })();
   /** 打开新增弹窗：用台账派生的默认值打底 */
   function openNew() {
@@ -294,7 +339,7 @@ export function AlarmItems({
             key={x.id}
             onClick={() => SETDRAFT({ index: i, item: { ...x } })}
           >
-            {cellsOf(x).map((c, k) => (
+            {cellsOf(x, simple || x.alarmClass === "识别故障").map((c, k) => (
               <span key={k} title={c}>
                 {c}
               </span>
@@ -313,6 +358,8 @@ export function AlarmItems({
           index={draft.index}
           item={draft.item}
           alarmClasses={classes}
+          main={main}
+          simple={simple}
           onClose={() => SETDRAFT(null)}
           onSave={(it) => {
             onSave(draft.index, it);

@@ -194,9 +194,8 @@ test("template → plan → immutable task → schedule → autonomous results",
   assert.equal(JSON.stringify(s.tasks[0].items), snap);
   assert.equal(s.results.filter((r) => r.taskId === id).length, 3);
 });
-test("alarm handling records result and false positive without touching state", () => {
+test("alarm handling records result and moves state 待确认 → 处理中", () => {
   let s = complete(seed(), "T009");
-  const before = s.alarms.find((a) => a.id === "AL001")!.state;
   s = run(s, {
     type: "ALARM_LABEL",
     id: "AL001",
@@ -208,8 +207,25 @@ test("alarm handling records result and false positive without touching state", 
   assert.equal(al.handleResult, "受理");
   assert.equal(al.falsePositive, false);
   assert.equal(!!al.handledAt, true);
-  assert.equal(al.state, before);
+  assert.equal(al.state, "处理中");
   assert.equal(al.notes.some((x) => x.includes("处理说明")), true);
+  // 标记结束：处理中 → 已关闭，处理结果不变
+  const closed = run(s, { type: "ALARM_CLOSE", id: "AL001" });
+  const al2 = closed.alarms.find((a) => a.id === "AL001")!;
+  assert.equal(al2.state, "已关闭");
+  assert.equal(al2.handleResult, "受理");
+  // 忽略直接结案（不经处理中）
+  const ignored = run(complete(seed(), "T009"), {
+    type: "ALARM_LABEL",
+    id: "AL001",
+    reason: "现场核实为误报",
+    result: "忽略",
+    falsePositive: true,
+  });
+  assert.equal(
+    ignored.alarms.find((a) => a.id === "AL001")!.state,
+    "已关闭",
+  );
   // 已处理告警不可二次编辑：重复处理会污染报警准确率口径
   assert.throws(() =>
     run(s, {

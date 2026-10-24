@@ -65,7 +65,7 @@ test("monthly and hourly slots use business timezone, missing binding does not s
   );
   // 日号对不上的那天不展开
   assert.deepEqual(planOccurrences({ ...p, start: "2026-09-22" }, at("17:00")), []);
-  // 每小时：以执行时间为起点，当日内每小时一次（10:00 → 23:00 共 14 次）
+  // 每小时：当日整点每小时一次（00:00 ~ 23:00 共 24 次），与执行时间无关
   const hourly = {
     ...s.plans[0],
     cycle: "每小时" as const,
@@ -73,7 +73,7 @@ test("monthly and hourly slots use business timezone, missing binding does not s
     end: "2026-09-28",
     time: "10:00",
   };
-  assert.equal(planOccurrences(hourly, at("10:00")).length, 14);
+  assert.equal(planOccurrences(hourly, at("10:00")).length, 24);
 });
 test("one-off plan fires once on its date; never repeats, never backfills", () => {
   const on = (time: string, date = "2026-10-16") =>

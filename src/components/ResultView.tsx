@@ -18,15 +18,17 @@ import {
   isAbnormal,
   judgeOf,
 } from "../data/selectors";
+import { captureKindsOfPoint } from "../data/deviceMaster";
+import { mainOfAlarm } from "../data/alarmSettings";
 import { Badge, Btn, Modal, Note, Panel, Table } from "./UI";
-import { ObjectLink } from "./Business";
+import { EventTimeline, ObjectLink } from "./Business";
 import { analyzedPhoto, costOf, rawPhoto } from "../data/evidence";
 import type { Alarm, Result, Task } from "../data/types";
 
 export function ResultView({ task }: { task: Task }) {
   const { s } = useStore();
-  /** 分页：检测项明细 / 执行记录 */
-  const [tab, SETTAB] = useState<"检测项" | "执行记录">("检测项");
+  /** 分页：检测项明细 / 执行事件（执行事件与「执行回溯」同源，统一在结果详情里看） */
+  const [tab, SETTAB] = useState<"检测项" | "执行事件">("检测项");
   /** 导出为演示占位提示 */
   const [exportKind, SETEXPORT] = useState<"EXCEL" | "PDF" | null>(null);
   /** RES-03：巡检点分组折叠状态（默认全部展开） */
@@ -43,6 +45,16 @@ export function ResultView({ task }: { task: Task }) {
   const list = s.results.filter((r) => r.taskId === task.id);
   const pointOf = (pid: string) => s.points.find((p) => p.id === pid);
   /**
+   * 非图像采集（气体 / 声音）：只有数值或波形，没有画面可展示
+   * @param r 检测结果
+   * @returns true = 该检测项没有图像证据
+   */
+  const noShot = (r: Result) => {
+    const p = pointOf(r.pointId);
+    if (!p) return false;
+    return captureKindsOfPoint(s, p).every((k) => k === "气体" || k === "声音");
+  };
+  /**
    * 检测项对应的告警事件：异常即告警，按结果 ID 精确匹配（不做"按点位猜告警"的模糊回退）
    * @param r 检测结果
    * @returns 关联告警；正常检测项返回 undefined
@@ -54,10 +66,6 @@ export function ResultView({ task }: { task: Task }) {
   const alarmPoints = new Set(alarms.map((a) => a!.pointId)).size;
   /** 识别结果 = 机器读取到的数据；风险信息 = 正常 / 异常（原因），两者分列展示 */
   const alarmOfRow = (r: Result) => (hasAlarm(r) ? alarmOf(r) : undefined);
-  // 展示已有任务事件，不按结果行数生成预置位或控制回执。
-  const camRows = s.logs.filter(log => log.object === task.id).map(log => ({
-    time: log.time, point: task.id, action: `${log.action} · ${log.detail}`,
-  }));
   /**
    * RES-03：将检测结果按「巡检点」分组，形成 任务 → 巡检点（可折叠）→ 巡检项 三级层级；
    * 有告警的巡检点优先置顶，便于一眼看出哪个巡检点有问题。
@@ -94,8 +102,25 @@ export function ResultView({ task }: { task: Task }) {
 
   return (
     <div className="rd">
-      {/* RES：原底部动作栏上移 —— 顶部操作条（说明在左 / 任务回溯·导出在右）；返回仍用页面顶部返回 */}
-      <div className="rd-top">
+      {/* 概要头：任务名 + 执行结果 + 关键元信息一行；操作按钮靠右，不再单独占一行 */}
+      <div className="rv-head">
+        <div className="rv-head-main">
+          <h3 className="rv-head-title">
+            {task.name}
+            <Badge>{task.state}</Badge>
+          </h3>
+          <div className="rv-head-meta">
+            <span>
+              任务ID<b>{task.id}</b>
+            </span>
+            <span>
+              机器人<b>{robot ? `${robot.name}（${robot.id}）` : "—"}</b>
+            </span>
+            <span>
+              地图<b>{map?.name || task.mapId}</b>
+            </span>
+          </div>
+        </div>
         <div className="rd-actions">
           <Btn
             onClick={() =>
@@ -113,30 +138,8 @@ export function ResultView({ task }: { task: Task }) {
         </div>
       </div>
       <div style={{gridColumn: "1 / -1"}}><TakeoverOutcome taskId={task.id} /></div>
-      {/* 顶部：任务概要（编号与名称并列，便于与列表 / 其它系统对账） */}
-      <div className="rd-grid">
-        <span>
-          任务ID
-          <b>{task.id}</b>
-        </span>
-        <span>
-          任务名称
-          <b>{task.name}</b>
-        </span>
-        <span>
-          机器人
-          <b>{robot ? `${robot.name}（${robot.id}）` : "—"}</b>
-        </span>
-        <span>
-          地图
-          <b>{map?.name || task.mapId}</b>
-        </span>
-        <span>
-          执行结果
-          <b>
-            <Badge>{task.state}</Badge>
-          </b>
-        </span>
+      {/* 指标条：巡检点 / 巡检项 / 起止时间等分一行；告警数就地标红，避免最后一行只剩一格留白 */}
+      <div className="rv-metrics">
         <span>
           巡检点
           <b className={alarmPoints ? "rd-bad" : undefined}>
@@ -157,19 +160,23 @@ export function ResultView({ task }: { task: Task }) {
           结束时间
           <b>{fmtTime(task.finishedAt)}</b>
         </span>
+        {/* 终止原因只在异常任务出现：单独占满一行，不挤占上面的等分格 */}
         {task.failure && (
-          <span>
-            终止原因
-            <b>{task.failure}</b>
+          <span className="rv-metric-wide">
+            终止原因<b className="rd-bad">{task.failure}</b>
           </span>
         )}
       </div>
-      <h4 className="rd-h">巡检结果明细（任务 → 巡检点 → 巡检项）</h4>
+      <h4 className="rd-h">
+        {tab === "检测项"
+          ? "巡检结果明细（任务 → 巡检点 → 巡检项）"
+          : "执行事件（按发生时间倒序）"}
+      </h4>
       <div className="rv-tabs">
         {(
           [
             ["检测项", `检测项明细（${list.length}）`],
-            ["执行记录", "执行记录"],
+            ["执行事件", "执行事件"],
           ] as const
         ).map(([k, label]) => (
           <button
@@ -214,6 +221,7 @@ export function ResultView({ task }: { task: Task }) {
                             "识别耗时",
                             "AI 状态",
                             "风险信息",
+                            "触发告警大类",
                             "关联告警",
                             "采集时间",
                           ].map((h) => (
@@ -229,22 +237,31 @@ export function ResultView({ task }: { task: Task }) {
                             <tr key={r.id}>
                               <td>{r.item}</td>
                               <td>
-                                <img
-                                  className="rd-img"
-                                  src={rawPhoto(name)}
-                                  alt={`${name} 原始采集图像`}
-                                />
+                                {noShot(r) ? (
+                                  <span className="muted">无法展示</span>
+                                ) : (
+                                  <img
+                                    className="rd-img"
+                                    src={rawPhoto(name)}
+                                    alt={`${name} 原始采集图像`}
+                                  />
+                                )}
                               </td>
                               <td>
-                                <img
-                                  className="rd-img"
-                                  src={analyzedPhoto(
-                                    name,
-                                    `${r.final} ${r.unit}`.trim(),
-                                    r.abnormal,
-                                  )}
-                                  alt={`${name} 识别分析后图像`}
-                                />
+                                {/* 识别失败没有识别结论，也就没有分析后图像 */}
+                                {noShot(r) || r.aiAbnormal ? (
+                                  <span className="muted">无法展示</span>
+                                ) : (
+                                  <img
+                                    className="rd-img"
+                                    src={analyzedPhoto(
+                                      name,
+                                      `${r.final} ${r.unit}`.trim(),
+                                      r.abnormal,
+                                    )}
+                                    alt={`${name} 识别分析后图像`}
+                                  />
+                                )}
                               </td>
                               {/* 识别结果 = 机器读取到的数据（不做判定表述） */}
                               <td className="rd-result">{readingOf(r)}</td>
@@ -267,6 +284,17 @@ export function ResultView({ task }: { task: Task }) {
                                 >
                                   {riskReasonOf(r)}
                                 </span>
+                              </td>
+                              {/* 触发告警大类：该检测项触发的告警归业务预警还是机器人预警（无告警则为空） */}
+                              <td>
+                                {(() => {
+                                  const al = alarmOfRow(r);
+                                  return al ? (
+                                    mainOfAlarm(al.category)
+                                  ) : (
+                                    <span className="muted">无</span>
+                                  );
+                                })()}
                               </td>
                               <td>
                                 {/* 异常即告警：只有 AI 状态异常 / 风险信息异常的检测项才有告警 */}
@@ -293,32 +321,10 @@ export function ResultView({ task }: { task: Task }) {
             ))}
           </div>
         )
-      ) : tab === "执行记录" ? (
-        <div className="table-scroll">
-          <table className="rd-table">
-            <thead>
-              <tr>
-                {["时间", "关联任务", "执行记录", "来源"].map((h) => (
-                  <th key={h}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {!camRows.length && <tr><td colSpan={4}>暂无留存的执行事件，不补造动作记录。</td></tr>}
-              {camRows.map((c, i) => (
-                <tr key={i}>
-                  <td className="rd-time">{c.time}</td>
-                  <td>{c.point}</td>
-                  <td>{c.action}</td>
-                  <td>
-                    <span className="rd-ai">任务事件日志</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
+      ) : (
+        /* 执行事件：与「执行回溯」同源同一组件，统一在结果详情里回看，不另造一份日志表 */
+        <EventTimeline taskId={task.id} />
+      )}
 
       {exportKind && (
         <Modal title={`导出为 ${exportKind}`} onClose={() => SETEXPORT(null)}>

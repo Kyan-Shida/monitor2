@@ -67,6 +67,8 @@ export function pushStaffOfAlarm(s: State, a: Alarm): AlarmPushStaff[] {
   const scope = scopeOfAlarm(s, a);
   return (s.alarmPushStaff || []).filter(
     (p) =>
+      // 停用（enabled === false）的人员直接跳过；缺省视为启用
+      p.enabled !== false &&
       (!p.levels.length || p.levels.includes(a.level)) &&
       hits(p.areas, scope.area) &&
       hits(p.devices, scope.device),

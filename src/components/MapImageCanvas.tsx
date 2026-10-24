@@ -53,6 +53,7 @@ export function MapImageCanvas({
   showIds = false,
   showLabels = false,
   height = 440,
+  fill = false,
 }: {
   image?: string;
   markers?: ImageMarker[];
@@ -90,6 +91,12 @@ export function MapImageCanvas({
   showIds?: boolean;
   showLabels?: boolean;
   height?: number;
+  /**
+   * 撑满父容器高度
+   * @description 整页编辑（如区域内置页）用：画布高度由父级布局决定，
+   *              窗口变高时地图跟着长，而不是永远 430px、下面留一大片空白
+   */
+  fill?: boolean;
 }) {
   const box = useRef<HTMLDivElement>(null);
   /** 底图原始像素尺寸 */
@@ -108,9 +115,12 @@ export function MapImageCanvas({
     return () => ro.disconnect();
   }, [image, height]);
 
+  /** 固定高度 / 撑满父容器二选一 */
+  const boxStyle = fill ? { height: "100%" } : { height };
+
   if (!image) {
     return (
-      <div className="map-image empty" style={{ height }}>
+      <div className="map-image empty" style={boxStyle}>
         <span>尚未上传底图</span>
         <small>请先上传一张巡检地图图片，上传后即可在图上标注点位</small>
       </div>
@@ -126,7 +136,7 @@ export function MapImageCanvas({
   };
 
   return (
-    <div className="map-image" style={{ height }} ref={box}>
+    <div className="map-image" style={boxStyle} ref={box}>
       <div
         className={"map-plate" + (onAdd || onBlank ? " editable" : "")}
         style={plate}

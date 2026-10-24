@@ -34,6 +34,7 @@ export const logNames: Record<string, string> = {
   CONTROL_EXIT: "退出接管核对",
   CONTROL_RELEASE: "控制权释放",
   ALARM_LABEL: "告警处理",
+  ALARM_CLOSE: "标记结束",
   TASK_FINISHED: "机器人结束回报",
   QUICK_DISPATCH: "临时任务快速下发",
   EMERGENCY_STOP: "紧急停止",
@@ -340,13 +341,13 @@ export const thresholdOf = (r?: Result) => {
 };
 /**
  * 识别结果文案：机器读取到的原始数据（不做判定表述，判定归「风险信息」）
+ * @description 识别失败（照片模糊 / 算法调用失败 / 传感器无数据）没有有效读数可展示，
+ *              统一输出「无法展示」；失败原因在「风险信息」列给出，不在这里重复
  * @param r 巡检结果
- * @returns 如「压力读数 0.83 MPa」；无有效读数时给出占位说明
+ * @returns 如「压力读数 0.83 MPa」；无有效读数时返回「无法展示」
  */
 export const readingOf = (r: Result) =>
-  r.aiAbnormal
-    ? r.triggerReason || "未识别出有效读数"
-    : `${r.item} ${r.raw}${r.unit}`.trim();
+  r.aiAbnormal ? "无法展示" : `${r.item} ${r.raw}${r.unit}`.trim();
 /** 已判定为异常的结果（供各页统计"异常数"使用） */
 export const isAbnormal = (r: Result) => judgeOf(r) === "异常";
 export const deviceCode = (name: string) => name.split(" ")[0];

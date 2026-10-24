@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { usePageSize, useViewState } from "../data/navigation";
-import { Badge, Btn, Empty, Field, Modal, Panel, Table } from "../components/UI";
+import { Badge, Btn, Drawer, Empty, Field, Panel, Table } from "../components/UI";
 import { Pager } from "../components/Business";
 import { FilterPanel } from "../components/FilterPanel";
 import { mapVer } from "../data/versionLabel";
@@ -477,12 +477,12 @@ export function SpaceManage() {
       </Panel>
 
       {!!frameMap && (
-        <Modal
+        <Drawer
           title="碎片地图配准"
-          wide
+          subtitle={s.maps.find((m) => m.id === frameMap)?.name}
           onClose={() => SETFRAME("")}
           footer={
-            <div className="actions">
+            <>
               <Btn onClick={() => SETFRAME("")}>取消</Btn>
               <Btn
                 primary
@@ -507,41 +507,45 @@ export function SpaceManage() {
               >
                 保存配准
               </Btn>
-            </div>
+            </>
           }
         >
-          <Field label="地图">
-            <input
-              value={s.maps.find((m) => m.id === frameMap)?.name || ""}
-              disabled
-              readOnly
-            />
-          </Field>
-          <Field label="分辨率（米/像素）">
-            <input value={res} onChange={(e) => SETRES(e.target.value)} placeholder="0.05" />
-          </Field>
-          <Field label="全局原点 X（米）">
-            <input value={ox} onChange={(e) => SETOX(e.target.value)} />
-          </Field>
-          <Field label="全局原点 Y（米）">
-            <input value={oy} onChange={(e) => SETOY(e.target.value)} />
-          </Field>
-          <Field label="原点 yaw（°）">
-            <input value={oyaw} onChange={(e) => SETYAW(e.target.value)} />
-          </Field>
-          <Field label="旋转角（°）">
-            <input value={rot} onChange={(e) => SETROT(e.target.value)} />
-          </Field>
-        </Modal>
+          <div className="form-grid">
+            <Field label="地图">
+              <input
+                value={s.maps.find((m) => m.id === frameMap)?.name || ""}
+                disabled
+                readOnly
+              />
+            </Field>
+            <Field label="分辨率（米/像素）">
+              <input value={res} onChange={(e) => SETRES(e.target.value)} placeholder="0.05" />
+            </Field>
+            <Field label="旋转角（°）">
+              <input value={rot} onChange={(e) => SETROT(e.target.value)} />
+            </Field>
+          </div>
+          <div className="form-grid">
+            <Field label="全局原点 X（米）">
+              <input value={ox} onChange={(e) => SETOX(e.target.value)} />
+            </Field>
+            <Field label="全局原点 Y（米）">
+              <input value={oy} onChange={(e) => SETOY(e.target.value)} />
+            </Field>
+            <Field label="原点 yaw（°）">
+              <input value={oyaw} onChange={(e) => SETYAW(e.target.value)} />
+            </Field>
+          </div>
+        </Drawer>
       )}
 
       {switchOpen && (
-        <Modal
+        <Drawer
           title="新增跨图切换点"
-          wide
+          subtitle={swName.trim() || undefined}
           onClose={() => SETSW(false)}
           footer={
-            <div className="actions">
+            <>
               <Btn onClick={() => SETSW(false)}>取消</Btn>
               <Btn
                 primary
@@ -566,7 +570,7 @@ export function SpaceManage() {
               >
                 新增
               </Btn>
-            </div>
+            </>
           }
         >
           <Field label="切换点名称">
@@ -576,39 +580,43 @@ export function SpaceManage() {
               onChange={(e) => SETSN(e.target.value)}
             />
           </Field>
-          <Field label="来源地图">
-            <select value={swFrom} onChange={(e) => SETSF(e.target.value)}>
-              <option value="">请选择</option>
-              {s.maps.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="来源位置 X（底图 %）">
-            <input value={fx} onChange={(e) => SETFX(e.target.value)} />
-          </Field>
-          <Field label="来源位置 Y（底图 %）">
-            <input value={fy} onChange={(e) => SETFY(e.target.value)} />
-          </Field>
-          <Field label="目标地图">
-            <select value={swTo} onChange={(e) => SETST(e.target.value)}>
-              <option value="">请选择</option>
-              {s.maps.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="接驳位置 X（底图 %）">
-            <input value={tx} onChange={(e) => SETTX(e.target.value)} />
-          </Field>
-          <Field label="接驳位置 Y（底图 %）">
-            <input value={ty} onChange={(e) => SETTY(e.target.value)} />
-          </Field>
-        </Modal>
+          <div className="form-grid">
+            <Field label="来源地图">
+              <select value={swFrom} onChange={(e) => SETSF(e.target.value)}>
+                <option value="">请选择</option>
+                {s.maps.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="来源位置 X（底图 %）">
+              <input value={fx} onChange={(e) => SETFX(e.target.value)} />
+            </Field>
+            <Field label="来源位置 Y（底图 %）">
+              <input value={fy} onChange={(e) => SETFY(e.target.value)} />
+            </Field>
+          </div>
+          <div className="form-grid">
+            <Field label="目标地图">
+              <select value={swTo} onChange={(e) => SETST(e.target.value)}>
+                <option value="">请选择</option>
+                {s.maps.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="接驳位置 X（底图 %）">
+              <input value={tx} onChange={(e) => SETTX(e.target.value)} />
+            </Field>
+            <Field label="接驳位置 Y（底图 %）">
+              <input value={ty} onChange={(e) => SETTY(e.target.value)} />
+            </Field>
+          </div>
+        </Drawer>
       )}
     </>
   );

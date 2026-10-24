@@ -17,7 +17,8 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { FileText, Pencil, Power, RefreshCw, Trash2 } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { useStore } from "../data/store";
 import { go, usePageSize, useViewState } from "../data/navigation";
 import {
@@ -29,6 +30,9 @@ import {
   Field,
   Note,
   Modal,
+  Drawer,
+  Confirm,
+  Switch,
 } from "../components/UI";
 import { Pager } from "../components/Business";
 import { FilterPanel } from "../components/FilterPanel";
@@ -37,7 +41,7 @@ import { MapSurveyPanel } from "../components/MapSurveyPanel";
 import { MapDispatch } from "../components/MapDispatch";
 import { DeleteConfirm } from "../components/ListDelete";
 import { SAMPLE_MAP_FILE, SAMPLE_MAP_IMAGE } from "../data/sampleMap";
-import { MAP_IMAGE_MAX_SIZE } from "../data/types";
+import { MAP_IMAGE_MAX_SIZE, mapNo, fmtDateTime } from "../data/types";
 import type { MapAsset, MapPacket } from "../data/types";
 import { areaOptions } from "../data/deviceMaster";
 
@@ -90,9 +94,15 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     id: string;
     name: string;
   } | null>(null);
+  /** 重命名保存前的二次确认 */
+  const [askRename, ASKRENAME] = useState(false);
   /** 待删除的数据包 / 地图（二次确认） */
   const [delPacket, DELPKT] = useState<MapPacket | null>(null);
   const [delMap, DELM] = useState<MapAsset | null>(null);
+  /** 绑定机器抽屉：非空表示打开，列出使用该地图的机器人及其版本 */
+  const [bindMap, SETBIND] = useState<MapAsset | null>(null);
+  /** 启停二次确认：待切换的地图（确认后才落库） */
+  const [toggleMap, SETTOGGLE] = useState<MapAsset | null>(null);
   const [query, Q] = useViewState("maps.query", ""),
     [regionF, RF] = useViewState("maps.filter.region", "全部"),
     [stateF, SF] = useViewState("maps.filter.state", "全部"),
@@ -136,8 +146,9 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
     s.robots.find((r) => r.id === scanRid)?.name || "所选机器人";
   /** 地图数据包（还不是地图）：与地图卡片同区展示 */
   const packets = s.mapPackets || [];
-  /** 「⋯」下拉小菜单：点菜单外任意处即关闭 */
+  /** 「⋯」下拉小菜单：点菜单外任意处即关闭（按钮区 / 菜单本体分别判断） */
   const moreRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   /**
    * 「⋯」下拉小菜单的定位
    * @description 固定定位（相对视口）：卡片区在 `.panel`（overflow:hidden）里，
@@ -188,7 +199,12 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
       SETMOREOPEN(false);
     };
     const onDown = (e: MouseEvent) => {
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) close();
+      const t = e.target as Node;
+      // 菜单被 portal 到 body，不在触发按钮的 DOM 子树里：
+      // 只有同时判断「按钮」和「菜单本体」，点菜单项才不会被这里提前关掉（否则点不动）
+      if (moreRef.current?.contains(t)) return;
+      if (menuRef.current?.contains(t)) return;
+      close();
     };
     // 页面滚动 / 窗口尺寸变化后按钮位置已变，直接收起，避免菜单悬空
     document.addEventListener("mousedown", onDown);
@@ -347,7 +363,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const kw = query.trim();
   const list = s.maps.filter(
     (x) =>
-      (!kw || (x.name + x.id + x.region).includes(kw)) &&
+      (!kw || (x.name + x.id + mapNo(x.id) + x.region).includes(kw)) &&
       (regionF === "全部" || x.region === regionF) &&
       (stateF === "全部" || x.syncState === stateF),
   );
@@ -419,23 +435,28 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         ) : (
           <Table
             heads={[
+              "地图编号",
               "地图名称",
               "区域 / 来源",
               "版本",
               "同步状态",
               "更新时间",
+              "启停",
               "绑定机器",
               "操作",
             ]}
             rows={[
               // 地图数据包（还不是地图）：同一张表里用「数据包」状态区分，编辑命名后才落为正式地图
               ...packets.map((k) => [
+                // 数据包还不是正式地图：没有编号 / 启停 / 绑定机器，占位展示
+                <span className="muted">—</span>,
                 <b className="map-packet-name">{k.name}</b>,
                 k.source,
                 "—",
                 <Badge>数据包</Badge>,
-                k.at,
-                "—",
+                fmtDateTime(k.at),
+                <span className="muted">—</span>,
+                <span className="muted">—</span>,
                 <div className="actions">
                   <Btn
                     onClick={() => {
@@ -451,8 +472,11 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                     ref={moreId === k.id ? moreRef : undefined}
                   >
                     <Btn onClick={(e) => toggleMore(e, k.id)}>⋯</Btn>
-                    {moreId === k.id && (
+                    {/* 菜单按按钮屏幕坐标定位，portal 到 body：页面根节点带缩放 transform 时留在原位会偏位 */}
+                    {moreId === k.id &&
+                      createPortal(
                       <div
+                        ref={menuRef}
                         className="map-more-menu"
                         role="menu"
                         style={menuStyle}
@@ -492,7 +516,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                           <Trash2 size={14} />
                           删除
                         </button>
-                      </div>
+                      </div>,
+                      document.body,
                     )}
                   </div>
                 </div>,
@@ -501,14 +526,33 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                 const bound = s.robots.filter((r) => r.mapId === x.id);
                 const outdated = bound.filter((r) => r.mapVersion < x.version);
                 return [
+                  // 地图编号：统一 MAP-XXX 格式，只读展示（与详情页「地图编号」同源）
+                  mapNo(x.id),
                   <b>{x.name}</b>,
                   x.region,
                   `V${x.version}`,
                   <Badge>{x.syncState}</Badge>,
-                  x.updatedAt || "—",
-                  bound.length
-                    ? `${bound.length} 台${outdated.length ? ` · ⚠${outdated.length} 待更新` : ""}`
-                    : "—",
+                  fmtDateTime(x.updatedAt),
+                  // 启停开关：点一下先弹二次确认，确认后才切换
+                  <Switch
+                    checked={x.status !== "停用"}
+                    label={`${x.name} 启停状态`}
+                    onChange={() => SETTOGGLE(x)}
+                  />,
+                  // 绑定机器：可点击 → 抽屉查看使用该地图的机器人及其版本
+                  bound.length ? (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      title="查看使用该地图的机器人及其版本"
+                      onClick={() => SETBIND(x)}
+                    >
+                      {bound.length} 台
+                      {outdated.length ? ` · ⚠${outdated.length} 待更新` : ""}
+                    </button>
+                  ) : (
+                    <span className="muted">—</span>
+                  ),
                   <div className="actions">
                     <Btn
                       small
@@ -517,6 +561,10 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                     >
                       地图下发
                     </Btn>
+                    {/* 详情从「⋯」里拉出来，直接作为操作列可见按钮 */}
+                    <Btn small onClick={() => go("map-detail", x.id)}>
+                      详情
+                    </Btn>
                     <div
                       className="map-more"
                       ref={moreId === x.id ? moreRef : undefined}
@@ -524,23 +572,14 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                         <Btn small onClick={(e) => toggleMore(e, x.id)}>
                           ⋯
                         </Btn>
-                        {moreId === x.id && (
+                        {moreId === x.id &&
+                          createPortal(
                           <div
+                            ref={menuRef}
                             className="map-more-menu"
                             role="menu"
                             style={menuStyle}
                           >
-                            <button
-                              role="menuitem"
-                              className="map-more-item"
-                              onClick={() => {
-                                closeMore();
-                                go("map-detail", x.id);
-                              }}
-                            >
-                              <FileText size={14} />
-                              详情
-                            </button>
                             <button
                               role="menuitem"
                               className="map-more-item"
@@ -551,17 +590,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                             >
                               <Pencil size={14} />
                               重命名
-                            </button>
-                            <button
-                              role="menuitem"
-                              className="map-more-item"
-                              onClick={() => {
-                                closeMore();
-                                act({ type: "TOGGLE_MAP_STATUS", id: x.id });
-                              }}
-                            >
-                              <Power size={14} />
-                              {x.status === "停用" ? "启用" : "停用"}
                             </button>
                             <button
                               role="menuitem"
@@ -594,7 +622,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                               <Trash2 size={14} />
                               删除地图
                             </button>
-                          </div>
+                          </div>,
+                          document.body,
                         )}
                     </div>
                   </div>,
@@ -678,7 +707,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
       {packet && (
         <Modal title="构建地图" onClose={() => PKT(null)}>
           <Note>
-            数据包「{packet.name}」来自 {packet.robotId}（{packet.at}）。
+            数据包「{packet.name}」来自 {packet.robotId}（{fmtDateTime(packet.at)}）。
             填写地图名称与所属区域后，它将作为一张<b>可标定的 SLAM 地图</b>进入列表，
             其路网与定位点由标定工作台维护（按分辨率 / 原点做像素 → 全局坐标换算）。
           </Note>
@@ -719,21 +748,29 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
 
       {/* 卡片「⋯」已改为就地下拉小菜单（见卡片渲染），不再用弹窗 */}
       {/* 地图下发弹窗：从卡片「地图下发」进入 */}
-      {dispatchMapId && (
-        <Modal
-          wide
-          title="地图下发"
-          onClose={() => SET_DISPATCH("")}
-        >
-          <MapDispatch mapId={dispatchMapId} />
-        </Modal>
-      )}
+      {dispatchMapId &&
+        (() => {
+          const dm = s.maps.find((x) => x.id === dispatchMapId);
+          if (!dm) return null;
+          return (
+            <Drawer
+              title="地图下发"
+              subtitle={`${dm.name} · ${mapNo(dm.id)} · 目标版本 V${dm.version}`}
+              onClose={() => SET_DISPATCH("")}
+            >
+              <MapDispatch mapId={dm.id} />
+            </Drawer>
+          );
+        })()}
 
       {/* 重命名：地图 / 数据包共用弹窗（按 kind 走对应动作） */}
       {rename && (
         <Modal
           title={rename.kind === "packet" ? "重命名数据包" : "重命名地图"}
-          onClose={() => RN(null)}
+          onClose={() => {
+            ASKRENAME(false);
+            RN(null);
+          }}
         >
           <Field label="名称">
             <input
@@ -742,11 +779,30 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             />
           </Field>
           <div className="modal-actions">
-            <Btn onClick={() => RN(null)}>取消</Btn>
+            <Btn
+              onClick={() => {
+                ASKRENAME(false);
+                RN(null);
+              }}
+            >
+              取消
+            </Btn>
             <Btn
               primary
               disabled={!rename.name.trim()}
-              onClick={() => {
+              onClick={() => ASKRENAME(true)}
+            >
+              保存
+            </Btn>
+          </div>
+          {/* 重命名二次确认：名称是别的页面引用的展示名，改前问一次 */}
+          {askRename && (
+            <Confirm
+              title="重命名地图"
+              message={`名称将改为「${rename.name.trim()}」，保存后立即生效。`}
+              confirmText="保存"
+              onClose={() => ASKRENAME(false)}
+              onConfirm={() => {
                 const ok = act(
                   rename.kind === "packet"
                     ? {
@@ -760,12 +816,11 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                         name: rename.name.trim(),
                       },
                 );
+                ASKRENAME(false);
                 if (ok) RN(null);
               }}
-            >
-              保存
-            </Btn>
-          </div>
+            />
+          )}
         </Modal>
       )}
 
@@ -798,6 +853,69 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         }
         onClose={() => DELPKT(null)}
       />
+
+      {/* 绑定机器：点列表「N 台」打开，列出使用该地图的机器人及其版本 */}
+      {bindMap &&
+        (() => {
+          const bound = s.robots.filter((r) => r.mapId === bindMap.id);
+          return (
+            <Drawer
+              title="绑定机器"
+              subtitle={`${mapNo(bindMap.id)} · ${bindMap.name} · 平台 V${bindMap.version}`}
+              onClose={() => SETBIND(null)}
+            >
+              <Note>
+                以下机器人正使用该地图导航；机器人端版本低于平台版本时，
+                需在「地图下发」里重新下发才能对齐。
+              </Note>
+              {bound.length ? (
+                <Table
+                  heads={[
+                    "机器人编码",
+                    "名称",
+                    "当前状态",
+                    "机器人端版本",
+                    "平台版本",
+                    "结果",
+                  ]}
+                  rows={bound.map((r) => [
+                    r.id,
+                    r.name,
+                    <Badge>{r.state}</Badge>,
+                    `V${r.mapVersion}`,
+                    `V${bindMap.version}`,
+                    r.mapVersion < bindMap.version ? (
+                      <Badge>待更新</Badge>
+                    ) : (
+                      <span className="muted">已是最新</span>
+                    ),
+                  ])}
+                />
+              ) : (
+                <Empty>暂无机器人使用该地图。</Empty>
+              )}
+            </Drawer>
+          );
+        })()}
+
+      {/* 启停二次确认：确认后才切换地图逻辑启停状态 */}
+      {toggleMap && (
+        <Confirm
+          title={toggleMap.status === "停用" ? "启用地图" : "停用地图"}
+          message={
+            toggleMap.status === "停用"
+              ? `启用「${toggleMap.name}」后，可再次用于导航与任务下发。`
+              : `停用「${toggleMap.name}」后，该地图不再允许用于导航 / 任务下发。`
+          }
+          confirmText={toggleMap.status === "停用" ? "启用" : "停用"}
+          danger={toggleMap.status !== "停用"}
+          onClose={() => SETTOGGLE(null)}
+          onConfirm={() => {
+            act({ type: "TOGGLE_MAP_STATUS", id: toggleMap.id });
+            SETTOGGLE(null);
+          }}
+        />
+      )}
 
       {modal === "import" && (
         <Modal

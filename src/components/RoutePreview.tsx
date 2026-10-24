@@ -63,8 +63,8 @@ export function RoutePreview({
    * @param next 新锚点序列；传 undefined = 放弃自定义，恢复「跟随父线」
    */
   onPathChange?: (next?: RouteNode[]) => void;
-  /** 预览区高度（内置页可放高一些） */
-  height?: number;
+  /** 预览区高度：数字 = 定高；"100%" = 吃满外层（内置页一屏布局用） */
+  height?: number | string;
 }) {
   const { s } = useStore();
   /** 是否叠加显示父线（默认显示，可单独只看子线） */

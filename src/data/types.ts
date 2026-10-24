@@ -237,6 +237,85 @@ export interface Roadnet {
   paths: RoadnetPath[];
 }
 
+const p2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * 平台统一时间格式：`YYYY-MM-DD HH:mm`
+ * @description 所有写入 `updatedAt / at` 的地方都用它，避免出现 `2026/10/23 23:03:11`
+ *              与 `2026-09-28 14:32` 两种写法混在同一列
+ */
+export const fmtDate = (d: Date) =>
+  `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(
+    d.getHours(),
+  )}:${p2(d.getMinutes())}`;
+
+/** 当前时间（统一格式），写入 `updatedAt / at / time` 一律用它 */
+export const now = () => fmtDate(new Date());
+
+/**
+ * 展示用时间：把各种历史写法统一成 `YYYY-MM-DD HH:mm`
+ * @description 兼容老缓存里的 `2026/10/23 23:03:11`、`2026-09-28 14:32`、ISO 串；
+ *              认不出的原样返回，不吞掉信息
+ */
+export const fmtDateTime = (v?: string) => {
+  if (!v) return "—";
+  const ts = Date.parse(v.trim());
+  if (!Number.isNaN(ts)) return fmtDate(new Date(ts));
+  // 解析不了的（如 2026-9-8 9:5）按字段抠出来补零
+  const m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?/.exec(
+    v.trim(),
+  );
+  if (!m) return v;
+  return `${m[1]}-${p2(Number(m[2]))}-${p2(Number(m[3]))} ${p2(
+    Number(m[4] ?? 0),
+  )}:${p2(Number(m[5] ?? 0))}`;
+};
+
+/** 地图编号规范：`MAP-` + 三位大写字母数字（如 MAP-A03 / MAP-B01） */
+const MAP_NO_RE = /^MAP-[A-Z0-9]{3}$/;
+
+/** 编号字符集：去掉易混的 I / O / 0 / 1 */
+const NO_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+/**
+ * 地图编号（**唯一展示口径**）
+ * @description 合规 id 原样返回；历史遗留的随机 id（如 `MAPmvl3895j7pq`）按同一规则
+ *              稳定派生，保证列表 / 详情 / 抽屉里看到的编号格式永远一致
+ */
+export const mapNo = (id: string) => {
+  if (MAP_NO_RE.test(id)) return id;
+  // FNV-1a：同一个 id 永远得到同一个编号
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  let n = h >>> 0;
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    out += NO_CHARS[n % NO_CHARS.length];
+    n = Math.floor(n / NO_CHARS.length);
+  }
+  return `MAP-${out}`;
+};
+
+/**
+ * 生成一个未被占用的地图编号（MAP-XXX）
+ * @description 新建 / 导入 / 由数据包构建地图时用它当主键：id 本身就是合规编号，
+ *              展示层不需要再做一次转换；与已有编号（含历史派生编号）逐个比对避免撞号
+ */
+export const nextMapNo = (list: MapAsset[]) => {
+  const used = new Set(list.map((m) => mapNo(m.id)));
+  for (let i = 0; i < 500; i++) {
+    let out = "";
+    for (let k = 0; k < 3; k++)
+      out += NO_CHARS[Math.floor(Math.random() * NO_CHARS.length)];
+    const no = `MAP-${out}`;
+    if (!used.has(no)) return no;
+  }
+  return `MAP-${Date.now().toString(36).slice(-3).toUpperCase()}`;
+};
+
 /**
  * 地图数据包（机器人扫描回传的原始产物，**还不是地图**）
  * @description 「新增地图」由在线机器人扫描并回传数据包；数据包在地图列表中以卡片展示，
@@ -336,9 +415,9 @@ export interface AtomicActionConfig {
   /** 镜头光圈（F 值） */
   aperture?: number;
   /** PT-07：气体采集方式 —— 泵吸式（主动抽气，响应快）/ 扩散式（被动感应） */
-  gasMode?: "泵吸式" | "扩散式";
+  // gasMode?: "泵吸式" | "扩散式";
   /** PT-07：气体传感器种类（如 4 种 / 6 种 / 具体气体组分） */
-  sensorKind?: string;
+  // sensorKind?: string;
   /** PT-07：红外测温发射率（0–1，材质相关） */
   emissivity?: number;
   /** PT-07：红外有效测温距离（米） */
@@ -446,7 +525,7 @@ export const abilityFields: Record<string, AbilityField[]> = {
   红外识别: [
     { key: "photoCorrect", label: "拍照纠正", control: "switch" },
     { key: "ptzReset", label: "云台复位", control: "switch" },
-    { key: "irOffsetCm", label: "红外补偿距离", control: "number", unit: "cm" },
+    // { key: "irOffsetCm", label: "红外补偿距离", control: "number", unit: "cm" },
     {
       key: "region",
       label: "红外识别区域",
@@ -456,7 +535,7 @@ export const abilityFields: Record<string, AbilityField[]> = {
   ],
   可见光实况识别: [
     { key: "ptzReset", label: "云台复位", control: "switch" },
-    { key: "durationSec", label: "持续时长", control: "number", unit: "s" },
+    // { key: "durationSec", label: "持续时长", control: "number", unit: "s" },
   ],
   高清识别: [
     { key: "photoCorrect", label: "拍照纠正", control: "switch" },
@@ -467,21 +546,9 @@ export const abilityFields: Record<string, AbilityField[]> = {
     { key: "durationSec", label: "持续时长", control: "number", unit: "s" },
   ],
   声纹采集: [
-    { key: "ptzReset", label: "云台复位", control: "switch" },
     { key: "durationSec", label: "采集时长", control: "number", unit: "s" },
   ],
-  局部放电检测: [
-    { key: "ptzReset", label: "云台复位", control: "switch" },
-    { key: "sensitivity", label: "灵敏度", control: "number", unit: "%" },
-  ],
-  声学成像泄漏检测: [
-    { key: "ptzReset", label: "云台复位", control: "switch" },
-    { key: "gain", label: "增益", control: "number" },
-  ],
-  甲烷遥测: [
-    { key: "ptzReset", label: "云台复位", control: "switch" },
-    { key: "distanceM", label: "遥测距离", control: "number", unit: "m" },
-  ],
+
 };
 
 /**
@@ -727,6 +794,8 @@ export const ROOT_AREA_NAME = "全厂区";
 /** 区域（工厂树节点，根节点为固定的「全厂区」AREA-ROOT） */
 export interface Area {
   id: string;
+  /** 区域编码：系统按 AR-01 顺延分配，用户不可改 */
+  code?: string;
   name: string;
   /** 父级区域（可选）：区域支持多级树，根区域不设父级 */
   parentId?: string;
@@ -739,7 +808,40 @@ export interface Area {
    * @description 未绘制时为 undefined；仅保存**已闭合**的顶点，编辑时回显并在地图上展示
    */
   polygon?: { x: number; y: number }[];
+  /** 最后更新时间（新增 / 编辑时由引擎写入） */
+  updatedAt?: string;
 }
+
+/**
+ * 生成下一个区域编码（AR-01 / AR-02 …）
+ * @description 编码是区域的唯一业务标识，由系统按现有最大值顺延分配；
+ *              表单只做预览展示，引擎落库时用同一口径生成
+ */
+export const nextAreaCode = (list: Area[]) => {
+  const max = list.reduce((n, a) => {
+    const m = /^AR-(\d+)$/.exec(a.code || "");
+    return m ? Math.max(n, Number(m[1])) : n;
+  }, 0);
+  return `AR-${String(max + 1).padStart(2, "0")}`;
+};
+
+/**
+ * 补齐历史区域缺失的编码（幂等）
+ * @description 早期数据只有名称；按当前顺序一次性分配，
+ *              避免逐个编辑时各自算出同一个号而撞号
+ */
+export const ensureAreaCodes = (list: Area[]) => {
+  if (list.every((a) => a.code)) return;
+  let n = list.reduce((m, a) => {
+    const t = /^AR-(\d+)$/.exec(a.code || "");
+    return t ? Math.max(m, Number(t[1])) : m;
+  }, 0);
+  list.forEach((a) => {
+    if (!a.code) a.code = `AR-${String(++n).padStart(2, "0")}`;
+  });
+};
+
+
 
 /**
  * 仪表：实际被巡检的资产对象
@@ -881,6 +983,8 @@ export interface AlarmClass {
   main: AlarmClassMain;
   /** 是否启用：停用后不再出现在告警设置的可选类型里 */
   enabled: boolean;
+  /** 适用故障说明（机器人预警用：底盘 / 载荷 / 识别失败等范围，可自行维护） */
+  hint?: string;
   updatedAt?: string;
 }
 /**
@@ -1013,6 +1117,12 @@ export interface BusinessTarget {
    * 区域目标必须有锚点，否则"泄漏发生在哪一段管道 / 哪个罐区"无法归因。
    */
   anchor?: string;
+  /**
+   * 锚点对应的范围（可选）：在全厂底图上绘制 / 框选的顶点序列（百分比坐标）。
+   * @description 与「区域配置」的多边形同一套坐标口径；有它就能在图上回显这块范围，
+   *              没有也能用（锚点文本已足够描述位置），所以是可选字段、不需要数据迁移
+   */
+  anchorPolygon?: { x: number; y: number }[];
   /** 外键 → Requirement（巡检要求） */
   requirementId: string;
   /** 业务目标：这条目标要达成什么（如"确认出口压力表读数在正常范围内"） */
@@ -1188,6 +1298,10 @@ export interface Robot {
   firmware: string;
   /** 机器人编号（SN）：出厂硬件序列号，与内部编码 id 一一对应 */
   sn?: string;
+  /** 启用 / 停用：停用后不参与调度派单（台账列表开关切换） */
+  enabled?: boolean;
+  /** 更新时间：编辑机型与硬件、启停切换时刷新 */
+  updatedAt?: string;
 }
 /**
  * 任务快照：继承 `Point`（含统一坐标系 `world`）；任务下发时以 `world` 为巡检点权威坐标，
@@ -1354,6 +1468,15 @@ export type PlanKind = (typeof planKinds)[number];
 /** 周期任务的执行周期：月 / 天 / 时三档，数组顺序即下拉顺序 */
 export const planCycles = ["每月", "每天", "每小时"] as const;
 export type PlanCycle = (typeof planCycles)[number];
+/**
+ * 周期任务的间隔单位（新口径）
+ * @description 天 / 时 / 分；配合「执行间隔 + 开始时间 + 结束时间」表达循环，
+ *              上限分别为 30 / 24 / 59。老数据没有该字段，仍按 `cycle` 老口径排程
+ */
+export const planUnits = ["天", "时", "分"] as const;
+export type PlanUnit = (typeof planUnits)[number];
+/** 各间隔单位的执行间隔上限 */
+export const planUnitMax: Record<PlanUnit, number> = { 天: 30, 时: 24, 分: 59 };
 
 export interface Plan {
   robotId?: string;
@@ -1369,8 +1492,16 @@ export interface Plan {
   id: string;
   name: string;
   templateId: string;
-  /** 执行周期（月 / 天 / 时） */
+  /** 执行周期（月 / 天 / 时）——老口径，新计划改用 unit + interval + fromTime/toTime */
   cycle: PlanCycle;
+  /** 间隔单位（天 / 时 / 分）：有该字段即按新口径排程 */
+  unit?: PlanUnit;
+  /** 执行间隔：天 1-30 / 时 1-24 / 分 1-59 */
+  interval?: number;
+  /** 每日执行时段起点（HH:MM） */
+  fromTime?: string;
+  /** 每日执行时段终点（HH:MM） */
+  toTime?: string;
   start: string;
   end: string;
   time: string;
@@ -1434,7 +1565,11 @@ export interface Alarm {
   name: string;
   /** 告警等级：一级 / 二级 / 三级 */
   level: AlarmLevel;
-  state: "待确认" | "处理中" | "待复查" | "已恢复" | "已关闭";
+  /**
+   * 告警状态（三态）：待确认 → 处理中 → 已关闭。
+   * 忽略 / 误报直接结案为「已关闭」；受理转「处理中」，现场处置完由「标记结束」转「已关闭」。
+   */
+  state: "待确认" | "处理中" | "已关闭";
   notes: string[];
   /** ALM-05 处理时间：人工提交处理时写入；为空表示未处理，非空后不允许二次编辑 */
   handledAt?: string;
@@ -1472,6 +1607,11 @@ export interface AlarmPushStaff {
   devices?: string[];
   /** 是否发送短信 */
   sms: boolean;
+  /**
+   * 启停（列表开关）：停用后该人员不再收到任何告警推送，但名单与配置保留
+   * @description 缺省 = 启用（兼容老数据）；与「是否发送短信」是两个独立开关
+   */
+  enabled?: boolean;
   /** 最后更新人（原型阶段取当前角色的人员姓名） */
   updatedBy?: string;
   updatedAt?: string;
@@ -1571,7 +1711,7 @@ export interface State {
   tenants?: Tenant[];
   /** 当前租户 id：切换即换一份数据（缓存键 inspection-v14-prototype:<tenantId>） */
   tenantId?: string;
-  schema: 12;
+  schema: 13;
   maps: MapAsset[];
   points: Point[];
   robots: Robot[];

@@ -188,11 +188,9 @@ export function Metrics() {
 
   return (
     <div className="analysis-report">
-
-      {/* ① 全机器人巡检结果分析 */}
-      <Panel title="① 全机器人巡检结果分析">
+      <Panel title="巡检结果分析">
+        {/* 上：完成情况 + 风险情况 两列 KPI */}
         <div className="ana-split">
-          {/* 左列：完成情况 + 任务状态分布 */}
           <div className="ana-col">
             <div className="ana-h">完成情况</div>
             <div className="kpi-grid">
@@ -204,7 +202,6 @@ export function Metrics() {
               <Kpi name="任务完成率" value={taskDoneRate} unit="%" foot={<>应执行 {baseTasks.length} 条</>} />
             </div>
           </div>
-          {/* 右列：风险情况 + 告警等级分布 */}
           <div className="ana-col">
             <div className="ana-h">风险情况</div>
             <div className="kpi-grid">
@@ -216,10 +213,9 @@ export function Metrics() {
             </div>
           </div>
         </div>
-      </Panel>
 
-      {/* ③ 按区域巡检分析 */}
-      <Panel title="② 区域巡检分析 · 按异常项降序">
+        {/* 下：区域巡检分析表（按异常项降序） */}
+        <div className="ana-h">区域巡检分析 · 按异常项降序</div>
         {!regionStats.length ? (
           <Empty>暂无区域数据</Empty>
         ) : (

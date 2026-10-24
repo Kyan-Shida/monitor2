@@ -7,7 +7,7 @@
 import { useStore } from "../data/store";
 import { mapVer } from "../data/versionLabel";
 import { go } from "../data/navigation";
-import { Btn, Badge, Table, Modal } from "./UI";
+import { Btn, Badge, Drawer, Table } from "./UI";
 import { queueFor, stageOf, fmtTime } from "../data/selectors";
 import { constraints } from "../data/engine";
 import type { Task } from "../data/types";
@@ -43,7 +43,25 @@ export function TaskPeekDrawer({
   const itemState = (id: string) =>
     t.done.includes(id) ? "已完成" : t.skipped.includes(id) ? "已跳过" : "待执行";
   return (
-    <Modal title={`任务详情 · ${t.id}`} wide onClose={onClose}>
+    <Drawer
+      title={`任务详情 · ${t.id}`}
+      subtitle={t.name}
+      onClose={onClose}
+      footer={
+        <>
+          <Btn onClick={onClose}>关闭</Btn>
+          <Btn
+            primary
+            // 带回来源页：完整详情的面包屑与返回都归属调度中心，不会跳到别处
+            onClick={() =>
+              go("task-detail", t.id, undefined, { page: "dispatch" })
+            }
+          >
+            打开完整任务详情 →
+          </Btn>
+        </>
+      }
+    >
         <div className="peek-head">
           <b>{t.name}</b>
           <Badge>{t.state}</Badge>
@@ -109,18 +127,6 @@ export function TaskPeekDrawer({
         {t.items.length > 8 && (
           <p className="muted">仅显示前 8 项，共 {t.items.length} 项。</p>
         )}
-        <div className="modal-actions">
-          <Btn onClick={onClose}>关闭</Btn>
-          <Btn
-            primary
-            // 带回来源页：完整详情的面包屑与返回都归属调度中心，不会跳到别处
-            onClick={() =>
-              go("task-detail", t.id, undefined, { page: "dispatch" })
-            }
-          >
-            打开完整任务详情 →
-          </Btn>
-        </div>
-    </Modal>
+    </Drawer>
   );
 }

@@ -14,7 +14,7 @@ import { Video } from "../components/Video";
 
 /** 宫格模式配置：布局类名 + 格子数 */
 const GRID_MODES = [
-  { key: "3", label: "3宫格", cols: 3, rows: 1, cells: 3 },
+  { key: "4", label: "4宫格", cols: 2, rows: 2, cells: 4 },
   { key: "6", label: "6宫格", cols: 3, rows: 2, cells: 6 },
   { key: "9", label: "9宫格", cols: 3, rows: 3, cells: 9 },
 ] as const;

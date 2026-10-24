@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useStore } from "../data/store";
 import { go } from "../data/navigation";
-import { Badge, Modal, Note } from "../components/UI";
+import { Badge, Drawer, Note } from "../components/UI";
 import { ObjectLink, Kpis } from "../components/Business";
 import { stageOf, terminal } from "../data/selectors";
 import { DUE_SOON_MS, metricValue } from "../data/metrics";
@@ -642,15 +642,14 @@ export function Workbench() {
 
       {allClear && <Note>当前没有待处理事项，巡检业务已全部闭环。</Note>}
 
-      {/* 待办明细：按业务维度分类，行内直接点进对应处理页面（关闭用弹窗右上角 ×） */}
+      {/* 待办明细：按业务维度分类，行内直接点进对应处理页面（侧栏留出工作台看进度） */}
       {openCard && (
-        <Modal
+        <Drawer
           title={`${openCard.title}（${openCard.count}）`}
           onClose={() => OPEN("")}
-          wide
         >
           {openCard.items}
-        </Modal>
+        </Drawer>
       )}
     </div>
   );

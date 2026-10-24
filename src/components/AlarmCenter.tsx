@@ -19,6 +19,15 @@ import { mainOfAlarm } from "../data/alarmSettings";
 
 /** 未处理告警判定：尚无人工处理（处理时间为空） */
 const isOpen = (a: { handledAt?: string }) => !a.handledAt;
+/**
+ * 悬浮元素所在坐标空间的缩放比
+ * @description 应用根 .app 带 transform: scale(--ui-scale)，fixed 子元素的 left/top 走**未缩放**逻辑像素，
+ *              而指针事件的 clientX/Y 是**缩放后**视觉像素；不换算就会拖到 82% 处到头、且起手跳位
+ */
+const uiScaleOf = (el: HTMLElement | null) => {
+  const w = el?.offsetWidth ?? 0;
+  return w ? el!.getBoundingClientRect().width / w : 1;
+};
 /** 等级排序：一级 → 二级 → 其他 */
 const rank = (lv: string) => (lv === "一级" ? 0 : lv === "二级" ? 1 : 2);
 
@@ -32,6 +41,21 @@ export function AlarmCenter() {
   const [pos, SETPOS] = useState<{ x: number; y: number } | null>(null);
   /** 拖动会话的指针偏移；非空表示正在拖动 */
   const [drag, SETDRAG] = useState<{ ox: number; oy: number } | null>(null);
+  /**
+   * 悬浮钉位置（null = 默认贴右下）
+   * @description 右下角常挡住分页 / 表格底部操作，允许拖走后记住位置（localStorage）
+   */
+  const [pillPos, SETPILLPOS] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem("rd.alarm.pill");
+      return raw ? (JSON.parse(raw) as { x: number; y: number }) : null;
+    } catch {
+      return null;
+    }
+  });
+  const pillRef = useRef<HTMLButtonElement>(null);
+  /** 拖过就不当点击处理（避免松手时误开弹窗） */
+  const pillDragged = useRef(false);
   /**
    * 弹窗内的标签页：业务预警 / 机器人预警
    * @description 口径与「告警记录」一致（见 data/alarmSettings 的 mainOfAlarm）：
@@ -104,15 +128,17 @@ export function AlarmCenter() {
     SETOPEN(false);
   };
 
-  // 拖动：按住头部移动；位置限制在视口内
+  // 拖动：按住头部移动；位置限制在视口内（换算到缩放前的逻辑坐标再卡边，可贴边）
   useEffect(() => {
     if (!drag) return;
     const move = (e: PointerEvent) => {
-      const w = panelRef.current?.offsetWidth ?? 344;
-      const h = panelRef.current?.offsetHeight ?? 320;
+      const el = panelRef.current;
+      const w = el?.offsetWidth ?? 344;
+      const h = el?.offsetHeight ?? 320;
+      const k = uiScaleOf(el) || 1;
       SETPOS({
-        x: Math.max(8, Math.min(window.innerWidth - w - 8, e.clientX - drag.ox)),
-        y: Math.max(8, Math.min(window.innerHeight - h - 8, e.clientY - drag.oy)),
+        x: Math.max(0, Math.min(window.innerWidth / k - w, e.clientX / k - drag.ox)),
+        y: Math.max(0, Math.min(window.innerHeight / k - h, e.clientY / k - drag.oy)),
       });
     };
     const up = () => SETDRAG(null);
@@ -124,12 +150,57 @@ export function AlarmCenter() {
     };
   }, [drag]);
 
-  /** 记录指针相对弹窗的偏移，开始拖动 */
+  /** 记录指针相对弹窗的偏移（换算成逻辑像素），开始拖动 */
   const startDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const r = panelRef.current?.getBoundingClientRect();
+    const el = panelRef.current;
+    const r = el?.getBoundingClientRect();
     if (!r) return;
-    SETDRAG({ ox: e.clientX - r.left, oy: e.clientY - r.top });
+    const k = uiScaleOf(el) || 1;
+    SETDRAG({ ox: (e.clientX - r.left) / k, oy: (e.clientY - r.top) / k });
   };
+
+  /**
+   * 悬浮钉拖动：按住跟手移动，松手落位
+   * @description 位移超过 4px 才算拖动（否则仍算点击打开弹窗）；坐标换回逻辑像素后夹在视口内，允许贴边
+   */
+  const startPillDrag = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const el = pillRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const k = uiScaleOf(el) || 1;
+    const ox = (e.clientX - r.left) / k;
+    const oy = (e.clientY - r.top) / k;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 4) return;
+      moved = true;
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      SETPILLPOS({
+        x: Math.max(0, Math.min(window.innerWidth / k - w, ev.clientX / k - ox)),
+        y: Math.max(0, Math.min(window.innerHeight / k - h, ev.clientY / k - oy)),
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (moved) pillDragged.current = true;
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  /** 悬浮钉位置落盘：下次进页面还停在挪过去的地方 */
+  useEffect(() => {
+    if (!pillPos) return;
+    try {
+      localStorage.setItem("rd.alarm.pill", JSON.stringify(pillPos));
+    } catch {
+      /* 无痕模式下忽略 */
+    }
+  }, [pillPos]);
 
   return (
     <>
@@ -180,12 +251,24 @@ export function AlarmCenter() {
         </div>
       )}
 
-      {/* 悬浮钉：右下角常驻小胶囊（收起态一直可见，不提供关闭入口） */}
+      {/* 悬浮钉：常驻小胶囊（收起态一直可见，不提供关闭入口）；可拖动挪位置，免得挡分页 */}
       {(!open || min) && (
         <button
+          ref={pillRef}
           className="alarm-min"
-          title="展开告警弹窗"
+          title="拖动可挪位置，点击展开告警弹窗"
+          style={
+            pillPos
+              ? { left: pillPos.x, top: pillPos.y, right: "auto", bottom: "auto" }
+              : undefined
+          }
+          onPointerDown={startPillDrag}
           onClick={() => {
+            // 拖过就别再当成点击，否则松手会误开弹窗
+            if (pillDragged.current) {
+              pillDragged.current = false;
+              return;
+            }
             SETOPEN(true);
             SETMIN(false);
           }}

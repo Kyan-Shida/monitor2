@@ -17,6 +17,7 @@ import {
   type FeedbackPriority,
   type ReviewFeedback,
 } from "../review/feedback";
+import { now } from "../data/types";
 
 type Target = { selector: string; text: string };
 const categories: FeedbackCategory[] = ["布局", "功能", "流程", "文案", "其他"];
@@ -138,7 +139,7 @@ export function FeedbackReview({ pageTitle }: { pageTitle: string }) {
       category,
       priority,
       comment: comment.trim(),
-      createdAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+      createdAt: now(),
     };
     setItems((previous) => [next, ...previous]);
     setComment("");

@@ -286,7 +286,7 @@ export function MapNavigate({ id, tab }: { id?: string; tab?: string }) {
           </div>
 
           {/* 地图下方：机器控制（可见光 + 红外实时画面 + 应急操控） */}
-          <Panel title="机器控制" className="map-navigate-machine">
+          <Panel className="map-navigate-machine">
             <div className="cockpit-video-row">
               <div className="video-pane">
                 <span className="video-label">

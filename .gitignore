@@ -11,8 +11,16 @@ edge-tmp/
 # 本地运行日志
 dev.log
 dev.err.log
+dev*.log
+build.log
+export.log
 npm-debug.log*
 yarn-error.log*
+
+# 浏览器自动化临时目录（截图 / 预览用的独立用户数据，体积大且不可复现）
+.tmp-chrome*/
+.tmp-chrome2*/
+.tmp-chrome3*/
 
 # 编辑器与系统文件
 .vscode/

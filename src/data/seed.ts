@@ -292,8 +292,28 @@ const task = (
  *              机器人预警按**故障部位**分下装（底盘 / 行走 / 通信 / 电池）与上装（采集载荷 / 传感器）
  */
 const ALARM_CLASSES: AlarmClass[] = [
-  { id: "AC-01", name: "下装", main: "机器人预警", enabled: true },
-  { id: "AC-02", name: "上装", main: "机器人预警", enabled: true },
+  {
+    id: "AC-01",
+    name: "下装",
+    main: "机器人预警",
+    enabled: true,
+    hint: "底盘 · 行走 · 定位 · 通信 · 电池",
+  },
+  {
+    id: "AC-02",
+    name: "上装",
+    main: "机器人预警",
+    enabled: true,
+    hint: "采集载荷 · 传感器",
+  },
+  // 识别失败（照片模糊 / 算法调用失败 / 传感器无数据）不是告警项触发，归机器人预警下的独立分类
+  {
+    id: "AC-06",
+    name: "识别故障",
+    main: "机器人预警",
+    enabled: true,
+    hint: "照片模糊 · 算法调用失败 · 传感器无数据",
+  },
   { id: "AC-03", name: "环境安全", main: "业务预警", enabled: true },
   { id: "AC-04", name: "生产运行", main: "业务预警", enabled: true },
   { id: "AC-05", name: "人员与作业", main: "业务预警", enabled: true },
@@ -1469,7 +1489,7 @@ export function seed(
   const _s: State = {
     tenantId,
     tenants,
-    schema: 12,
+    schema: 13,
     points: pts,
     maps: [
       {
@@ -1701,6 +1721,8 @@ export function seed(
         health: 92,
         firmware: "DOG-2.4.1",
         sn: "SN-DOG-2411-0007",
+        enabled: true,
+        updatedAt: "2026-09-18 09:12:00",
       },
       {
         id: "R02",
@@ -1719,6 +1741,8 @@ export function seed(
         health: 88,
         firmware: "AGV-1.9.0",
         sn: "SN-AGV-2508-0132",
+        enabled: true,
+        updatedAt: "2026-10-09 14:30:00",
       },
       {
         id: "R03",
@@ -1740,6 +1764,8 @@ export function seed(
         health: 95,
         firmware: "RAIL-3.0.2",
         sn: "SN-RAIL-2306-0045",
+        enabled: true,
+        updatedAt: "2026-10-21 08:45:00",
       },
     ],
     templates: [
@@ -2143,7 +2169,7 @@ export function seed(
         name: "V001 出口压力超上限",
         level: "二级",
         category: "业务",
-        state: "已恢复",
+        state: "已关闭",
         notes: [
           "处置后连续两次复测正常",
           "处理：受理",
@@ -2267,10 +2293,12 @@ export function seed(
         resultId: "RES039",
         taskId: "T042",
         pointId: points[9].id,
-        // AI 状态异常：识别未给出可用结论，固定三级告警（风险信息本身无异常）
-        name: points[9].name + " AI 识别异常",
+        // AI 状态异常 = 识别失败：机器人预警 › 识别故障，固定三级；仍带任务 / 点位 / 结果用于追溯
+        name: points[9].name + " 识别故障",
         level: "三级",
-        category: "业务",
+        category: "机器人",
+        alarmClass: "识别故障",
+        robotId: "R03",
         state: "待确认",
         notes: ["AI 状态异常（三级）：图像模糊，未识别出有效读数"],
         time: dueIn(-40),
@@ -2345,7 +2373,7 @@ export function seed(
         robotId: "R02",
         name: "罐区巡检二号里程达保养阈值",
         level: "三级",
-        state: "已恢复",
+        state: "已关闭",
         notes: ["已纳入计划性保养"],
         handle: "按里程计划保养（履带/轮组/电池）",
         time: dueIn(-120),
@@ -2949,9 +2977,25 @@ export function seed(
      * 地图 / 机器人的"区域"下拉也取自这里。
      */
     areas: [
-      { id: "AREA-ROOT", name: "全厂区" },
-      { id: "AREA-01", name: "一期罐区", parentId: "AREA-ROOT" },
-      { id: "AREA-02", name: "装置区", parentId: "AREA-ROOT" },
+      { id: "AREA-ROOT", code: "AR-00", name: "全厂区" },
+      {
+        id: "AREA-01",
+        code: "AR-01",
+        name: "一期罐区",
+        parentId: "AREA-ROOT",
+        owner: "王旭",
+        department: "储运部",
+        updatedAt: "2026-02-05 09:12:34",
+      },
+      {
+        id: "AREA-02",
+        code: "AR-02",
+        name: "装置区",
+        parentId: "AREA-ROOT",
+        owner: "陈磊",
+        department: "生产部",
+        updatedAt: "2026-01-19 16:48:07",
+      },
     ],
     /** 仪表：设备清单里的检测目标，只是资产、**不能直接巡检** */
     instruments: ins,

@@ -69,7 +69,7 @@ export function DeviceTargets({ id }: { id?: string }) {
         }
       >
         <Table
-          heads={["检测项 ID", "检测目标名称", "类型", "分类", "操作"]}
+          heads={["检测项 ID", "检测项名称", "类型", "分类", "操作"]}
           rows={dev.items.map((it) => [
             it.id,
             it.target,
@@ -169,7 +169,7 @@ export function DeviceTargets({ id }: { id?: string }) {
               ))}
             </datalist>
           </Field>
-          <Field label="检测目标名称" required>
+          <Field label="检测项名称" required>
             <input
               value={itemForm.target}
               placeholder="如 出口压力表"

@@ -11,7 +11,21 @@ import { useState } from "react";
 import { useStore } from "../data/store";
 import { usePageSize, useViewState } from "../data/navigation";
 import { Pager } from "../components/Business";
-import { Badge, Btn, Field, Modal, Note, Panel, Table } from "../components/UI";
+import {
+  Badge,
+  Btn,
+  Drawer,
+  Field,
+  Switch,
+  Panel,
+  Table,
+} from "../components/UI";
+import { fmtDateTime } from "../data/types";
+import {
+  DeleteConfirm,
+  type DeleteConfirmState,
+} from "../components/ListDelete";
+import { FilterPanel } from "../components/FilterPanel";
 import {
   ALGO_LIBRARY,
   captureKinds,
@@ -50,8 +64,20 @@ const ALGO_OPTIONS: CascaderOption[] = (() => {
 const ALGO_NAMES = new Set(ALGO_LIBRARY.map((a) => a.name));
 
 /**
+ * 生成下一个模板编码（ALG-01 / ALG-02 …）
+ * @description 编码是系统的唯一标识，由平台按现有最大值顺延分配，用户不可改
+ */
+const nextRequirementCode = (list: Requirement[]) => {
+  const max = list.reduce((n, r) => {
+    const m = /^ALG-(\d+)$/.exec(r.code || "");
+    return m ? Math.max(n, Number(m[1])) : n;
+  }, 0);
+  return `ALG-${String(max + 1).padStart(2, "0")}`;
+};
+
+/**
  * 空表单（新增态）
- * @description id 留空，引擎保存时自动生成 REQ- 前缀 id；编码由用户填写（保存时校验唯一）
+ * @description id 留空，引擎保存时自动生成 REQ- 前缀 id；编码打开表单时由系统配额
  */
 const emptyRequirement = (): Requirement => ({
   id: "",
@@ -81,13 +107,43 @@ export function Requirements() {
   const requirements = s.requirements || [];
   const targets = s.businessTargets || [];
   const [req, SETREQ] = useState<Requirement | null>(null);
+  /** 二次确认：列表启停与表单保存共用同一个确认弹窗 */
+  const [confirm, setConfirm] = useState<DeleteConfirmState | null>(null);
+  /** 表单字段级校验：key = 字段名，value = 原因 */
+  const [formErr, setFormErr] = useState<Record<string, string>>({});
+  /** 打开表单（顺带清掉上一次留下的红字） */
+  const openForm = (next: Requirement) => {
+    setFormErr({});
+    SETREQ(next);
+  };
+  const [kw, KW] = useViewState("requirements.kw", "");
+  const [kindF, KF] = useViewState("requirements.kind", "全部");
+  const [stateF, SF] = useViewState("requirements.state", "全部");
+  /** 筛选面板展开态：条件默认收起，点「筛选」才显示 */
+  const [filterOpen, SETFILTEROPEN] = useState(false);
+  /** 筛选草稿：点「查询」才写回生效值 */
+  const [draft, SETDRAFT] = useState<Record<string, string>>({
+    kw,
+    kind: kindF,
+    state: stateF,
+  });
   const [pn, PN] = useViewState("requirements.page", 1);
   // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
   const [pageSize, SETPAGESIZE] = usePageSize("requirements.size");
-  // 分页切片：当前页一律 clamp 到有效范围
-  const pages = Math.max(1, Math.ceil(requirements.length / pageSize));
+  const keyword = kw.trim();
+  const filtered = requirements.filter(
+    (r) =>
+      (kindF === "全部" || r.kind === kindF) &&
+      (stateF === "全部" || r.state === stateF) &&
+      (!keyword ||
+        r.code.includes(keyword) ||
+        r.name.includes(keyword) ||
+        (r.algorithm || "").includes(keyword)),
+  );
+  // 分页切片：筛选后页数可能变少，当前页一律 clamp 到有效范围
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const cur = Math.min(Math.max(1, pn), pages);
-  const pageRows = requirements.slice((cur - 1) * pageSize, cur * pageSize);
+  const pageRows = filtered.slice((cur - 1) * pageSize, cur * pageSize);
   /**
    * 算法模板被引用的处数 = 巡检目标台账按 requirementId 引用
    * @description 引用数 = 改动影响面；被引用后只影响后续新台账，已落库的台账保留当时快照
@@ -101,9 +157,53 @@ export function Requirements() {
       requirement: { ...r, state: r.state === "启用" ? "停用" : "启用" },
     });
   /**
+   * 启停二次确认：列表状态列的唯一入口（与地图列表同款开关 + 确认弹窗）
+   * @description 停用会从台账候选里消失，且可能已有台账引用，改之前把影响面说清楚
+   */
+  const askToggle = (r: Requirement) => {
+    const off = r.state === "启用";
+    const refs = refCountOf(r.id);
+    setConfirm({
+      title: off ? "停用算法模板" : "启用算法模板",
+      okText: off ? "确认停用" : "确认启用",
+      text: off ? (
+        <>
+          停用后「<b>{r.name}</b>」不再出现在巡检目标台账的算法模板候选里。
+          {refs ? `已有 ${refs} 处台账引用它，这些台账照旧运行，不受影响。` : ""}
+        </>
+      ) : (
+        <>
+          启用后「<b>{r.name}</b>」重新出现在巡检目标台账的算法模板候选里。
+        </>
+      ),
+      run: () => toggleState(r),
+    });
+  };
+  /**
    * 算法候选：库内按能力类型分组；**仅在填了库外算法时**才补「库外 / 手填」叶子，
    * 避免新增表单（算法为空）一打开就显示「库外 / 手填 / （空）」这种假路径
    */
+  /**
+   * 保存前的前端校验（与引擎同口径）
+   * @description 不通过就**不弹确认框**，把原因直接标在字段上；
+   *              否则会出现「确认了却没保存」——引擎拦下来只弹一条 toast，用户看不到是哪项的问题
+   */
+  const validateForm = (r: Requirement) => {
+    const err: Record<string, string> = {};
+    if (!r.name.trim()) err.name = "请填写算法模板名称";
+    if (!r.targetKinds.length) err.targetKinds = "请至少选择一个适用目标类型";
+    if (!r.algorithm.trim()) err.algorithm = "请选择算法";
+    if (r.judge === "数值范围") {
+      if (!r.unit?.trim()) err.unit = "数值范围判定需填写单位";
+      if (!Number.isFinite(r.min)) err.min = "请填写下限";
+      if (!Number.isFinite(r.max)) err.max = "请填写上限";
+      else if (Number.isFinite(r.min) && r.max <= r.min)
+        err.max = "上限须大于下限";
+    }
+    if (r.judge === "期望状态" && !r.expected?.trim())
+      err.expected = "请填写期望状态";
+    return err;
+  };
   const algoChoices: CascaderOption[] = !req?.algorithm || ALGO_NAMES.has(req.algorithm)
     ? ALGO_OPTIONS
     : [
@@ -119,24 +219,57 @@ export function Requirements() {
 
   return (
     <>
-      <Note>
-        这里是平台维护<strong>算法模板</strong>的唯一入口（原「算法模板管理」与「巡检要求管理」已合并到本页）：
-        一条模板包含<strong>编码、名称、说明、算法能力类型、默认采集方式、算法、判定方式（单位 / 阈值）</strong>。
-        巡检目标台账只需选一条算法模板，判定口径与算法随模板带出。
-        已落库的台账保留保存时的口径快照，不会被改写。
-      </Note>
       <Panel
-        title="算法模板 · 看什么 + 拿什么算 + 怎么判"
+        title="算法模板"
         extra={
-          <Btn
-            primary
-            disabled={s.roleId !== "admin"}
-            onClick={() => SETREQ(emptyRequirement())}
-          >
-            ＋ 新增算法模板
-          </Btn>
+          <div className="actions">
+            <Btn onClick={() => SETFILTEROPEN(!filterOpen)}>
+              {filterOpen ? "收起筛选" : "筛选"}
+            </Btn>
+            <Btn
+              primary
+              disabled={s.roleId !== "admin"}
+              // 编码由系统顺延分配，打开表单时就填好，用户不用管
+              onClick={() =>
+                openForm({
+                  ...emptyRequirement(),
+                  code: nextRequirementCode(requirements),
+                })
+              }
+            >
+              ＋ 新增算法模板
+            </Btn>
+          </div>
         }
       >
+        {filterOpen && (
+          <FilterPanel
+            fields={[
+              { key: "kw", label: "关键词", placeholder: "编码 / 名称 / 算法名" },
+              {
+                key: "kind",
+                label: "算法能力类型",
+                options: ["全部", ...requirementKinds],
+              },
+              { key: "state", label: "状态", options: ["全部", "启用", "停用"] },
+            ]}
+            value={draft}
+            onChange={SETDRAFT}
+            onSearch={() => {
+              KW(draft.kw ?? "");
+              KF(draft.kind ?? "全部");
+              SF(draft.state ?? "全部");
+              PN(1);
+            }}
+            onReset={() => {
+              SETDRAFT({ kw: "", kind: "全部", state: "全部" });
+              KW("");
+              KF("全部");
+              SF("全部");
+              PN(1);
+            }}
+          />
+        )}
         <Table
           heads={[
             "模板编码",
@@ -145,6 +278,7 @@ export function Requirements() {
             "算法名称",
             "关联台账",
             "状态",
+            "更新时间",
             "操作",
           ]}
           rows={pageRows.map((r) => [
@@ -155,23 +289,27 @@ export function Requirements() {
             <Badge tone={refCountOf(r.id) ? "blue" : undefined}>
               {refCountOf(r.id)} 处
             </Badge>,
-            <Badge tone={r.state === "启用" ? "blue" : "amber"}>{r.state}</Badge>,
+            // 状态 = 开关：一眼看出是否启用，点一下弹二次确认
+            <Switch
+              checked={r.state === "启用"}
+              disabled={s.roleId !== "admin"}
+              label={`${r.name} 启用状态`}
+              onChange={() => askToggle(r)}
+            />,
+            <span className="muted">{fmtDateTime(r.updatedAt)}</span>,
             <div className="actions">
               <Btn
                 disabled={s.roleId !== "admin"}
-                onClick={() => SETREQ({ ...r })}
+                onClick={() => openForm({ ...r })}
               >
                 修改
-              </Btn>
-              <Btn disabled={s.roleId !== "admin"} onClick={() => toggleState(r)}>
-                {r.state === "启用" ? "停用" : "启用"}
               </Btn>
             </div>,
           ])}
         />
         <Pager
           page={cur}
-          count={requirements.length}
+          count={filtered.length}
           size={pageSize}
           onChange={PN}
           onSize={(n) => {
@@ -179,15 +317,12 @@ export function Requirements() {
             PN(1);
           }}
         />
-        <p className="muted">
-          关联台账 = 当前有多少巡检目标台账引用了本模板；停用后新台账不再可选，已有台账照旧运行。
-        </p>
       </Panel>
 
       {req && (
-        <Modal
+        <Drawer
           title={req.id ? "修改算法模板" : "新增算法模板"}
-          wide
+          subtitle={req.code || undefined}
           onClose={() => SETREQ(null)}
           footer={
             <>
@@ -195,8 +330,48 @@ export function Requirements() {
               <Btn
                 primary
                 onClick={() => {
-                  if (act({ type: "SAVE_REQUIREMENT", requirement: req }))
-                    SETREQ(null);
+                  // 先本地校验：不通过就把原因标在字段上，不弹确认框
+                  const err = validateForm(req);
+                  setFormErr(err);
+                  if (Object.keys(err).length) {
+                    requestAnimationFrame(() => {
+                      document
+                        .querySelector(".drawer-body .field.has-err")
+                        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+                    });
+                    return;
+                  }
+                  const refs = req.id ? refCountOf(req.id) : 0;
+                  setConfirm({
+                    title: req.id ? "保存算法模板修改" : "新增算法模板",
+                    okText: "确认保存",
+                    text: req.id ? (
+                      refs ? (
+                        <>
+                          「<b>{req.name}</b>」已被 {refs} 处巡检目标引用。
+                          已建台账保留保存时的口径，本次改动只影响之后新建的台账。
+                        </>
+                      ) : (
+                        <>
+                          保存后「<b>{req.name || "未命名模板"}</b>」
+                          的内容与判定口径立即生效。
+                        </>
+                      )
+                    ) : (
+                      <>
+                        保存后「<b>{req.name || "未命名模板"}</b>」
+                        会出现在巡检目标台账的算法模板候选里。
+                      </>
+                    ),
+                    run: () => {
+                      const ok = act({
+                        type: "SAVE_REQUIREMENT",
+                        requirement: req,
+                      });
+                      if (ok) SETREQ(null);
+                      return ok;
+                    },
+                  });
                 }}
               >
                 保存算法模板
@@ -206,14 +381,11 @@ export function Requirements() {
         >
           <h4>1、基础信息</h4>
           <div className="form-grid">
-            <Field label="算法模板编码" required>
-              <input
-                value={req.code}
-                placeholder="如 ALG-11"
-                onChange={(e) => SETREQ({ ...req, code: e.target.value })}
-              />
+            {/* 编码是系统的唯一标识：由平台顺延分配，不允许用户改 */}
+            <Field label="算法模板编码">
+              <input value={req.code} disabled readOnly />
             </Field>
-            <Field label="算法模板名称" required>
+            <Field label="算法模板名称" required error={formErr.name}>
               <input
                 value={req.name}
                 placeholder="如 看区域气体浓度"
@@ -256,7 +428,11 @@ export function Requirements() {
               </select>
             </Field>
           </div>
-          <Field label="适用目标类型（可多选）" required>
+          <Field
+            label="适用目标类型（可多选）"
+            required
+            error={formErr.targetKinds}
+          >
             <div className="check-row">
               {TARGET_KINDS.map((k) => (
                 <label key={k}>
@@ -279,7 +455,7 @@ export function Requirements() {
           </Field>
 
           <h4>3、算法调用与判定逻辑</h4>
-          <Field label="算法" required>
+          <Field label="算法" required error={formErr.algorithm}>
             {/* 候选来自平台算法库：按算法能力类型分组，逐级选到具体算法 */}
             <Cascader
               options={algoChoices}
@@ -303,17 +479,43 @@ export function Requirements() {
           {/* 判定方式决定下半部分口径：数值范围需单位 + 上下限；期望状态需期望状态 */}
           {req.judge === "数值范围" && (
             <div className="form-grid">
-              <Field label="单位">
+              <Field label="单位" required error={formErr.unit}>
                 <input
                   value={req.unit || ""}
                   placeholder="如 MPa / ℃ / ppm"
                   onChange={(e) => SETREQ({ ...req, unit: e.target.value })}
                 />
               </Field>
+              <Field label="下限（含）" required error={formErr.min}>
+                <input
+                  type="number"
+                  value={Number.isFinite(req.min) ? req.min : ""}
+                  placeholder="如 0"
+                  onChange={(e) =>
+                    SETREQ({
+                      ...req,
+                      min: e.target.value === "" ? NaN : Number(e.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="上限（含）" required error={formErr.max}>
+                <input
+                  type="number"
+                  value={Number.isFinite(req.max) ? req.max : ""}
+                  placeholder="如 1"
+                  onChange={(e) =>
+                    SETREQ({
+                      ...req,
+                      max: e.target.value === "" ? NaN : Number(e.target.value),
+                    })
+                  }
+                />
+              </Field>
             </div>
           )}
           {req.judge === "期望状态" && (
-            <Field label="期望状态">
+            <Field label="期望状态" required error={formErr.expected}>
               <input
                 value={req.expected || ""}
                 placeholder="如 开启 / 无异常"
@@ -325,19 +527,23 @@ export function Requirements() {
           <h4>4、状态</h4>
           <div className="form-grid">
             <Field label="状态">
-              <select
-                value={req.state}
-                onChange={(e) =>
-                  SETREQ({ ...req, state: e.target.value as "启用" | "停用" })
-                }
-              >
-                <option>启用</option>
-                <option>停用</option>
-              </select>
+              <div className="switch-row">
+                <Switch
+                  checked={req.state === "启用"}
+                  label="启用状态"
+                  onChange={(next) =>
+                    SETREQ({ ...req, state: next ? "启用" : "停用" })
+                  }
+                />
+                {req.state}
+              </div>
             </Field>
           </div>
-        </Modal>
+        </Drawer>
       )}
+
+      {/* 列表启停 / 表单保存的二次确认（同一个弹窗，按钮文案随动作变） */}
+      <DeleteConfirm state={confirm} onClose={() => setConfirm(null)} />
     </>
   );
 }

@@ -85,9 +85,11 @@ export function Tenants() {
           PN(1);
         }}
       />
+      {/* 租户只有名称 / 编码（+ 编辑态的状态）三个字段，填的时候不需要对照列表，保留弹窗并收窄 */}
       {edit && (
         <Modal
           title={edit.id ? "编辑租户" : "添加租户"}
+          slim
           onClose={() => E(null)}
         >
           <Field label="租户名称" required>

@@ -10,6 +10,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 export interface LogColumn<T> {
   key: string;
@@ -138,11 +139,14 @@ export function LogTable<T extends { id: string }>({
         </tbody>
       </table>
       {!rows.length && <div className="empty">暂无记录</div>}
-      {tip && (
-        <div className="cell-tip" style={{ left: tip.x, top: tip.y }}>
-          {tip.text}
-        </div>
-      )}
+      {/* 气泡按视口坐标定位，portal 到 body：页面根节点带缩放 transform 时留在原位会偏位 */}
+      {tip &&
+        createPortal(
+          <div className="cell-tip" style={{ left: tip.x, top: tip.y }}>
+            {tip.text}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

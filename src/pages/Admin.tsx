@@ -12,22 +12,40 @@
  *              右侧全厂区 2D 地图 + 绘制工具条（多边形 / 矩形 / 撤销 / 重做 / 清空）与标绘列表
  */
 import { useState } from "react";
-import { Pentagon, Square, Undo2, Redo2, Trash2 } from "lucide-react";
 import { useStore } from "../data/store";
 import { usePageSize, useViewState } from "../data/navigation";
 import { CatalogTree, type CatalogNode } from "../components/CatalogTree";
-import { Btn, Panel, Table, Field, Note, Modal } from "../components/UI";
+import {
+  Btn,
+  Drawer,
+  InnerPage,
+  Panel,
+  Table,
+  Field,
+  Note,
+} from "../components/UI";
 import { Pager } from "../components/Business";
+import { AreaSketch } from "../components/AreaSketch";
 import { MapImageCanvas } from "../components/MapImageCanvas";
-import { DeleteConfirm } from "../components/ListDelete";
 import { SAMPLE_MAP_IMAGE } from "../data/sampleMap";
-import { ROOT_AREA_ID, ROOT_AREA_NAME } from "../data/types";
+import {
+  DeleteConfirm,
+  type DeleteConfirmState,
+} from "../components/ListDelete";
+import {
+  ROOT_AREA_ID,
+  ROOT_AREA_NAME,
+  nextAreaCode,
+  type Area,
+} from "../data/types";
 
 /** 顶点（底图百分比坐标） */
 type Pt = { x: number; y: number };
 /** 区域表单：id 存在 = 编辑，否则新增；points = 全厂区 2D 底图上绘制的顶点 */
 type AreaForm = {
   id?: string;
+  /** 区域编码：系统顺延分配，表单里只读展示 */
+  code: string;
   name: string;
   /**
    * 父级区域文本：可下拉选已有区域，也可手填。
@@ -41,17 +59,8 @@ type AreaForm = {
   points: Pt[];
   /** 是否已闭合（点回首点 / 矩形两点 / 完成绘制）；闭合后才能保存范围 */
   closed: boolean;
-  /** 绘制工具：多边形点选 / 矩形两点成框 */
-  tool: "polygon" | "rect";
-  /** 矩形第一点（rect 工具：两次点击确定对角） */
-  rectAnchor: Pt | null;
-  /** 撤销栈：顶点序列快照（最多 20 步） */
-  history: Pt[][];
-  /** 重做栈 */
-  future: Pt[][];
 };
-/** 删除二次确认 */
-type Confirm = { title: string; text: string; run: () => boolean };
+
 
 /**
  * 父级区域组合框：既能下拉选已有区域，也能手输任意文本
@@ -127,13 +136,17 @@ export function Admin() {
   const areas = s.areas || [];
 
   const [areaForm, setAreaForm] = useState<AreaForm | null>(null);
-  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  /** 二次确认：删除与保存共用同一个确认弹窗 */
+  const [confirm, setConfirm] = useState<DeleteConfirmState | null>(null);
   /** 树选中节点：空串 = 全部区域；选中后右侧表格只显示该节点子树 */
   const [treeSel, setTreeSel] = useState("");
+  /** 只读查看的区域 */
+  const [viewArea, setViewArea] = useState<Area | null>(null);
 
   /** 打开区域弹窗（新增 / 编辑）：已有范围轮廓则回显到全厂区 2D 底图上 */
   const openForm = (a?: {
     id: string;
+    code?: string;
     name: string;
     parentId?: string;
     owner?: string;
@@ -142,6 +155,8 @@ export function Admin() {
   }) =>
     setAreaForm({
       id: a?.id,
+      // 编码由系统分配：编辑沿用原值，新增按现有最大值顺延
+      code: a?.code || nextAreaCode(areas),
       name: a?.name || "",
       // 编辑回显：父级 id → 父级名称（组合框里显示名称）
       parentText: a?.parentId
@@ -151,10 +166,6 @@ export function Admin() {
       department: a?.department || "",
       points: a?.polygon ? [...a.polygon] : [],
       closed: !!a?.polygon?.length,
-      tool: "polygon",
-      rectAnchor: null,
-      history: [],
-      future: [],
     });
 
   /** 子区域列表（按 parentId 归组） */
@@ -208,88 +219,143 @@ export function Admin() {
     return areas.filter((a) => !banned.has(a.id));
   };
 
-  /** 把当前顶点序列压入撤销栈（任何改动顶点的操作前调用），并清空重做栈 */
-  const pushHistory = (f: AreaForm): Pick<AreaForm, "history" | "future"> => ({
-    history: [...f.history, f.points].slice(-20),
-    future: [],
-  });
-
-  /** 图面点击：多边形依次加点（点回首点闭合）/ 矩形两点成框 */
-  const mapClick = (x: number, y: number) => {
-    if (!areaForm || areaForm.closed) return;
-    if (areaForm.tool === "rect") {
-      // 第一次点击定 anchor；第二次点击取对角，生成 4 顶点矩形并直接闭合
-      if (!areaForm.rectAnchor) {
-        setAreaForm({ ...areaForm, rectAnchor: { x, y } });
-        return;
+  /** 保存区域：新增走 ADD_AREA，编辑走 RENAME_AREA（同一套字段） */
+  const saveArea = () => {
+    if (!areaForm) return false;
+    const name = areaForm.name.trim();
+    const ok = act(
+      areaForm.id
+        ? {
+            type: "RENAME_AREA",
+            id: areaForm.id,
+            name,
+            parentText: areaForm.parentText,
+            owner: areaForm.owner,
+            department: areaForm.department,
+            polygon: areaForm.closed ? areaForm.points : [],
+          }
+        : {
+            type: "ADD_AREA",
+            name,
+            parentText: areaForm.parentText,
+            owner: areaForm.owner,
+            department: areaForm.department,
+            polygon: areaForm.closed ? areaForm.points : [],
+          },
+    );
+    if (ok) {
+      setAreaForm(null);
+      // 新增的区域可能挂在任意父级下：回到「全部区域」并翻回第一页，否则刚建完就看不见它
+      if (!areaForm.id) {
+        setTreeSel("");
+        PN(1);
       }
-      const a = areaForm.rectAnchor;
-      setAreaForm({
-        ...areaForm,
-        ...pushHistory(areaForm),
-        points: [
-          { x: a.x, y: a.y },
-          { x, y: a.y },
-          { x, y },
-          { x: a.x, y },
-        ],
-        closed: true,
-        rectAnchor: null,
-      });
-      return;
     }
-    // 多边形：靠近首点（2% 内）且已有 ≥3 顶点 → 闭合轮廓
-    const first = areaForm.points[0];
-    if (
-      first &&
-      areaForm.points.length >= 3 &&
-      Math.hypot(first.x - x, first.y - y) < 2
-    ) {
-      setAreaForm({ ...areaForm, closed: true });
-      return;
-    }
-    setAreaForm({
-      ...areaForm,
-      ...pushHistory(areaForm),
-      points: [...areaForm.points, { x, y }],
-    });
+    return ok;
   };
 
-  /** 撤销：弹回上一步顶点序列（闭合态撤销即重新打开草稿） */
-  const undoDraw = () => {
-    if (!areaForm?.history.length) return;
-    setAreaForm({
-      ...areaForm,
-      points: areaForm.history[areaForm.history.length - 1],
-      history: areaForm.history.slice(0, -1),
-      future: [areaForm.points, ...areaForm.future],
-      closed: false,
-      rectAnchor: null,
-    });
-  };
+  /* 区域编辑：左参数 + 右全厂地图画范围，两块要同屏对照，走内置页而不是浮层 */
+  if (areaForm)
+    return (
+      <>
+        <InnerPage
+          title={areaForm.id ? "编辑区域" : "新增区域"}
+          subtitle={areaForm.name.trim() || undefined}
+          className="admin-area-page"
+          actions={
+            <>
+              <Btn onClick={() => setAreaForm(null)}>取消</Btn>
+              <Btn
+                primary
+                disabled={!areaForm.name.trim()}
+                onClick={() => {
+                  const editing = !!areaForm.id;
+                  const name = areaForm.name.trim();
+                  setConfirm({
+                    title: editing ? "保存区域修改" : "新增区域",
+                    okText: "确认保存",
+                    text: editing ? (
+                      <>
+                        保存后「<b>{name}</b>」的区域参数更新；
+                        若改了名称，该区域下设备的安装位置前缀会同步刷新。
+                      </>
+                    ) : (
+                      <>
+                        保存后新建区域「<b>{name}</b>」，可在设备台账里选用。
+                      </>
+                    ),
+                    run: saveArea,
+                  });
+                }}
+              >
+                保存
+              </Btn>
+            </>
+          }
+        >
+        <div className="area-split">
+          {/* 左：参数填空 */}
+          <div className="area-form">
+            {/* 编码是系统的唯一标识：系统分配，用户不可改 */}
+            <Field label="区域编码">
+              <input value={areaForm.code} disabled readOnly />
+            </Field>
+            <Field label="区域名称" required>
+              <input
+                value={areaForm.name}
+                maxLength={32}
+                placeholder="例如 二期罐区"
+                onChange={(e) =>
+                  setAreaForm({ ...areaForm, name: e.target.value })
+                }
+              />
+              <i className="f-count">{areaForm.name.length}/32</i>
+            </Field>
 
-  /** 重做：恢复被撤销的顶点序列 */
-  const redoDraw = () => {
-    if (!areaForm?.future.length) return;
-    setAreaForm({
-      ...areaForm,
-      points: areaForm.future[0],
-      history: [...areaForm.history, areaForm.points],
-      future: areaForm.future.slice(1),
-    });
-  };
+            <Field label="父级区域">
+              <ParentCombo
+                text={areaForm.parentText}
+                options={parentOptions(areaForm.id).map((p) => p.name)}
+                onChange={(v) => setAreaForm({ ...areaForm, parentText: v })}
+              />
+            </Field>
 
-  /** 清空范围：当前内容入撤销栈，可撤回 */
-  const clearDraw = () => {
-    if (!areaForm) return;
-    setAreaForm({
-      ...areaForm,
-      ...pushHistory(areaForm),
-      points: [],
-      closed: false,
-      rectAnchor: null,
-    });
-  };
+            {/* 负责人 / 管理部门：纯手填，非必填 */}
+            {(
+              [
+                ["owner", "区域负责人"],
+                ["department", "管理部门"],
+              ] as const
+            ).map(([key, label]) => (
+              <Field key={key} label={label}>
+                <input
+                  value={areaForm[key]}
+                  placeholder="可留空"
+                  onChange={(e) =>
+                    setAreaForm({ ...areaForm, [key]: e.target.value })
+                  }
+                />
+              </Field>
+            ))}
+
+          </div>
+
+          {/* 右：全厂大地图 + 绘制工具条 + 标绘列表（标绘逻辑收在 AreaSketch，与锚点绘制共用） */}
+          <AreaSketch
+            label={areaForm.name}
+            fill
+            value={{ points: areaForm.points, closed: areaForm.closed }}
+            onChange={(next) =>
+              setAreaForm({ ...areaForm, ...next })
+            }
+          />
+        </div>
+        </InnerPage>
+
+        {/* 保存二次确认：与列表删除共用同一个确认弹窗 */}
+        <DeleteConfirm state={confirm} onClose={() => setConfirm(null)} />
+      </>
+    );
 
   return (
     <>
@@ -313,17 +379,15 @@ export function Admin() {
             </Btn>
           }
         >
-          <Note>
-            区域树以固定根「全厂区」开始：左侧目录点选节点可按子树筛选；
-            悬停节点可直接新增子级或删除。改名后，该区域下设备的安装位置前缀会同步更新，
-            不会掉到「未分区」。
-          </Note>
           <Table
-            heads={["区域名称", "父级区域", "操作"]}
+            heads={["区域编码", "区域名称", "父级区域", "更新时间", "操作"]}
             rows={areaRows.map((a) => [
+              <span>{a.code || "—"}</span>,
               <b>{a.name}</b>,
               a.parentId ? areaName(a.parentId) : <span className="dim">—</span>,
+              <span className="muted">{a.updatedAt || "—"}</span>,
               <div className="actions">
+                <Btn onClick={() => setViewArea(a)}>查看</Btn>
                 <Btn onClick={() => openForm(a)}>编辑</Btn>
                 <Btn
                   onClick={() =>
@@ -352,199 +416,73 @@ export function Admin() {
         </Panel>
       </div>
 
-      {/* 区域：新增 / 编辑（宽版分栏：左参数、右图上画范围） */}
-      {areaForm && (
-        <Modal
-          title={areaForm.id ? "编辑区域" : "新增区域"}
-          wide
-          onClose={() => setAreaForm(null)}
+      {/* 区域详情：只读（含范围轮廓回显），改参数走「编辑」内置页 */}
+      {viewArea && (
+        <Drawer
+          title={viewArea.name}
+          subtitle={
+            viewArea.parentId ? areaName(viewArea.parentId) : ROOT_AREA_NAME
+          }
+          onClose={() => setViewArea(null)}
+          footer={<Btn onClick={() => setViewArea(null)}>关闭</Btn>}
         >
-          <div className="area-split">
-            {/* 左：参数填空 */}
-            <div className="area-form">
-              <Field label="区域名称" required>
-                <input
-                  value={areaForm.name}
-                  maxLength={32}
-                  placeholder="例如 二期罐区"
-                  onChange={(e) =>
-                    setAreaForm({ ...areaForm, name: e.target.value })
-                  }
-                />
-                <i className="f-count">{areaForm.name.length}/32</i>
-              </Field>
-
-              <Field label="父级区域">
-                <ParentCombo
-                  text={areaForm.parentText}
-                  options={parentOptions(areaForm.id).map((p) => p.name)}
-                  onChange={(v) =>
-                    setAreaForm({ ...areaForm, parentText: v })
-                  }
-                />
-              </Field>
-
-              {/* 负责人 / 管理部门：纯手填，非必填 */}
-              {(
-                [
-                  ["owner", "区域负责人"],
-                  ["department", "管理部门"],
-                ] as const
-              ).map(([key, label]) => (
-                <Field key={key} label={label}>
-                  <input
-                    value={areaForm[key]}
-                    placeholder="可留空"
-                    onChange={(e) =>
-                      setAreaForm({ ...areaForm, [key]: e.target.value })
-                    }
-                  />
-                </Field>
-              ))}
-
-              <Note>
-                区域名称必填；父级区域可下拉选择或直接手填（新名称保存时会自动创建），
-                留空即直属「全厂区」。负责人与管理部门可留空。改名后，该区域下设备的
-                安装位置前缀会同步更新，不会掉到「未分区」。
-              </Note>
-            </div>
-
-            {/* 右：全厂大地图 + 绘制工具条 + 标绘列表（标题在画布之上，不参与悬浮定位） */}
-            <div className="area-canvas">
-              <div className="area-canvas-title">全厂大地图</div>
-              <div className="area-canvas-body">
-              <MapImageCanvas
-                image={SAMPLE_MAP_IMAGE}
-                height={430}
-                hint={
-                  areaForm.closed
-                    ? "范围已闭合 · 可撤销或点工具重画"
-                    : areaForm.tool === "rect"
-                      ? areaForm.rectAnchor
-                        ? "矩形：再点一次取对角"
-                        : "矩形：点击第一个角"
-                      : "点击加顶点 · 靠近首点自动闭合"
+          <div className="form-grid">
+            <Field label="区域编码">
+              <input value={viewArea.code || "—"} disabled readOnly />
+            </Field>
+            <Field label="区域名称">
+              <input value={viewArea.name} disabled readOnly />
+            </Field>
+            <Field label="父级区域">
+              <input
+                value={
+                  viewArea.parentId
+                    ? areaName(viewArea.parentId)
+                    : ROOT_AREA_NAME
                 }
-                onAdd={areaForm.closed ? undefined : mapClick}
-                areas={[
-                  {
-                    id: "draft",
-                    points: areaForm.points,
-                    closed: areaForm.closed,
-                    name: areaForm.name || undefined,
-                  },
-                ]}
+                disabled
+                readOnly
               />
-
-              {/* 绘制工具条：悬浮在地图右上（多边形 / 矩形 / 撤销 / 重做 / 清空） */}
-              <div className="area-tools">
-                <button
-                  type="button"
-                  title="多边形：依次点顶点，点回首点闭合"
-                  className={areaForm.tool === "polygon" ? "on" : ""}
-                  onClick={() =>
-                    setAreaForm({ ...areaForm, tool: "polygon", rectAnchor: null })
-                  }
-                >
-                  <Pentagon size={16} />
-                </button>
-                <button
-                  type="button"
-                  title="矩形：两次点击取对角"
-                  className={areaForm.tool === "rect" ? "on" : ""}
-                  onClick={() =>
-                    setAreaForm({ ...areaForm, tool: "rect", rectAnchor: null })
-                  }
-                >
-                  <Square size={16} />
-                </button>
-                <button
-                  type="button"
-                  title="撤销"
-                  disabled={!areaForm.history.length}
-                  onClick={undoDraw}
-                >
-                  <Undo2 size={16} />
-                </button>
-                <button
-                  type="button"
-                  title="重做"
-                  disabled={!areaForm.future.length}
-                  onClick={redoDraw}
-                >
-                  <Redo2 size={16} />
-                </button>
-                <button
-                  type="button"
-                  title="清空标绘"
-                  disabled={!areaForm.points.length}
-                  onClick={clearDraw}
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-
-              {/* 标绘列表：当前草稿 / 成品一条记录 */}
-              <div className="area-plots">
-                <div className="area-plots-head">标绘列表</div>
-                {areaForm.points.length ? (
-                  <div className="area-plot-item">
-                    <b>{areaForm.name.trim() || "未命名区域"}</b>
-                    <span>
-                      {areaForm.closed
-                        ? `已闭合 · ${areaForm.points.length} 个顶点`
-                        : `绘制中 · ${areaForm.points.length} 个顶点`}
-                    </span>
-                    <button
-                      type="button"
-                      title="删除该标绘"
-                      onClick={clearDraw}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                ) : (
-                  <p className="area-plots-empty">暂无标绘，点工具开始在图上画范围</p>
-                )}
-              </div>
-              </div>
-            </div>
+            </Field>
+            <Field label="区域负责人">
+              <input value={viewArea.owner || "—"} disabled readOnly />
+            </Field>
+            <Field label="管理部门">
+              <input value={viewArea.department || "—"} disabled readOnly />
+            </Field>
+            <Field label="更新时间">
+              <input value={viewArea.updatedAt || "—"} disabled readOnly />
+            </Field>
+            <Field label="范围轮廓">
+              <input
+                value={
+                  viewArea.polygon?.length
+                    ? `已绘制 · ${viewArea.polygon.length} 个顶点`
+                    : "未绘制"
+                }
+                disabled
+                readOnly
+              />
+            </Field>
           </div>
-
-          <div className="modal-actions">
-            <Btn onClick={() => setAreaForm(null)}>取消</Btn>
-            <Btn
-              primary
-              disabled={!areaForm.name.trim()}
-              onClick={() => {
-                const name = areaForm.name.trim();
-                const ok = act(
-                  areaForm.id
-                    ? {
-                        type: "RENAME_AREA",
-                        id: areaForm.id,
-                        name,
-                        parentText: areaForm.parentText,
-                        owner: areaForm.owner,
-                        department: areaForm.department,
-                        polygon: areaForm.closed ? areaForm.points : [],
-                      }
-                    : {
-                        type: "ADD_AREA",
-                        name,
-                        parentText: areaForm.parentText,
-                        owner: areaForm.owner,
-                        department: areaForm.department,
-                        polygon: areaForm.closed ? areaForm.points : [],
-                      },
-                );
-                if (ok) setAreaForm(null);
-              }}
-            >
-              保存
-            </Btn>
-          </div>
-        </Modal>
+          {/* 全厂大地图常驻：画过范围的区域直接高亮，没画过就看它在厂区里的相对位置 */}
+          <MapImageCanvas
+            image={SAMPLE_MAP_IMAGE}
+            height={420}
+            areas={
+              viewArea.polygon?.length
+                ? [
+                    {
+                      id: viewArea.id,
+                      points: viewArea.polygon,
+                      closed: true,
+                      name: viewArea.name,
+                    },
+                  ]
+                : []
+            }
+          />
+        </Drawer>
       )}
 
       {/* 删除二次确认（通用组件） */}

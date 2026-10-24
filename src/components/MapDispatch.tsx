@@ -10,11 +10,19 @@ import { useState } from "react";
 import { useStore } from "../data/store";
 import { mapVer } from "../data/versionLabel";
 import { Badge, Btn, Empty, Note, Panel, Table } from "./UI";
+import { Pager } from "./Business";
+import { ROOT_AREA_NAME, fmtDateTime } from "../data/types";
 
 export function MapDispatch({ mapId }: { mapId: string }) {
   const { s, act } = useStore();
   const m = s.maps.find((x) => x.id === mapId);
   const [sel, SEL] = useState<string[]>([]);
+  /** 下发记录分页：记录按「每台每次下发一条」累积，后期会很长，复用标准分页器 */
+  const [pg, PG] = useState(1);
+  const [size, SIZE] = useState(5);
+  /** 设备表分页：设备台账会持续增加，同样走标准分页（勾选跨页保留） */
+  const [dpg, DPG] = useState(1);
+  const [dsize, DSIZE] = useState(5);
   if (!m) return <Note>地图不存在。</Note>;
   /** 该地图的标定数据版本 c{n}（来自独立标定集合，与地图空间版本解耦） */
   /**
@@ -23,8 +31,23 @@ export function MapDispatch({ mapId }: { mapId: string }) {
    *              走到哪一步、什么时间、反馈是什么
    */
   const syncs = (s.syncs || []).filter((x) => x.mapId === m.id);
-  /** 可下发 = 区域已一致，或未分配区域（首次下发即归入本图区域） */
-  const dispatchable = s.robots.filter((r) => !r.region || r.region === m.region);
+  const rpages = Math.max(1, Math.ceil(syncs.length / size));
+  const rcur = Math.min(pg || 1, rpages);
+  const rrows = syncs.slice((rcur - 1) * size, rcur * size);
+  /**
+   * 区域是否适用：地图与机器人**任一方为「全厂区」即视为万能**，可跨区域下发；
+   * 其余情况要求区域一致，未分配区域的机器首次下发即归入本图区域
+   */
+  const areaFits = (r: (typeof s.robots)[number]) =>
+    !r.region ||
+    r.region === m.region ||
+    r.region === ROOT_AREA_NAME ||
+    m.region === ROOT_AREA_NAME;
+  /** 可下发 = 区域适用 */
+  const dispatchable = s.robots.filter(areaFits);
+  const dpages = Math.max(1, Math.ceil(s.robots.length / dsize));
+  const dcur = Math.min(dpg || 1, dpages);
+  const drows = s.robots.slice((dcur - 1) * dsize, dcur * dsize);
   /** 该机器是否已持有「本图当前版本」的激活回执 */
   const synced = (rid: string) =>
     syncs.some(
@@ -39,15 +62,24 @@ export function MapDispatch({ mapId }: { mapId: string }) {
    * @returns 一句话可用性说明
    */
   const windowOf = (r: (typeof s.robots)[number]) =>
-    r.region && r.region !== m.region
+    !areaFits(r)
       ? "不适用区域"
       : !r.region
         ? "首次下发即归属本区域"
-        : r.current
-          ? "任务结束后"
-          : r.state === "空闲"
-            ? "当前可维护"
-            : "等待空闲";
+        : r.region !== m.region
+          ? // 区域不一致仍可下发 = 有一方是全厂区（万能区域）
+            `全厂区通用 · ${
+              r.current
+                ? "任务结束后"
+                : r.state === "空闲"
+                  ? "当前可维护"
+                  : "等待空闲"
+            }`
+          : r.current
+            ? "任务结束后"
+            : r.state === "空闲"
+              ? "当前可维护"
+              : "等待空闲";
   const toggle = (rid: string) =>
     SEL((old) => (old.includes(rid) ? old.filter((x) => x !== rid) : [...old, rid]));
   const send = () => {
@@ -73,6 +105,7 @@ export function MapDispatch({ mapId }: { mapId: string }) {
         }
       >
         <Table
+          className="dispatch-table"
           heads={[
             <input
               type="checkbox"
@@ -91,25 +124,24 @@ export function MapDispatch({ mapId }: { mapId: string }) {
             "维护窗口",
             "版本一致",
           ]}
-          rows={s.robots.map((r) => [
+          rows={drows.map((r) => [
             <input
               type="checkbox"
               aria-label={`选择 ${r.name}`}
-              disabled={!!r.region && r.region !== m.region}
+              disabled={!areaFits(r)}
               checked={sel.includes(r.id)}
               onChange={() => toggle(r.id)}
             />,
             <>
-              {r.name}
-              <small>{r.id}</small>
+              {r.name} <small>{r.id}</small>
             </>,
             r.region || "未分配",
             <Badge>{r.state}</Badge>,
             r.mapId
-              ? `${mapNameOf(r.mapId)} ${mapVer(r.mapVersion)}`
+              ? `${mapNameOf(r.mapId)} V${r.mapVersion}`
               : "未分配地图",
             windowOf(r),
-            r.region && r.region !== m.region ? (
+            !areaFits(r) ? (
               <span className="muted">不适用</span>
             ) : synced(r.id) ? (
               <Badge>已同步</Badge>
@@ -117,6 +149,17 @@ export function MapDispatch({ mapId }: { mapId: string }) {
               <Badge tone="amber">待更新</Badge>
             ),
           ])}
+        />
+        {/* 设备台账会变长：与下发记录同一套分页，勾选跨页保留 */}
+        <Pager
+          page={dcur}
+          count={s.robots.length}
+          size={dsize}
+          onChange={DPG}
+          onSize={(n) => {
+            DSIZE(n);
+            DPG(1);
+          }}
         />
       </Panel>
       <Panel
@@ -131,14 +174,14 @@ export function MapDispatch({ mapId }: { mapId: string }) {
         {syncs.length ? (
           <Table
             heads={["设备", "版本", "阶段", "下发时间", "反馈", "操作"]}
-            rows={syncs.map((x) => [
+            rows={rrows.map((x) => [
               <>
                 {nameOf(x.robotId)}
                 <small>{x.robotId}</small>
               </>,
               mapVer(x.mapVersion),
               <Badge>{x.state}</Badge>,
-              x.at || "—",
+              fmtDateTime(x.at),
               x.reason || "—",
               x.state === "已同步" ? (
                 <span className="muted">—</span>
@@ -166,6 +209,17 @@ export function MapDispatch({ mapId }: { mapId: string }) {
         ) : (
           <Empty>还没有下发记录。选择设备后点「下发」即可登记传输任务。</Empty>
         )}
+        {/* 记录会随下发次数增长：统一走标准分页，不再靠弹窗内滚动 */}
+        <Pager
+          page={rcur}
+          count={syncs.length}
+          size={size}
+          onChange={PG}
+          onSize={(n) => {
+            SIZE(n);
+            PG(1);
+          }}
+        />
       </Panel>
     </>
   );

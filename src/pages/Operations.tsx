@@ -1,15 +1,16 @@
 import { useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
 import { go, usePageSize, useViewState } from "../data/navigation";
-import { Btn, Badge, Panel, Table, Note, Empty } from "../components/UI";
-import { profileOf } from "../data/deviceProfile";
+import { Btn, Badge, Panel, Table, Note, Empty, Confirm, Switch } from "../components/UI";
+import { profileOf, deviceTypes } from "../data/deviceProfile";
+import { areaOptions } from "../data/deviceMaster";
 import { capabilityMatrix, componentStatuses } from "../data/robotCapabilities";
 import { ObjectLink, Kpis, Pager } from "../components/Business";
 import { FilterPanel } from "../components/FilterPanel";
 import { MapCanvas } from "../components/MapCanvas";
 import { Operations as Legacy } from "./OperationsLegacy";
 import { ControlConsole } from "./Execution";
-import type { Robot } from "../data/types";
+import type { Robot, DeviceType } from "../data/types";
 import {
   currentTask,
   queueFor,
@@ -28,6 +29,11 @@ const ROBOT_STATES = [
   "故障",
   "离线",
 ];
+/**
+ * 正在执行任务的状态：这些状态下不允许停用机器人
+ * @description 与调度口径一致——任务未结束就停用会中断作业，故只能「启用」不能「停用」
+ */
+const EXECUTING_STATES = ["执行中", "暂停", "返航中"];
 export function Operations({
   page,
   id,
@@ -37,17 +43,22 @@ export function Operations({
   id?: string;
   tab?: string;
 }) {
-  const { s } = useStore();
+  const { s, act } = useStore();
   const [region, REG] = useViewState("monitor.region", "一期罐区");
   const [q, Q] = useViewState("robots.query", ""),
     [status, ST] = useViewState("robots.status", "全部"),
     [pn, PN] = useViewState("robots.page", 1);
   // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
   const [pageSize, SETPAGESIZE] = usePageSize("robots.size");
+  /** 机器人详情 › 历史任务：自带分页状态，长列表不再撑高整页 */
+  const [rtPage, RTPAGE] = useViewState("robot.tasks.page", 1);
+  const [rtSize, RTSIZE] = usePageSize("robot.tasks.size");
   /** 筛选草稿：复用全站 FilterPanel，点「查询」才写回生效值 */
   const [draft, DRAFT] = useState({ q, status });
   /** 筛选面板展开态：默认收起，由 panel 头部的「筛选」按钮切换 */
   const [filterOpen, SETFILTEROPEN] = useState(false);
+  /** 待停用的机器人：开关拨到停用时先落在这，二次确认后再真正停用 */
+  const [stopRobot, ASKSTOP] = useState<Robot | null>(null);
   /** 已生效的筛选条件数（「筛选」按钮上的计数） */
   const filterCount = (q.trim() ? 1 : 0) + (status !== "全部" ? 1 : 0);
   /** 展开 / 收起筛选面板：展开时用当前生效值刷新草稿 */
@@ -87,7 +98,7 @@ export function Operations({
             列表块：筛选 / 新增 / 分页都收在同一个面板内（与设备台账同款） */}
         <Panel
           className="panel-filters-wrap"
-          title="机器人实时状态"
+          title="机器人台账"
           extra={
             <div className="actions">
               {/* 筛选：与设备台账 / 巡检目标台账同一套 FilterPanel（草稿条件，点「查询」才生效） */}
@@ -125,6 +136,8 @@ export function Operations({
               "当前状态",
               "电量",
               "待执行",
+              "启用",
+              "更新时间",
               "操作",
             ]}
             rows={rows.slice((pn - 1) * pageSize, pn * pageSize).map((r) => [
@@ -142,6 +155,31 @@ export function Operations({
               ) : (
                 <span className="muted">—</span>
               ),
+              (() => {
+                const on = r.enabled !== false;
+                // 关联状态：执行任务中的机器人只能保持启用，不允许停用
+                const locked = on && EXECUTING_STATES.includes(r.state);
+                return (
+                  <span
+                    className={locked ? "switch-cell locked" : "switch-cell"}
+                    title={
+                      locked ? `执行任务中（${r.state}），不可停用` : undefined
+                    }
+                  >
+                    <Switch
+                      checked={on}
+                      label={`${r.id} 启用状态`}
+                      disabled={locked}
+                      onChange={(next) => {
+                        // 停用：二次确认后再落库；启用：直接生效
+                        if (next) act({ type: "TOGGLE_ROBOT", id: r.id });
+                        else ASKSTOP(r);
+                      }}
+                    />
+                  </span>
+                );
+              })(),
+              r.updatedAt || <span className="muted">—</span>,
               <div className="actions">
                 <Btn onClick={() => go("robot", r.id)}>详情</Btn>
               </div>,
@@ -158,6 +196,20 @@ export function Operations({
             }}
           />
         </Panel>
+        {/* 停用二次确认：任务状态已挡住执行中的机器人，这里再问一次避免误点 */}
+        {stopRobot && (
+          <Confirm
+            title="停用机器人"
+            message={`停用「${stopRobot.name}」后不再参与调度派单，之后可随时重新启用。`}
+            confirmText="停用"
+            danger
+            onClose={() => ASKSTOP(null)}
+            onConfirm={() => {
+              act({ type: "TOGGLE_ROBOT", id: stopRobot.id });
+              ASKSTOP(null);
+            }}
+          />
+        )}
       </>
     );
   }
@@ -327,6 +379,11 @@ export function Operations({
   if (page === "robot") {
     /** 标签页兜底：运行监测 / 运行记录已下线，旧深链（?tab=monitor、?tab=records）一律回到历史任务 */
     const rTab = tab === "ability" ? "ability" : "tasks";
+    /** 历史任务全量（已结束的任务）与当前页切片：由标准 Pager 控制 */
+    const rTasks = s.tasks.filter(
+      (x) => x.robotId === r.id && terminal.includes(x.state),
+    );
+    const rTaskPage = rTasks.slice((rtPage - 1) * rtSize, rtPage * rtSize);
     return (
       <>
         <div className="robot-fixed-summary">
@@ -366,25 +423,20 @@ export function Operations({
             <Panel title="历史任务">
               {/* 与「设备巡检任务」列表同口径；本页已按机器人限定，故省略「机器人」列 */}
               <Table
-                heads={["任务", "来源", "状态", "时间（生成 / 结束）", "回放"]}
-                rows={s.tasks
-                  .filter(
-                    (t) => t.robotId === r.id && terminal.includes(t.state),
-                  )
-                  .map((t) => [
+                heads={["任务编码", "任务", "来源", "状态", "开始时间", "结束时间", "回放"]}
+                rows={rTaskPage.map((t) => [
+                    t.id,
                     <ObjectLink type="task-detail" id={t.id}>
                       {t.name}
                     </ObjectLink>,
                     t.source,
                     <Badge>{t.state}</Badge>,
-                    <>
-                      <span>{fmtTime(t.created)}</span>
-                      <small className="cell-muted">
-                        {t.finishedAt
-                          ? `结束 ${fmtTime(t.finishedAt)}`
-                          : "尚未结束"}
-                      </small>
-                    </>,
+                    fmtTime(t.created),
+                    t.finishedAt ? (
+                      fmtTime(t.finishedAt)
+                    ) : (
+                      <span className="muted">—</span>
+                    ),
                     <ObjectLink
                       type="replay"
                       id={t.id}
@@ -395,10 +447,18 @@ export function Operations({
                     </ObjectLink>,
                   ])}
               />
+              {/* 标准分页：与告警记录 / 巡检路线等列表页同一套（分页器由全局样式压在卡片底部） */}
+              <Pager
+                page={rtPage}
+                count={rTasks.length}
+                size={rtSize}
+                onChange={RTPAGE}
+                onSize={RTSIZE}
+              />
             </Panel>
           </>
         )}
-        {rTab === "ability" && <RobotCapabilityTab robot={r} />}
+        {rTab === "ability" && <RobotCapabilityTab key={r.id} robot={r} />}
       </>
     );
   }
@@ -505,12 +565,9 @@ export function Operations({
         <section>
           <h3>异常</h3>
           <Kpis
-            items={["新告警", "未确认", "处理中", "已恢复"].map((x) => ({
+            items={["待确认", "处理中", "已关闭"].map((x) => ({
               label: x,
-              value: alerts.filter(
-                (a) =>
-                  a.state === (x === "新告警" || x === "未确认" ? "待确认" : x),
-              ).length,
+              value: alerts.filter((a) => a.state === x).length,
               action: () => go("alarms"),
             }))}
           />
@@ -687,14 +744,48 @@ export function Operations({
  *              面板排成卡片栅格（同类信息并排、标签—值多列），不再是 5 段纵向长条
  * @param robot 目标机器人
  */
+/**
+ * 机器参数里每张表的独立分页（页码 + 每页条数都按会话记忆）
+ * @param key 视图状态前缀，如 "robot.ability.comp"
+ */
+function useTablePager(key: string, defaultSize = 5) {
+  const [page, PAGE] = useViewState(`${key}.page`, 1);
+  const [size, SIZE] = usePageSize(`${key}.size`, defaultSize);
+  return { page, size, PAGE, SIZE };
+}
+
 function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
-  const { s } = useStore();
+  const { s, act } = useStore();
+  /** 子标签：五块内容原本纵向堆成一条长页，按主题分开、一次只看一块 */
+  const [capTab, SETCAPTAB] = useViewState("robot.ability.tab", "hw");
+  /** 三张表格各自分页：与全站列表同一套 Pager（共 N 条 / 每页 / 上一页 · 下一页） */
+  const comp = useTablePager("robot.ability.comp");
+  const cap = useTablePager("robot.ability.cap");
+  const payload = useTablePager("robot.ability.payload");
   const profile = profileOf(r.deviceType);
   /** 适用该机型且已启用的上装主数据 */
   const payloads = (s.robotPayloads || []).filter(
     (p) =>
       p.state === "启用" && (!p.models.length || p.models.includes(r.deviceType)),
   );
+  /** 机型与硬件编辑：草稿字段 + 编辑中标记 + 保存二次确认 */
+  const [editing, EDITING] = useState(false);
+  const [ask, ASK] = useState(false);
+  const [sn, SN] = useState(r.sn ?? "");
+  const [deviceType, DT] = useState<DeviceType>(r.deviceType);
+  const [region, REGION] = useState(r.region ?? "");
+  const [firmware, FW] = useState(r.firmware ?? "");
+  const [minBattery, MINB] = useState(r.constraints.minBattery);
+  const [maxSpeed, MAXS] = useState(r.constraints.maxSpeed ?? 1.5);
+  const [railSectionId, RAIL] = useState(r.constraints.railSectionId ?? "");
+  /** 三张表的分页切片（数据源不变，只交付当前页；页码越界时按最后一页兜底） */
+  const compAll = componentStatuses(r);
+  const capAll = capabilityMatrix(s, r);
+  const sliceOf = <T,>(all: T[], p: { page: number; size: number }) => {
+    const max = Math.max(1, Math.ceil(all.length / p.size));
+    const cur = Math.min(Math.max(1, p.page), max);
+    return all.slice((cur - 1) * p.size, cur * p.size);
+  };
   /**
    * 标签—值网格里的一格（多列自适应，见 styles.css › .cap-kv）
    * @param wide 取值较长时独占一整行，不与短项挤在一排
@@ -707,66 +798,235 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
   );
   return (
     <div className="cap-grid">
-      {/* 机型与硬件：机型主数据（标签—值网格），通栏 */}
-      <Panel className="cap-span2" title="机型与硬件">
-        <Note>{profile.summary}</Note>
-        <dl className="cap-kv">
-          {kv("机器人编号（SN）", r.sn || "—")}
-          {kv("机型", r.deviceType)}
-          {kv("所属区域", r.region || "未分配区域")}
-          {kv("固件版本", r.firmware)}
-          {kv(
-            "机型约束",
-            `最低派单电量 ${r.constraints.minBattery}%` +
-              (r.constraints.railSectionId
-                ? ` · 所在区段 ${r.constraints.railSectionId}`
-                : "") +
-              (r.constraints.maxSpeed
-                ? ` · 限速 ${r.constraints.maxSpeed} m/s`
-                : ""),
-            true,
+      {/* 子标签条：机型与硬件 / 组件状态 / 能力与影响 / 地图与版本 / 上装与配套 */}
+      <div className="cap-tabs segmented" role="tablist">
+        {[
+          ["hw", "机型与硬件"],
+          ["comp", "组件状态"],
+          ["cap", "能力与影响"],
+          ["map", "地图与版本"],
+          ["payload", "上装与配套"],
+        ].map(([k, n]) => (
+          <button
+            key={k}
+            role="tab"
+            aria-selected={capTab === k}
+            className={capTab === k ? "active" : ""}
+            onClick={() => SETCAPTAB(k)}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+      {/* 机型与硬件：机型主数据（标签—值网格），通栏；可编辑，保存二次确认 */}
+      {capTab === "hw" && (
+        <Panel
+          className="cap-span2"
+          title="机型与硬件"
+          extra={
+            editing ? (
+              <div className="actions">
+                <Btn onClick={() => EDITING(false)}>取消</Btn>
+                <Btn primary onClick={() => ASK(true)}>
+                  保存
+                </Btn>
+              </div>
+            ) : (
+              <div className="actions">
+                <span className="muted">更新于 {r.updatedAt ?? "—"}</span>
+                <Btn
+                  onClick={() => {
+                    SN(r.sn ?? "");
+                    DT(r.deviceType);
+                    REGION(r.region ?? "");
+                    FW(r.firmware ?? "");
+                    MINB(r.constraints.minBattery);
+                    MAXS(r.constraints.maxSpeed ?? 1.5);
+                    RAIL(r.constraints.railSectionId ?? "");
+                    EDITING(true);
+                  }}
+                >
+                  编辑
+                </Btn>
+              </div>
+            )
+          }
+        >
+          <Note>{profile.summary}</Note>
+          {editing ? (
+            <dl className="cap-kv">
+              {kv(
+                "机器人编号（SN）",
+                <input
+                  value={sn}
+                  placeholder="出厂硬件序列号"
+                  onChange={(e) => SN(e.target.value)}
+                />,
+              )}
+              {kv(
+                "机型",
+                <select
+                  value={deviceType}
+                  onChange={(e) => {
+                    const t = e.target.value as DeviceType;
+                    DT(t);
+                    MINB(profileOf(t).constraints.minBattery);
+                  }}
+                >
+                  {deviceTypes.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>,
+              )}
+              {kv(
+                "所属区域",
+                <select
+                  value={region}
+                  onChange={(e) => REGION(e.target.value)}
+                >
+                  {areaOptions(s).map((x) => (
+                    <option key={x} value={x}>
+                      {x}
+                    </option>
+                  ))}
+                </select>,
+              )}
+              {kv(
+                "固件版本",
+                <input
+                  value={firmware}
+                  onChange={(e) => FW(e.target.value)}
+                />,
+              )}
+              {kv(
+                "机型约束",
+                <div className="edit-constraints">
+                  <label>
+                    最低派单电量（%）
+                    <input
+                      type="number"
+                      value={minBattery}
+                      onChange={(e) => MINB(Number(e.target.value))}
+                    />
+                  </label>
+                  {deviceType === "四轮车" && (
+                    <label>
+                      限速（m/s）
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={maxSpeed}
+                        onChange={(e) => MAXS(Number(e.target.value))}
+                      />
+                    </label>
+                  )}
+                  {deviceType === "挂轨" && (
+                    <label>
+                      所在轨道区段
+                      <input
+                        value={railSectionId}
+                        onChange={(e) => RAIL(e.target.value)}
+                      />
+                    </label>
+                  )}
+                </div>,
+                true,
+              )}
+            </dl>
+          ) : (
+            <dl className="cap-kv">
+              {kv("机器人编号（SN）", r.sn || "—")}
+              {kv("机型", r.deviceType)}
+              {kv("所属区域", r.region || "未分配区域")}
+              {kv("固件版本", r.firmware)}
+              {kv(
+                "机型约束",
+                `最低派单电量 ${r.constraints.minBattery}%` +
+                  (r.constraints.railSectionId
+                    ? ` · 所在区段 ${r.constraints.railSectionId}`
+                    : "") +
+                  (r.constraints.maxSpeed
+                    ? ` · 限速 ${r.constraints.maxSpeed} m/s`
+                    : ""),
+                true,
+              )}
+            </dl>
           )}
-        </dl>
-      </Panel>
+          {/* 保存二次确认：挂在 Panel 内，点遮罩只关确认框 */}
+          {ask && (
+            <Confirm
+              title="保存机型与硬件"
+              message={`「${r.name}」的主数据保存后，更新时间会同步刷新。`}
+              confirmText="保存"
+              onClose={() => ASK(false)}
+              onConfirm={() => {
+                act({
+                  type: "UPDATE_ROBOT",
+                  id: r.id,
+                  sn,
+                  deviceType,
+                  region,
+                  firmware,
+                  minBattery,
+                  maxSpeed: deviceType === "四轮车" ? maxSpeed : undefined,
+                  railSectionId:
+                    deviceType === "挂轨" ? railSectionId : undefined,
+                });
+                ASK(false);
+                EDITING(false);
+              }}
+            />
+          )}
+        </Panel>
+      )}
       {/* 组件状态：机器人本体自检（组件 / 传感器健康），口径与能力表同源 */}
+      {capTab === "comp" && (
       <Panel className="cap-span2" title="组件状态">
-        <div className="table-scroll">
-          <table className="comp-table">
-            <thead>
-              <tr>
-                <th>组件 / 传感器</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              {componentStatuses(r).map((c) => (
-                <tr key={c.name}>
-                  <td>{c.name}</td>
-                  <td>
-                    <span
-                      className={`comp-status ${c.status === "正常" ? "ok" : "bad"}`}
-                    >
-                      {c.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* 手写 <table> 换成共享 Table：列宽、行高、表头底色与全站表格一致 */}
+        <Table
+          heads={["组件 / 传感器", "状态"]}
+          rows={sliceOf(compAll, comp).map((c) => [
+            c.name,
+            <span
+              className={`comp-status ${c.status === "正常" ? "ok" : "bad"}`}
+            >
+              {c.status}
+            </span>,
+          ])}
+        />
+        <Pager
+          page={comp.page}
+          count={compAll.length}
+          size={comp.size}
+          onChange={comp.PAGE}
+          onSize={comp.SIZE}
+        />
       </Panel>
-      <Panel title="能力、组件与业务影响">
+      )}
+      {capTab === "cap" && (
+      <Panel className="cap-span2" title="能力、组件与业务影响">
         <Table
           heads={["能力 / 组件", "可用性", "配备上装", "业务影响"]}
-          rows={capabilityMatrix(s, r).map((c) => [
+          rows={sliceOf(capAll, cap).map((c) => [
             c.key,
             <Badge key={c.key}>{c.availability}</Badge>,
             c.payload || <span className="muted">—</span>,
             c.impact,
           ])}
         />
+        <Pager
+          page={cap.page}
+          count={capAll.length}
+          size={cap.size}
+          onChange={cap.PAGE}
+          onSize={cap.SIZE}
+        />
       </Panel>
-      <Panel title="地图与版本">
+      )}
+      {capTab === "map" && (
+      <Panel className="cap-span2" title="地图与版本">
         <dl className="cap-kv">
           {kv(
             "地图",
@@ -788,17 +1048,29 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
           </Btn>
         </div>
       </Panel>
-      <Panel title="上装与配套">
+      )}
+      {capTab === "payload" && (
+      <Panel className="cap-span2" title="上装与配套">
         <Table
           heads={["上装", "采集方式", "支持动作"]}
-          rows={payloads.map((p) => [
+          rows={sliceOf(payloads, payload).map((p) => [
             p.name,
             p.abilities.map((a) => a.kind).join(" / "),
             p.abilities.flatMap((a) => a.actions).join(" / "),
           ])}
         />
         {!payloads.length && <Empty>该机型暂无适用上装。</Empty>}
+        {!!payloads.length && (
+          <Pager
+            page={payload.page}
+            count={payloads.length}
+            size={payload.size}
+            onChange={payload.PAGE}
+            onSize={payload.SIZE}
+          />
+        )}
       </Panel>
+      )}
     </div>
   );
 }

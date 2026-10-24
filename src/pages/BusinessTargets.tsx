@@ -11,7 +11,17 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../data/store";
 import { back, go, usePageSize, useViewState } from "../data/navigation";
-import { Btn, Empty, Field, Modal, Note, Panel, Table } from "../components/UI";
+import {
+  Btn,
+  Drawer,
+  Empty,
+  Field,
+  Modal,
+  Note,
+  Panel,
+  Table,
+} from "../components/UI";
+import { AreaSketch, type SketchPoint } from "../components/AreaSketch";
 import { Pager } from "../components/Business";
 import { FilterPanel } from "../components/FilterPanel";
 import { useListDelete } from "../components/ListDelete";
@@ -122,6 +132,10 @@ export function BusinessTargets({
   const [nameTouched, NAMETOUCHED] = useState(false);
   /** 「配业务逻辑」的两个 Tab：算法模板（含算法与判定口径）/ 告警设置 */
   const [cfgTab, CFGTAB] = useState<"require" | "alarm">("require");
+  /** 锚点绘制抽屉：复用右侧抽屉展示标绘页（与「区域配置」同一套 AreaSketch） */
+  const [sketchOpen, SETSKETCHOPEN] = useState(false);
+  /** 抽屉里编辑的锚点名称：点「保存范围」才一并写回表单 */
+  const [sketchAnchor, SETSKETCHANCHOR] = useState("");
   const [form, FORM] = useState({
     /** 台账名称：留空时按仪表名 / 锚点派生（列表展示与告警名称的默认值都取这里） */
     name: "",
@@ -129,6 +143,13 @@ export function BusinessTargets({
     targetKind: "仪表" as "仪表" | "环境" | "区域",
     /** TGT-02：区域 / 空间目标的参照物锚点 */
     anchor: "",
+    /**
+     * 锚点范围：在全厂底图上绘制 / 框选出的多边形（闭合才落库）
+     * @description 与区域配置同一套坐标口径；不画也能保存（锚点文本已够描述位置）
+     */
+    anchorPolygon: [] as SketchPoint[],
+    /** 绘制中的范围是否已闭合（闭合后「保存范围」才有意义） */
+    anchorClosed: false,
     requirementId: "",
     algorithm: "",
     criteria: "",
@@ -319,6 +340,15 @@ export function BusinessTargets({
       alarmItems: upsertAlarmItem(old.alarmItems, index, item),
     }));
   }
+  /**
+   * 保存绘制结果：锚点名称 + 多边形一起写回表单
+   * @description 名称影响台账派生名（未手改过时同步刷新），所以走 namePatch
+   */
+  function saveSketch() {
+    const anchor = sketchAnchor.trim() || form.anchor;
+    FORM({ ...form, anchor, ...namePatch({ anchor }) });
+    SETSKETCHOPEN(false);
+  }
   /** 删除某一条（至少保留一条：第一条 = 台账判定口径） */
   function removeAlarmItem(i: number) {
     FORM((old) => ({
@@ -337,6 +367,8 @@ export function BusinessTargets({
       name: "",
       targetKind: "仪表",
       anchor: "",
+      anchorPolygon: [],
+      anchorClosed: false,
       requirementId: "",
       algorithm: "",
       criteria: "",
@@ -363,6 +395,9 @@ export function BusinessTargets({
       name: targetNameOf(s, b),
       targetKind: b.targetKind || "仪表",
       anchor: b.anchor || "",
+      // 已绘制的范围直接回显，方便接着改
+      anchorPolygon: b.anchorPolygon ? [...b.anchorPolygon] : [],
+      anchorClosed: !!b.anchorPolygon?.length,
       requirementId: b.requirementId,
       algorithm: b.algorithm,
       criteria: b.criteria || "",
@@ -409,6 +444,8 @@ export function BusinessTargets({
       // TGT-01/02：目标类型 + 区域锚点（环境 / 区域类不关联设备）
       targetKind: form.targetKind,
       anchor: form.anchor,
+      // 锚点范围：只有闭合的多边形才随台账落库
+      anchorPolygon: form.anchorClosed ? form.anchorPolygon : undefined,
       requirementId: form.requirementId,
       algorithm: form.algorithm,
       // 判定口径随主告警项（第一条）走，不再单独维护
@@ -701,7 +738,7 @@ export function BusinessTargets({
               heads={[
                 ...(multi ? [del.head] : []),
                 "名称",
-                "ID",
+                "巡检目标编码",
                 "目标",
                 "设备 / 锚点",
                 "算法模板",
@@ -808,15 +845,26 @@ export function BusinessTargets({
                   form.targetKind === "区域" ? "（区域类必填）" : "（可选）"
                 }`}
               >
-                <input
-                  value={form.anchor}
-                  placeholder="例如 3# 罐区北侧立柱 / 管廊 A 段起点"
-                  onChange={(e) => {
-                    const anchor = e.target.value;
-                    // 锚点变化影响派生名：没手改过名称时同步刷新
-                    FORM({ ...form, anchor, ...namePatch({ anchor }) });
-                  }}
-                />
+                {/* 文字 + 图上圈范围：手填太随意，给一个「画出来」的入口 */}
+                <div className="field-with-btn">
+                  <input
+                    value={form.anchor}
+                    placeholder="例如 3# 罐区北侧立柱 / 管廊 A 段起点"
+                    onChange={(e) => {
+                      const anchor = e.target.value;
+                      // 锚点变化影响派生名：没手改过名称时同步刷新
+                      FORM({ ...form, anchor, ...namePatch({ anchor }) });
+                    }}
+                  />
+                  <Btn
+                    onClick={() => {
+                      SETSKETCHANCHOR(form.anchor);
+                      SETSKETCHOPEN(true);
+                    }}
+                  >
+                    {form.anchorPolygon.length ? "修改范围" : "绘制"}
+                  </Btn>
+                </div>
               </Field>
             )}
             {editId && (
@@ -892,7 +940,7 @@ export function BusinessTargets({
                     */}
                     <AlarmItems
                       items={form.alarmItems}
-                      alarmClasses={enabledAlarmClassesOf(s).map((c) => c.name)}
+                      alarmClasses={enabledAlarmClassesOf(s)}
                       makeItem={makeAlarmItem}
                       onSave={saveAlarmItem}
                       onRemove={removeAlarmItem}
@@ -987,6 +1035,52 @@ export function BusinessTargets({
             </Modal>
           )}
         </div>
+      )}
+      {/*
+        锚点绘制抽屉：与「区域配置」复用同一个 AreaSketch（全厂底图 + 标绘工具 + 标绘列表）
+        —— 手填一段文字既不好写也不好对账，直接在图上圈出来更直观
+      */}
+      {sketchOpen && (
+        <Drawer
+          title="绘制参照物范围"
+          subtitle={`${form.targetKind}类目标 · 锚点名称与范围一起保存`}
+          onClose={() => SETSKETCHOPEN(false)}
+          footer={
+            <>
+              <Btn onClick={() => SETSKETCHOPEN(false)}>取消</Btn>
+              <Btn primary onClick={saveSketch}>
+                保存范围
+              </Btn>
+            </>
+          }
+        >
+          <Field label="锚点名称">
+            <input
+              value={sketchAnchor}
+              placeholder="例如 3# 罐区北侧立柱 / 管廊 A 段起点"
+              onChange={(e) => SETSKETCHANCHOR(e.target.value)}
+            />
+          </Field>
+          <AreaSketch
+            label={sketchAnchor}
+            height={420}
+            value={{
+              points: form.anchorPolygon,
+              closed: form.anchorClosed,
+            }}
+            onChange={(next) =>
+              FORM({
+                ...form,
+                anchorPolygon: next.points,
+                anchorClosed: next.closed,
+              })
+            }
+          />
+          <Note>
+            多边形：依次点顶点，点回首点自动闭合；矩形：两次点击取对角。右侧工具条可撤销 / 重做 / 清空。
+            {!form.anchorClosed && "未闭合时也能保存，但只有闭合的范围才会随台账落库。"}
+          </Note>
+        </Drawer>
       )}
     </>
   );

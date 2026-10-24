@@ -8,7 +8,7 @@
  *              标定文件含点位坐标 / 定位 ID / 姿态 / 上装参数，**不含业务目标与告警阈值**。
  * @interaction 被 data/engine.ts（导入 / 标定 / 绑定 / 下发）与页面（地图管理、巡检点管理）消费
  */
-import type { Candidate, PTZ } from "./types";
+import { now, type Candidate, type PTZ } from "./types";
 
 /**
  * 统一坐标系（已部分落地）：`Candidate` / `ParsedCalibrationPoint` 已增加 `world?`（全厂 XYZ 米），
@@ -210,7 +210,7 @@ export function ensureCalibration(
       id: `CAL-${mapId}`,
       mapId,
       targets: [],
-      updatedAt: new Date().toLocaleString("zh-CN"),
+      updatedAt: now(),
     };
     s.mapCalibrations.push(cal);
   }

@@ -8,7 +8,6 @@ import { useState } from "react";
 import { useStore } from "../data/store";
 import { constraints } from "../data/engine";
 import { go } from "../data/navigation";
-import { mapVer } from "../data/versionLabel";
 import {
   queueFor,
   robotAvailability,
@@ -21,7 +20,7 @@ import { Btn, Badge, Panel, Table, Note, Modal } from "../components/UI";
 import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
 import { ScheduleTimeline } from "../components/ScheduleTimeline";
 import { TaskPeekDrawer } from "../components/TaskPeekDrawer";
-import type { Task } from "../data/types";
+import { fmtDateTime, type Task } from "../data/types";
 
 export function DispatchDesk({ id }: { id?: string }) {
   const { s, act } = useStore();
@@ -54,17 +53,11 @@ export function DispatchDesk({ id }: { id?: string }) {
         t.state === "已被接管" ||
         (t.state === "已分配" && !!t.blockedReason)),
   );
-  /** 历史记录：已超出允许等待、原任务留档待补检的任务（只读，不再提供派单入口） */
-  const overdue = s.tasks.filter(
-    (t) => (!t.robotId || t.robotId === rid) && t.state === "超期",
-  );
   /**
-   * 待安排 / 历史记录共用的表格
-   * @param list 任务清单
-   * @param actionable 是否给出派单类操作；历史记录为false，只保留「详情」
-   * @returns 表格节点
+   * 待安排的表格
+   * @description 超期任务不再单独留档于调度台 —— 统一在「任务列表 › 任务记录」里展示与补派
    */
-  const decisionTable = (list: Task[], actionable: boolean) => (
+  const decisionTable = (list: Task[]) => (
     <Table
       heads={["任务", "来源 / 优先级", "处理提示", "操作"]}
       rows={list.map((t) => {
@@ -78,36 +71,28 @@ export function DispatchDesk({ id }: { id?: string }) {
             {t.source} · {taskPriority(s, t)}
             <Badge>{t.state}</Badge>
           </>,
-          actionable
-            ? reasons.join("；") ||
-              (current ? "加入队列后等待当前任务完成" : "加入后即可执行")
-            : "已超出允许等待，原任务留档；需要时新建补检",
+          reasons.join("；") ||
+            (current ? "加入队列后等待当前任务完成" : "加入后即可执行"),
           <div className="actions">
-            {actionable && (
-              <>
-                <Btn
-                  primary
-                  disabled={!!reasons.length}
-                  onClick={() =>
-                    act({ type: "ENQUEUE", id: t.id, robotId: rid })
-                  }
-                >
-                  {current ? "加入队列" : "下发执行"}
-                </Btn>
-                {taskPriority(s, t) !== "普通" && current?.state === "执行中" && (
-                  <Btn
-                    disabled={!!reasons.length}
-                    onClick={() => setPreempt(t)}
-                  >
-                    紧急插单
-                  </Btn>
-                )}
-                {reasons.includes("地图版本待同步") && (
-                  <Btn onClick={() => go("map-detail", t.mapId, "sync")}>
-                    同步地图
-                  </Btn>
-                )}
-              </>
+            <Btn
+              primary
+              disabled={!!reasons.length}
+              onClick={() => act({ type: "ENQUEUE", id: t.id, robotId: rid })}
+            >
+              {current ? "加入队列" : "下发执行"}
+            </Btn>
+            {taskPriority(s, t) !== "普通" && current?.state === "执行中" && (
+              <Btn
+                disabled={!!reasons.length}
+                onClick={() => setPreempt(t)}
+              >
+                紧急插单
+              </Btn>
+            )}
+            {reasons.includes("地图版本待同步") && (
+              <Btn onClick={() => go("map-detail", t.mapId, "sync")}>
+                同步地图
+              </Btn>
             )}
             <Btn onClick={() => detail(t)}>详情</Btn>
           </div>,
@@ -161,18 +146,6 @@ export function DispatchDesk({ id }: { id?: string }) {
     <div className="single-dispatch">
       <div className="context-bar">
         <strong>调度中心</strong>
-        <span>平台执行总览与任务调度 · 左侧选机器人，右侧安排任务</span>
-        {/* 当前调度对象：与左栏选中的机器人同源，只读展示，避免与资源列表重复交互 */}
-        <div className="dispatch-current">
-          <span className="muted">当前调度对象</span>
-          <b>
-            {r.id} · {r.name}
-          </b>
-          <Badge>{r.state}</Badge>
-          <span className="muted">
-            电量 {r.battery}% · {mapVer(r.mapVersion)}
-          </span>
-        </div>
       </div>
       {/* 平台态势：全平台 6 项指标，横向一条，不与单台机器人信息混排 */}
       <div className="fleet-summary">
@@ -183,11 +156,14 @@ export function DispatchDesk({ id }: { id?: string }) {
           </div>
         ))}
       </div>
-      <div className="dispatch-console">
-        <Panel title={`平台机器人 · ${s.robots.length} 台`}>
-          <DispatchFleetOverview selected={rid} onSelect={setRid} />
-        </Panel>
-        <div className="dispatch-work">
+      {/* 三栏：左「机器人资源」· 中「当前任务 / 队列 / 排程」· 右「待安排」 */}
+      <div className="dispatch-console dd-3col">
+        <div className="dd-col dd-col-l">
+          <Panel title={`平台机器人 · ${s.robots.length} 台`}>
+            <DispatchFleetOverview selected={rid} onSelect={setRid} />
+          </Panel>
+        </div>
+        <div className="dispatch-work dd-col dd-col-c">
           <Panel title={`当前任务 · ${r.name}`}>
             {current ? (
               <div className="context-bar">
@@ -246,7 +222,7 @@ export function DispatchDesk({ id }: { id?: string }) {
                       const sm = startOf(t.id);
                       if (sm === undefined)
                         return t.notBefore
-                          ? new Date(t.notBefore).toLocaleString("zh-CN")
+                          ? fmtDateTime(t.notBefore)
                           : "当前任务结束后";
                       return sm <= 0 ? "立即" : timeAt(sm);
                     })()}
@@ -315,7 +291,10 @@ export function DispatchDesk({ id }: { id?: string }) {
               估计排程，开始前重新校验；空白为可排程的空闲窗口。
             </p>
           </Panel>
-          {/* 待安排：需要人工决策派单的任务，独立成块；历史记录另起一块，避免两类语汇混排 */}
+        </div>
+        {/* 右栏：待安排（要人工决策）；超期任务不在此留档，统一在「任务列表 › 任务记录」展示 */}
+        <div className="dispatch-work dd-col dd-col-r">
+          {/* 待安排：需要人工决策派单的任务 */}
           <Panel title={`待安排 · ${scheduling.length} 项`}>
               {s.plans
                 .filter((p) => p.robotId === rid && p.generationError)
@@ -325,15 +304,10 @@ export function DispatchDesk({ id }: { id?: string }) {
                     <Btn onClick={() => go("plans")}>修改计划</Btn>
                   </Note>
                 ))}
-              {decisionTable(scheduling, true)}
+              {decisionTable(scheduling)}
               {!scheduling.length && (
                 <p className="empty">没有需要人工安排的任务。</p>
               )}
-          </Panel>
-          {/* 历史记录：已超期留档，只读留痕，不再提供派单入口 */}
-          <Panel title={`历史记录 · ${overdue.length} 项`}>
-              {decisionTable(overdue, false)}
-              {!overdue.length && <p className="empty">暂无超期留档任务。</p>}
           </Panel>
         </div>
       </div>

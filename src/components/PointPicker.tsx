@@ -12,6 +12,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useStore } from "../data/store";
 import { DeviceTree, type DeviceTreeValue } from "./DeviceTree";
@@ -232,7 +233,9 @@ export function PointPicker({
           <span>{nodeLabel}</span>
           <i>{cascadeOpen ? "▲" : "▼"}</i>
         </button>
-        {cascadeOpen && (
+        {/* 浮层挂到 body：页面根节点带缩放 transform 时，留在原位会以缩放容器为基准而偏位 */}
+        {cascadeOpen &&
+          createPortal(
           <>
             {/* 透明遮罩：点空白处收起浮层 */}
             <div
@@ -309,7 +312,8 @@ export function PointPicker({
                 )}
               </ul>
             </div>
-          </>
+          </>,
+          document.body,
         )}
       </div>
     )}

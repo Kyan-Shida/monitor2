@@ -9,7 +9,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useStore } from "../data/store";
 import { go, useViewState } from "../data/navigation";
-import { Btn, Panel, Table, Field, Note, Modal } from "../components/UI";
+import { Btn, Panel, Table, Field, Note, Modal, Drawer } from "../components/UI";
 import { FilterPanel } from "../components/FilterPanel";
 import { useListDelete } from "../components/ListDelete";
 import { Pager } from "../components/Business";
@@ -26,6 +26,7 @@ import {
   parseDeviceKind,
 } from "../data/deviceMaster";
 import { readSheetRows, downloadXlsx } from "../data/excel";
+import { fmtDateTime } from "../data/types";
 import { deviceKinds } from "../data/types";
 import type { DeviceAsset, DeviceKind } from "../data/types";
 
@@ -285,7 +286,7 @@ export function DeviceMaster() {
       ["巡检项", "必填", "一台设备的多个检测目标，用「、」分隔；采集方式与单位系统按默认填", "液位计、罐壁温度"],
       ["", "", "", ""],
       ["以下由系统自动生成，无需填写", "", "", ""],
-      ["检测项ID / 类型 / 分类 / 更新时间", "系统生成", "导入后由平台按检测目标名称自动判定，不与模板列对应", "—"],
+      ["检测项ID / 类型 / 分类 / 更新时间", "系统生成", "导入后由平台按检测项名称自动判定，不与模板列对应", "—"],
     ];
     downloadXlsx(
       [TEMPLATE_HEADS, ...TEMPLATE_SAMPLE],
@@ -381,6 +382,7 @@ export function DeviceMaster() {
                 "编码",
                 "设备名称",
                 "设备形态",
+                "检测项数",
                 "更新时间",
                 "操作",
               ]}
@@ -390,15 +392,20 @@ export function DeviceMaster() {
                 d.id,
                 <span>{d.name}</span>,
                 deviceKindOf(d),
-                d.updatedAt || "—",
+                // 检测项数即入口：点数字进该设备的检测项页（原操作列「巡检目标」按钮已收掉）
+                <button
+                  type="button"
+                  className="rt-link"
+                  title="查看该设备的检测项"
+                  onClick={() => go("device-targets", d.id)}
+                >
+                  {(d.items || []).length} 项
+                </button>,
+                fmtDateTime(d.updatedAt),
                 <div className="actions">
                   {/* EQ-01：设备档案入口移入设备台账详情（以设备为主线看全生命周期） */}
                   <Btn onClick={() => go("archive", archiveIdOf(s, d.name))}>
                     设备档案
-                  </Btn>
-                  {/* 检测项维护改为内置页（与「设备档案」同为整页入口） */}
-                  <Btn onClick={() => go("device-targets", d.id)}>
-                    巡检目标
                   </Btn>
                 </div>,
               ])}
@@ -497,9 +504,9 @@ export function DeviceMaster() {
 
       {/* 新增设备：就地建档（设备主数据由「设备台账」独家维护） */}
       {devForm && (
-        <Modal
+        <Drawer
           title="新增设备"
-          wide
+          subtitle={devForm.id ? `${devForm.id} · ${devForm.name || "未命名"}` : undefined}
           onClose={() => DEVFORM(null)}
           footer={
             <>
@@ -594,7 +601,7 @@ export function DeviceMaster() {
               />
             </div>
           </div>
-        </Modal>
+        </Drawer>
       )}
 
       {/* 批量删除设备：二次确认（通用组件）；已关联巡检点位的设备由引擎拦截并提示 */}
