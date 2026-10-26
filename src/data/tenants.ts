@@ -19,6 +19,8 @@ export const TENANTS: Tenant[] = [
 ];
 /** 租户清单的独立存储键（平台级，不随租户切换） */
 const TENANT_KEY = "inspection-tenants";
+/** 租户编码：2–6 位大写字母 / 数字（作为数据名称前缀，如 HD· / XB·） */
+export const TENANT_CODE = /^[A-Z0-9]{2,6}$/;
 
 /**
  * 读取平台租户清单

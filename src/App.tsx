@@ -759,7 +759,7 @@ export default function App() {
                 <span className="user-avatar">{account.name.charAt(0)}</span>
                 <span className="user-name">
                   {account.name}
-                  <small>{account.level === "super" ? "超级管理员" : "租户管理员"}</small>
+                  <small>{account.level === "super" ? "超级管理员" : "普通管理员"}</small>
                 </span>
                 <ChevronDown size={14} />
               </button>
@@ -910,7 +910,7 @@ export default function App() {
                 <input value={curRole ? `${curRole.person}（${curRole.name}）` : role.name} readOnly />
               </Field>
               <Field label="账号级别">
-                <input value={account.level === "super" ? "超级管理员" : "租户管理员"} readOnly />
+                <input value={account.level === "super" ? "超级管理员" : "普通管理员"} readOnly />
               </Field>
               <Field label="账号 ID"><input value={account.id} readOnly /></Field>
             </div>

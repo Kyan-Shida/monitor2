@@ -5,10 +5,10 @@
  *              登录成功后由 store.signIn 载入对应租户的数据。
  * @interaction data/auth.ts（账号与会话）、data/store.tsx（signIn）
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Boxes, LogIn, ShieldCheck } from "lucide-react";
 import { useStore } from "../data/store";
-import { ACCOUNTS } from "../data/auth";
+import { loadAccounts } from "../data/auth";
 import { Btn, Field } from "../components/UI";
 
 export function Login() {
@@ -16,6 +16,8 @@ export function Login() {
   const [username, U] = useState("");
   const [password, P] = useState("");
   const [err, ERR] = useState("");
+  // 演示账号一览：含平台超管与各客户开通租户时创建的管理员
+  const accounts = useMemo(() => loadAccounts(), []);
 
   function submit() {
     if (!username.trim() || !password) {
@@ -77,7 +79,7 @@ export function Login() {
             登录
           </Btn>
           <div className="login-accounts">
-            {ACCOUNTS.map((a) => (
+            {accounts.map((a) => (
               <button
                 type="button"
                 key={a.id}

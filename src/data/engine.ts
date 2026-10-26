@@ -68,6 +68,7 @@ import {
 import { applyAlarmSetting, checkAlarmItems } from "./alarmSettings";
 import { normalizeScope, pushScopeLabel } from "./alarmPush";
 import { roleOf } from "./roles";
+import { TENANT_CODE } from "./tenants";
 import { fieldCommand, releaseOutputs } from "./fieldControl";
 import {
   ensureCalibration,
@@ -434,8 +435,6 @@ function algoFields(a: Action) {
   adapt.forEach((k) => must(algoKinds.includes(k), `检测类型「${k}」不合法`));
   return { deploy, adapt };
 }
-/** 租户编码：2–6 位大写字母 / 数字（作为数据名称前缀，如 HD· / XB·） */
-const TENANT_CODE = /^[A-Z0-9]{2,6}$/;
 /**
  * 租户字段归一化 + 校验（新增 / 编辑共用）
  * @description 名称与编码各自唯一：名称是界面识别口径，编码是数据名称前缀
@@ -692,6 +691,29 @@ export function transition(state: State, a: Action): State {
       s.tenants = list.map((x) => (x.id === next.id ? next : x));
       object = next.id;
       detail = `租户「${next.name}」已保存（${next.status} · 编码 ${next.code}）`;
+      break;
+    }
+    /**
+     * 租户删除（系统设置 › 租户管理）
+     * @description 硬约束两条：
+     *              ① 当前正在使用的租户不能删（先切到别的租户）；
+     *              ② 至少保留一个租户，列表不能删空；
+     *              该租户的管理员账号与业务缓存由页面在删除成功后一并清理
+     *              （engine 只管清单，不碰登录账号与 localStorage）
+     */
+    case "DELETE_TENANT": {
+      must(s.roleId === "admin", "仅管理员可维护租户");
+      const list = s.tenants || [];
+      const gone = list.find((x) => x.id === a.id);
+      must(gone, "租户不存在");
+      must(
+        gone!.id !== s.tenantId,
+        "当前正在使用的租户不能删除，请先切换到其他租户",
+      );
+      must(list.length > 1, "至少要保留一个租户");
+      s.tenants = list.filter((x) => x.id !== gone!.id);
+      object = gone!.id;
+      detail = `租户「${gone!.name}」已删除（编码 ${gone!.code}）`;
       break;
     }
     /**

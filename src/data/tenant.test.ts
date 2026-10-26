@@ -155,6 +155,31 @@ test("停用校验：至少要保留一个启用状态的租户", () => {
   );
 });
 
+test("删除租户：当前租户不可删、至少留一个，删后编码可复用", () => {
+  const s = admin();
+  const cur = curTenantOf(s);
+  const other = otherTenantOf(s);
+  assert.throws(
+    () => run(s, { type: "DELETE_TENANT", id: cur.id }),
+    /当前正在使用的租户不能删除/,
+  );
+  const gone = run(s, { type: "DELETE_TENANT", id: other.id });
+  assert.equal(gone.tenants!.some((t) => t.id === other.id), false);
+  assert.equal(gone.tenants!.length, s.tenants!.length - 1);
+  // 只剩一个租户时不能删空（当前租户指向不存在的 id，先绕过「当前租户」那条）
+  const single: State = { ...s, tenants: [cur], tenantId: "T-NONE" };
+  assert.throws(
+    () => run(single, { type: "DELETE_TENANT", id: cur.id }),
+    /至少要保留一个租户/,
+  );
+  // 编码随租户一起释放，可重新开通
+  const again = run(gone, {
+    type: "ADD_TENANT",
+    tenant: { id: "", name: "西部管道二期", code: other.code, status: "启用" },
+  });
+  assert.ok(again.tenants!.some((t) => t.code === other.code && t.id !== other.id));
+});
+
 test("租户管理仅管理员可维护，且清单缺失时给出明确报错", () => {
   const s = admin();
   assert.throws(

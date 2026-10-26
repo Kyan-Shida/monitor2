@@ -446,7 +446,7 @@ export function RoleAdmin() {
             rows={roleShown.map((r) => [
               <>
                 {r.name}
-                {r.isSuper && <Badge tone="blue">超级管理员</Badge>}
+                {r.isSuper && <Badge tone="blue">内置</Badge>}
                 {impersonation?.roleId === r.id && (
                   <Badge tone="red">模拟中</Badge>
                 )}

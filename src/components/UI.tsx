@@ -85,6 +85,7 @@ export const Field = ({
   label,
   required = false,
   error,
+  className,
   children,
 }: {
   label: string;
@@ -96,8 +97,14 @@ export const Field = ({
    * @description 有值时标签变红、控件下方给出原因；比只在角落弹一条 toast 更容易定位
    */
   error?: string;
+  /** 附加类名：栅格表单里控制跨列等排布 */
+  className?: string;
 }) => (
-  <label className={"field" + (error ? " has-err" : "")}>
+  <label
+    className={
+      "field" + (error ? " has-err" : "") + (className ? " " + className : "")
+    }
+  >
     <span>
       {label}
       {required && <em className="req">*</em>}

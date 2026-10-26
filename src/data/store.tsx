@@ -724,7 +724,7 @@ function unifyTimes(v: unknown): unknown {
   return v;
 }
 /**
- * 会话可用性：租户管理员的租户被停用时视为未登录（需要重新选择账号）
+ * 会话可用性：普通管理员的租户被停用时视为未登录（需要重新选择账号）
  * @returns 可用会话；无会话 / 会话失效返回 null
  */
 function activeSession(): AuthAccount | null {
@@ -785,6 +785,17 @@ export function persist(n: State) {
     localStorage.setItem(keyOf(n.tenantId || DEFAULT_TENANT), JSON.stringify(n));
   } catch {
     /* 存储不可用：本次浏览改为纯内存态，刷新即回到初始演示数据 */
+  }
+}
+/**
+ * 删除某租户的业务缓存
+ * @description 租户被删除时清理，避免重新开通后读到上一次的残留数据
+ */
+export function dropTenantCache(tid: string) {
+  try {
+    localStorage.removeItem(keyOf(tid));
+  } catch {
+    /* 存储不可用：没有缓存可清 */
   }
 }
 export function Store({ children }: { children: ReactNode }) {

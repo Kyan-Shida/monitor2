@@ -265,8 +265,8 @@ function seedRoles(): AdminRole[] {
     {
       id: "ROLE-SUPER",
       code: "SUPER_ADMIN",
-      name: "超级管理员",
-      description: "平台最高权限，负责组织、角色、审计与全网数据",
+      name: "普通管理员",
+      description: "厂区最高权限，负责组织、角色与审计（系统内置，不可删除）",
       status: "启用",
       updatedAt: "2026-10-18 09:12:00",
       isSuper: true,
