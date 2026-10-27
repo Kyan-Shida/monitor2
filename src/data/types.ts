@@ -145,6 +145,16 @@ export interface MapAsset {
    * @description 停用后该地图不再允许用于导航 / 任务下发；默认「启用」
    */
   status?: "启用" | "停用";
+  /**
+   * 停用中：已点「停用」但该图还有在跑任务，跑完才落 `status = 停用` 终态
+   * @description 与机器人 `stopping` 同一套防呆：不硬中断作业，只挡新派单与新下发；
+   *              展示层由 `mapLifecycleOf` 合成三态（启用 / 停用中 / 停用）
+   */
+  stopping?: boolean;
+  /** 停用原因：停用 / 停用中时写入，启用时清空（详情页直接展示，不必翻审计） */
+  statusReason?: string;
+  /** 最近一次启停操作时间 */
+  statusAt?: string;
   source: string;
   batch: string;
   cloud: string;
@@ -474,6 +484,10 @@ export interface RobotPayload {
   /** 上装编码（唯一身份，仅字母 / 数字 / 下划线 / 中划线） */
   id: string;
   name: string;
+  /** 上装型号版本（硬件 / 固件版本，如 V2.1） */
+  version?: string;
+  /** 上装厂家 */
+  vendor?: string;
   /** 支持的采集能力组（至少 1 组）：一个上装可覆盖多种采集方式，不再只支持单一采集方式 */
   abilities: RobotPayloadAbility[];
   /** 适用机型：空数组 = 机型无关（通用上装） */
@@ -811,6 +825,26 @@ export interface Area {
   /** 最后更新时间（新增 / 编辑时由引擎写入） */
   updatedAt?: string;
 }
+
+/**
+ * 演示用区域范围轮廓（全厂区 2D 底图百分比坐标）
+ * @description 巡检点 / 设备的区域归属按轮廓推算（见 deviceMaster.areaOfCoord）；
+ *              种子数据与老缓存迁移共用这一份，正式环境在「区域配置」里按实际片区重画后以用户绘制为准
+ */
+export const DEMO_AREA_POLYGONS: Record<string, { x: number; y: number }[]> = {
+  一期罐区: [
+    { x: 0, y: 0 },
+    { x: 80, y: 0 },
+    { x: 80, y: 100 },
+    { x: 0, y: 100 },
+  ],
+  装置区: [
+    { x: 80, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 80, y: 100 },
+  ],
+};
 
 /**
  * 生成下一个区域编码（AR-01 / AR-02 …）
@@ -1300,6 +1334,23 @@ export interface Robot {
   sn?: string;
   /** 启用 / 停用：停用后不参与调度派单（台账列表开关切换） */
   enabled?: boolean;
+  /**
+   * 停用中：点了停用但当前队列任务还没跑完
+   * @description 期间不再接新任务、仍执行完队列；任务结束后才把 enabled 置 false（终态）
+   */
+  stopping?: boolean;
+  /** 统计：本次运行开始时间（ISO），用于算「本次运行时长」 */
+  runSince?: string;
+  /** 统计：累计巡检次数 */
+  inspectCount?: number;
+  /** 统计：累计巡检时长（秒） */
+  inspectSeconds?: number;
+  /** 统计：本次运行里程（km） */
+  tripMileage?: number;
+  /** 统计：累计运行里程（km） */
+  totalMileage?: number;
+  /** 统计：上次充电时间 */
+  lastChargeAt?: string;
   /** 更新时间：编辑机型与硬件、启停切换时刷新 */
   updatedAt?: string;
 }
@@ -1414,6 +1465,13 @@ export interface Task {
   expectedAt?: string;
   deadline?: string;
   preemptedTaskId?: string;
+  /**
+   * 补派溯源：超期任务留档后，由它派生的新任务记下原任务编号
+   * @description 超期是终点，不再回到流转主干；要接着干只能基于快照新建一条任务
+   */
+  retryOf?: string;
+  /** 反向溯源：该超期任务已被哪条补派任务接替（留档只读，不参与调度） */
+  retriedBy?: string;
 }
 /**
  * 自建路线的路径锚点（底图百分比坐标，口径与 RoutePreview / MapImageCanvas 一致）
@@ -1676,15 +1734,33 @@ export interface Extra {
   values?: { key: string; value: string }[];
 }
 /**
- * 租户（多租户演示级）
+ * 客户（集团级）：一个客户可下辖多个租户（厂区）
+ * @description 多租户从「扁平租户」升级为「客户 → 租户（厂区）」两级：
+ *              平台超管开通客户与厂区；客户管理员管本客户全部厂区；普通用户按 tenantIds 限定可见厂区。
+ */
+export interface Customer {
+  id: string;
+  /** 客户名称，如「申花集团」 */
+  name: string;
+  /** 客户编码：2–6 位大写字母或数字，作为该客户下数据的命名前缀 */
+  code: string;
+  /** 最后更新时间（客户管理列表展示） */
+  updatedAt?: string;
+}
+
+/**
+ * 租户（多租户演示级），即「厂区」
  * @description 省事版方案：一份数据一个租户 —— 切换租户即整份换数据（缓存键不同），
  *              不做行级隔离；切换在 store 层完成，页面无需感知。
+ *              升级为客户下辖的厂区：每个租户归属一个客户（customerId）。
  */
 export interface Tenant {
   id: string;
   name: string;
   /** 编码前缀：给该租户的数据命名加标，便于演示隔离 */
   code: string;
+  /** 所属客户（集团）id；平台内置客户兜底 */
+  customerId: string;
   status: "启用" | "停用";
   /** 最后更新时间（租户管理列表展示） */
   updatedAt?: string;

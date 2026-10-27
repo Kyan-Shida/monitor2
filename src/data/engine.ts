@@ -77,6 +77,7 @@ import {
   type ParsedCalibrationPoint,
 } from "./mapCalibration";
 import { bindingReasons } from "./planSchedule";
+import { mapSceneBlockedReason, runningTasksOf } from "./robotMaps";
 import { profileOf, deviceTypes } from "./deviceProfile";
 import {
   deviceOf,
@@ -98,6 +99,66 @@ export interface Action {
 }
 const id = (p: string) =>
   p + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+/**
+ * 检测项构造（新增设备内联录入 / 新增检测项共用）
+ * @description 界面只录「检测目标 + 类型 + 分类」，其余字段（采集方式 / 单位 / 巡检周期 / 优先级）
+ *              统一落默认值；类型与分类留空时按检测目标推导（口径见 deviceMaster）
+ */
+function buildInspectItem(deviceId: string, raw: any): InspectItem {
+  const target = String(raw?.target || "").trim();
+  return {
+    id: id(`II-${deviceId}-`),
+    target,
+    targetKind:
+      (raw?.targetKind as InspectItem["targetKind"]) ||
+      defaultTargetKindOfTarget(target),
+    category:
+      String(raw?.category || "").trim() || defaultCategoryOfTarget(target),
+    kind: (raw?.kind as CaptureKind) || "可见光",
+    unit: String(raw?.unit || "").trim(),
+    inspect: raw?.inspect !== false,
+    cycle: String(raw?.cycle || "每日").trim() || "每日",
+    priority: (raw?.priority as InspectItem["priority"]) || "普通",
+  };
+}
+/**
+ * 检测目标 → 工厂树第三层仪表（id 与检测项同源）
+ * @description 设备新增（带检测项）与「新增检测项」两处共用，
+ *              保证设备清单 / 工厂树 / 巡检目标三处同口径
+ */
+function pushInstrumentOf(s: State, d: DeviceAsset, it: InspectItem) {
+  if (!s.instruments || s.instruments.some((x) => x.id === it.id)) return;
+  s.instruments.push({
+    id: it.id,
+    name: it.target,
+    deviceId: d.id,
+    capture: it.kind,
+    unit: it.unit || undefined,
+    locationDesc: d.locationDesc,
+    state: "在用",
+  });
+}
+/**
+ * 下一个任务编号
+ * @description 任务编号统一成 `T` + 三位序号（T045），接着现有最大值往后排；
+ *              旧规则是时间戳+随机串（Tmvqqik3l1ei），列表里念不出来、没法口头对账，
+ *              也和种子数据、计划编号（PL01）长得不一样
+ * @param tasks 现有任务
+ * @returns 未被占用的任务编号
+ */
+function nextTaskId(tasks: Task[]): string {
+  let max = 0;
+  const used = new Set(tasks.map((t) => t.id));
+  tasks.forEach((t) => {
+    const m = /^T(\d+)$/.exec(t.id);
+    if (m) max = Math.max(max, Number(m[1]));
+  });
+  for (let i = max + 1; i <= max + 999; i++) {
+    const v = `T${String(i).padStart(3, "0")}`;
+    if (!used.has(v)) return v;
+  }
+  return id("T");
+}
 const must = (ok: unknown, msg: string) => {
   if (!ok) throw Error(msg);
 };
@@ -305,9 +366,10 @@ function syncInspectFlag(s: State, instrumentId: string) {
  * @param r 目标机器人
  */
 function pushSync(s: State, m: MapAsset, r: Robot) {
-  // 区域已分配的机器严格校验区域一致；尚未分配区域（新接入）的机器随首次下发归入该区域
-  must(!r.region || r.region === m.region, "机器人服务区域与地图不匹配");
-  if (!r.region) r.region = m.region;
+  // 启停闸：停用的图不再推给机器人（已经在传输中的记录不受影响）
+  const gate = mapSceneBlockedReason(m, "地图下发");
+  must(!gate, gate);
+  // 地图不再按区域归属，下发只校验会话占用与任务冲突（区域一致性校验已下线）
   must(
     !s.sessions.some(
       (x) => x.robotId === r.id && !["已释放", "已超时"].includes(x.state),
@@ -323,6 +385,33 @@ function pushSync(s: State, m: MapAsset, r: Robot) {
     at: now(),
   });
 }
+/**
+ * 停用落终态：标记了「停用中」的机器人，等任务结束后才真正停用
+ * @description 点击停用只进入「停用执行态」；队列任务跑完这里才把 enabled 置 false
+ * @param r 机器人
+ */
+function settleStopping(r: Robot) {
+  if (!r.stopping) return;
+  r.stopping = false;
+  r.enabled = false;
+  r.updatedAt = now();
+}
+/**
+ * 地图停用落终态：标记了「停用中」的地图，等图上的任务全部结束才真正停用
+ * @description 与机器人停用同一套防呆；由 transition 收口统一调用，
+ *              任务完成 / 超期 / 取消后自动收敛，不需要在每个任务动作里各写一遍
+ * @param s 状态
+ */
+function settleMapStopping(s: State) {
+  s.maps.forEach((m) => {
+    if (!m.stopping) return;
+    if (runningTasksOf(s, m.id).length) return;
+    m.stopping = false;
+    m.status = "停用";
+    m.updatedAt = now();
+  });
+}
+
 export function constraints(
   s: State,
   t: Task,
@@ -360,6 +449,16 @@ export function constraints(
         x.robotId !== r.id,
     )
       ? ["轨道区段被占用"]
+      : []),
+    // 台账开关：已停用不参与派单；「停用中」只挡新派单（start），队列里的存量任务继续跑完
+    ...(r.enabled === false ? ["机器人已停用"] : []),
+    ...(start && r.stopping ? ["机器人停用中（待当前任务结束）"] : []),
+    // 地图启停：与机器人同一套口径 —— 停用全挡；停用中只挡"开跑"，已在跑的放它跑完
+    ...(s.maps.find((m) => m.id === t.mapId)?.status === "停用"
+      ? ["任务所在地图已停用"]
+      : []),
+    ...(start && s.maps.find((m) => m.id === t.mapId)?.stopping
+      ? ["任务所在地图停用中（待当前任务结束）"]
       : []),
     ...(["离线", "充电", "返航中", "故障", "维护"].includes(r.state)
       ? [r.state]
@@ -460,6 +559,18 @@ function tenantFields(s: State, t: Tenant): Tenant {
   );
   return { ...t, name, code, status: t.status === "停用" ? "停用" : "启用" };
 }
+/**
+ * 补派任务的截止时间
+ * @description 从**当前时刻**重新计时（计划允许等待 + 计划超时），不沿用原任务的 deadline ——
+ *              原任务已经超期，沿用等于新任务一出生就又超期
+ * @param s 状态
+ * @param t 被补派的超期任务
+ * @returns 新截止时间的毫秒数
+ */
+export function retryDeadlineOf(s: State, t: Task): number {
+  const p = (s.plans || []).find((x) => x.id === t.planId);
+  return Date.now() + ((p?.wait ?? 30) + (p?.timeout ?? 60)) * 60000;
+}
 export function transition(state: State, a: Action): State {
   const s = structuredClone(state);
   let object = a.id || a.robotId || a.mapId || "平台";
@@ -507,6 +618,9 @@ export function transition(state: State, a: Action): State {
       "一期任务使用同一地图版本",
     );
     const m = s.maps.find((m) => m.id === items[0].mapId)!;
+    // 启停闸：停用的图不生成任务（人工临时 / 快速下发 / 计划到点生成共用本函数）
+    const gate = mapSceneBlockedReason(m, "任务下发");
+    must(!gate, gate);
     must(m.syncState === "已同步", "正式任务需要已同步的地图");
     // 任务指令集：由点位的「采集方式」（设备主数据里的巡检项 kind）推导原子动作，
     // 而不是由业务类型（仪表 / 阀门）推导；旧数据无主数据时回落 Point.kind。
@@ -519,7 +633,7 @@ export function transition(state: State, a: Action): State {
     const due = new Date(Date.now() + limitMinutes * 60000);
     const pad = (n: number) => String(n).padStart(2, "0");
     const t: Task = {
-      id: id("T"),
+      id: nextTaskId(s.tasks),
       name,
       source,
       taskType,
@@ -927,7 +1041,8 @@ export function transition(state: State, a: Action): State {
         // 主键即地图编号：统一 MAP-XXX 格式，展示层不再二次换算
         id: nextMapNo(s.maps),
         name,
-        region: String(a.region || "一期罐区"),
+        // 地图不再归属区域（区域概念已从地图管理下线），留空仅作旧数据兼容字段
+        region: "",
         version: 1,
         syncState: "未同步",
         // 新建地图默认启用，可在列表的启停开关里停用
@@ -983,13 +1098,56 @@ export function transition(state: State, a: Action): State {
       detail = `已删除地图「${hit!.name}」`;
       break;
     }
-    /** 切换地图逻辑启停状态（启用 / 停用） */
+    /**
+     * 切换地图逻辑启停（启用 / 停用 / 停用中），原因随审计留痕
+     * @description 与机器人启停同一套防呆：图上还有在跑任务时，默认只标「停用中」——
+     *              不再派新任务、不再下发，等在跑任务结束由 `settleMapStopping` 落终态；
+     *              传 `strategy = "立即"` 才硬中断（在跑任务置「取消」并写明原因）。
+     *              `a.status` 显式给目标状态；缺省按当前状态取反（停用中 → 启用 = 取消停用）
+     */
     case "TOGGLE_MAP_STATUS": {
       const hit = s.maps.find((x) => x.id === a.id);
       must(hit, "未找到地图");
-      hit.status = hit.status === "停用" ? "启用" : "停用";
+      const reason = String(a.reason || "").trim();
+      const tail = reason ? `（原因：${reason}）` : "";
+      const target =
+        a.status === "启用" || a.status === "停用"
+          ? a.status
+          : hit.status === "停用" || hit.stopping
+            ? "启用"
+            : "停用";
+      if (target === "启用") {
+        hit.status = "启用";
+        hit.stopping = false;
+        // 启用即清掉停用原因，详情页不再显示上一轮的停用说明
+        hit.statusReason = undefined;
+        hit.statusAt = now();
+        detail = `地图「${hit.name}」已启用${tail}`;
+      } else {
+        const running = runningTasksOf(s, hit.id);
+        hit.statusReason = reason || hit.statusReason;
+        hit.statusAt = now();
+        if (running.length && a.strategy !== "立即") {
+          hit.stopping = true;
+          detail = `地图「${hit.name}」已标记停用：${running.length} 个任务结束后生效，期间不再派新任务${tail}`;
+        } else {
+          // 立即停用：在跑任务中断并留原因，机器人释放当前任务；队列任务由调度约束挡住
+          running.forEach((t) => {
+            t.state = t.done.length ? "部分完成" : "取消";
+            t.blockedReason = "地图被立即停用，任务中断";
+            t.finishedAt = new Date().toISOString();
+            const r = s.robots.find((x) => x.id === t.robotId);
+            if (r && r.current === t.id) {
+              r.current = undefined;
+              r.state = "空闲";
+            }
+          });
+          hit.status = "停用";
+          hit.stopping = false;
+          detail = `地图「${hit.name}」已停用${running.length ? `（中断 ${running.length} 个在跑任务）` : ""}${tail}`;
+        }
+      }
       object = hit.id;
-      detail = `地图「${hit.name}」已${hit.status}`;
       break;
     }
     /**
@@ -1033,7 +1191,8 @@ export function transition(state: State, a: Action): State {
         // 主键即地图编号：统一 MAP-XXX 格式，展示层不再二次换算
         id: nextMapNo(s.maps),
         name: a.name,
-        region: a.region || "一期罐区",
+        // 同上：地图不归属区域
+        region: "",
         version: 1,
         syncState: "未同步" as const,
         // 新建地图默认启用，可在列表的启停开关里停用
@@ -1246,36 +1405,13 @@ export function transition(state: State, a: Action): State {
         !d!.items.some((x) => x.target === target),
         `检测目标「${target}」已存在`,
       );
-      const item: InspectItem = {
-        id: id(`II-${d!.id}-`),
-        target,
-        // 类型（界面口径：实体 / 虚拟）：数据仍是仪表 / 区域两档，缺省按检测目标推导
-        targetKind:
-          (a.targetKind as InspectItem["targetKind"]) ||
-          defaultTargetKindOfTarget(target),
-        // 分类（压力 / 温度 / 阀位 / 环境…）：下拉给建议、允许手填，缺省按检测目标推导
-        category:
-          String(a.category || "").trim() || defaultCategoryOfTarget(target),
-        kind: (a.kind as CaptureKind) || "可见光",
-        unit: String(a.unit || "").trim(),
-        inspect: a.inspect !== false,
-        cycle: String(a.cycle || "每日").trim() || "每日",
-        priority: (a.priority as InspectItem["priority"]) || "普通",
-      };
+      // 类型（界面口径：实体 / 虚拟）与分类，缺省均按检测目标推导（见 buildInspectItem）
+      const item = buildInspectItem(d!.id, a);
       d!.items.push(item);
       // 检测项变动即刷新设备「更新时间」（设备台账列表展示）
       d!.updatedAt = now();
       // 检测目标即工厂树第三层的仪表（id 同源），一并新增
-      if (s.instruments && !s.instruments.some((x) => x.id === item.id))
-        s.instruments.push({
-          id: item.id,
-          name: item.target,
-          deviceId: d!.id,
-          capture: item.kind,
-          unit: item.unit || undefined,
-          locationDesc: d!.locationDesc,
-          state: "在用",
-        });
+      pushInstrumentOf(s, d!, item);
       object = d!.id;
       detail = `${d!.name} 新增检测项「${item.target}」`;
       break;
@@ -2019,7 +2155,6 @@ export function transition(state: State, a: Action): State {
       const targets = ids.map((rid) => {
         const r = s.robots.find((x) => x.id === rid);
         must(r, `设备 ${rid} 不存在`);
-        must(r.region === m.region, "机器人服务区域与地图不匹配");
         return r!;
       });
       ensureContentReady(s, m);
@@ -2126,12 +2261,9 @@ export function transition(state: State, a: Action): State {
       );
       must(
         s.robots
-          .filter((r) => r.region === m.region)
-          .every(
-            (r) =>
-              r.mapId === m.id && r.mapVersion === m.version,
-          ),
-        "区域内机器人尚未全部同步",
+          .filter((r) => r.mapId === m.id)
+          .every((r) => r.mapVersion === m.version),
+        "已绑定该地图的机器人尚未全部同步",
       );
       c.state = "已完成";
       break;
@@ -2382,6 +2514,66 @@ export function transition(state: State, a: Action): State {
       t.blockedReason = "超过计划允许等待时间，请人工处理或重建任务";
       break;
     }
+    /**
+     * 超期补派
+     * @description 超期是留档的终点，**不复活原任务**：基于它的快照新建一条任务，
+     *              截止时间从当前时刻重新计时，并与原任务双向记录溯源
+     */
+    case "RETRY_TASK": {
+      const old = task();
+      must(old.state === "超期", "只有超期任务可以重新派单");
+      must(!old.retriedBy, `该任务已补派为 ${old.retriedBy}`);
+      const due = new Date(retryDeadlineOf(s, old));
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const nt: Task = {
+        ...structuredClone(old),
+        id: nextTaskId(s.tasks),
+        // 名字带「（补派）」，否则新旧两条同名，列表里根本分不清哪条是这一次
+        name: old.name.replace(/（补派）$/, "") + "（补派）",
+        source: "超期补派",
+        state: "待调度",
+        retryOf: old.id,
+        retriedBy: undefined,
+        created: now(),
+        deadline: `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())} ${pad(due.getHours())}:${pad(due.getMinutes())}`,
+        // 以下都是「这一次执行」留下的痕迹，补派是全新一次跑，全部清空
+        scheduleKey: undefined,
+        expectedAt: undefined,
+        notBefore: undefined,
+        startedAt: undefined,
+        finishedAt: undefined,
+        dispatchId: undefined,
+        blockedReason: undefined,
+        preemptedTaskId: undefined,
+        failure: undefined,
+        nextReportAt: undefined,
+        stage: 0,
+        index: 0,
+        done: [],
+        skipped: [],
+        retries: 0,
+      };
+      // 原机器人此刻能接就自动绑定，接不了就退回未分配、进「待安排」等人改派
+      const r = s.robots.find((x) => x.id === old.robotId);
+      if (r) {
+        // 与 ASSIGN 同口径：地图版本待同步可在下发后同步，不作为拦截项
+        const reasons = constraints(s, nt, r).filter(
+          (x) => x !== "地图版本待同步",
+        );
+        if (!reasons.length) {
+          nt.robotId = r.id;
+          nt.state = "已分配";
+        } else {
+          nt.robotId = undefined;
+          nt.blockedReason = reasons.join("；");
+        }
+      }
+      s.tasks.unshift(nt);
+      old.retriedBy = nt.id;
+      object = nt.id;
+      detail = `${old.id} 已留档，补派为 ${nt.id}（${nt.robotId || "待分配"}）`;
+      break;
+    }
     case "CREATE_TASK":
       createTask(
         a.name,
@@ -2417,9 +2609,11 @@ export function transition(state: State, a: Action): State {
       const t = task(),
         r = robot();
       must(
-        // 超期任务同样允许派单：超期只做高亮告警，不冻结调度操作
-        ["待调度", "已分配", "超期"].includes(t.state),
-        "已接收任务须先确认撤回后再改派",
+        // 超期是留档终点，不再参与派单：要继续干请走 RETRY_TASK 生成补派任务
+        ["待调度", "已分配"].includes(t.state),
+        t.state === "超期"
+          ? "超期任务已留档，请用「重新派单」生成补派任务"
+          : "已接收任务须先确认撤回后再改派",
       );
       const reasons = constraints(s, t, r).filter(
         (x) => x !== "地图版本待同步",
@@ -2451,10 +2645,12 @@ export function transition(state: State, a: Action): State {
       // 加入队列：一次性把待派单任务分配并下发至机器人预执行队列，机器人空闲则直接开跑
       const t = task(),
         r = robot();
-      // 超期任务同样允许加入队列 / 立即执行：超期只做高亮告警，不冻结调度操作
       must(
-        ["待调度", "已分配", "超期"].includes(t.state),
-        "任务不是待派单状态",
+        // 超期已留档，必须走「重新派单」生成补派任务
+        ["待调度", "已分配"].includes(t.state),
+        t.state === "超期"
+          ? "超期任务已留档，请用「重新派单」生成补派任务"
+          : "任务不是待派单状态",
       );
       const reasons = constraints(s, t, r);
       must(!reasons.length, reasons.join("；"));
@@ -2483,10 +2679,11 @@ export function transition(state: State, a: Action): State {
       // 立即执行：与「加入队列」同一原子链路，仅语义强调即时下发（机器人忙碌时同样回落为排队）
       const t = task(),
         r = robot();
-      // 超期任务同样允许加入队列 / 立即执行：超期只做高亮告警，不冻结调度操作
       must(
-        ["待调度", "已分配", "超期"].includes(t.state),
-        "任务不是待派单状态",
+        ["待调度", "已分配"].includes(t.state),
+        t.state === "超期"
+          ? "超期任务已留档，请用「重新派单」生成补派任务"
+          : "任务不是待派单状态",
       );
       const reasons = constraints(s, t, r);
       must(!reasons.length, reasons.join("；"));
@@ -2650,6 +2847,7 @@ export function transition(state: State, a: Action): State {
       const r = robot(t.robotId);
       r.current = undefined;
       r.state = "空闲";
+      settleStopping(r);
       continueQueue(s, r);
       detail = `TASK_FINISHED 已收到；有效检测项 ${t.done.length}/${t.items.length}，平台判定 ${t.state}`;
       break;
@@ -2810,6 +3008,7 @@ export function transition(state: State, a: Action): State {
           : "完成";
         r.current = undefined;
         r.state = "空闲";
+        settleStopping(r);
         continueQueue(s, r);
       }
       break;
@@ -3185,10 +3384,15 @@ export function transition(state: State, a: Action): State {
       detail = `新增机器人 ${robot.name}（${robot.deviceType}${robot.region ? " · " + robot.region : " · 待归属区域"}）已接入台账`;
       break;
     }
-    // ── 机器人管理：编辑机型与硬件主数据（SN / 机型 / 区域 / 固件 / 约束），并刷新更新时间 ──
+    // ── 机器人管理：编辑主数据（名称 / SN / 机型 / 固件 / 约束 / 采集能力），并刷新更新时间 ──
     case "UPDATE_ROBOT": {
       const r = s.robots.find((x) => x.id === a.id);
       must(r, "机器人不存在");
+      const name = String(a.name ?? r.name).trim();
+      must(name, "请填写机器人名称");
+      const capabilities = Array.isArray(a.capabilities) && a.capabilities.length
+        ? (a.capabilities as Robot["capabilities"])
+        : r.capabilities;
       const sn = String(a.sn ?? r.sn ?? "").trim();
       must(
         !sn || !s.robots.some((x) => x.id !== r.id && x.sn === sn),
@@ -3214,6 +3418,8 @@ export function transition(state: State, a: Action): State {
       if (deviceType === "挂轨" && a.railSectionId)
         constraints.railSectionId = String(a.railSectionId);
       Object.assign(r, {
+        name,
+        capabilities,
         sn: sn || undefined,
         deviceType,
         region,
@@ -3222,24 +3428,39 @@ export function transition(state: State, a: Action): State {
         updatedAt: now(),
       });
       object = r.id;
-      detail = `已更新机器人 ${r.name} 的机型与硬件`;
+      detail = `已更新机器人 ${r.name} 的主数据`;
       break;
     }
-    // ── 机器人管理：启用 / 停用切换（停用后不参与调度派单），刷新更新时间 ──
+    /**
+     * 机器人管理：启用 / 停用切换
+     * @description 防呆：停用不硬中断作业 —— 有任务在跑时只标 `stopping`（停用中），
+     *              期间不再接新任务、队列存量任务跑完，任务结束落停用终态（见 settleStopping）。
+     *              `a.enabled` 显式给目标状态，缺省取反当前值。
+     */
     case "TOGGLE_ROBOT": {
       const r = s.robots.find((x) => x.id === a.id);
       must(r, "机器人不存在");
-      // 关联状态：执行任务中（执行中 / 暂停 / 返航中）不允许停用，避免半路中断作业
-      const turningOff = r.enabled !== false;
-      if (turningOff)
-        must(
-          !["执行中", "暂停", "返航中"].includes(r.state),
-          `机器人 ${r.id} 正在${r.state}，任务未结束不能停用`,
-        );
-      r.enabled = !turningOff;
+      const target =
+        typeof a.enabled === "boolean" ? a.enabled : r.enabled === false;
+      if (target) {
+        r.enabled = true;
+        r.stopping = false;
+        // 重新启用：停用期间被卡住的队列任务接着跑
+        continueQueue(s, r);
+        detail = `机器人 ${r.id} 已启用`;
+      } else {
+        const busy =
+          !!r.current || ["执行中", "暂停", "返航中"].includes(r.state);
+        if (busy) {
+          r.stopping = true;
+          detail = `机器人 ${r.id} 已标记停用：当前队列任务结束后生效，期间不再接新任务`;
+        } else {
+          r.enabled = false;
+          detail = `机器人 ${r.id} 已停用`;
+        }
+      }
       r.updatedAt = now();
       object = r.id;
-      detail = `机器人 ${r.id} 已${r.enabled === false ? "停用" : "启用"}`;
       break;
     }
     // ── 后台管理：工厂已有基础数据（区域 / 设备 / 仪表）增删改 ──
@@ -3354,26 +3575,41 @@ export function transition(state: State, a: Action): State {
         `设备形态「${deviceKind}」不合法（应为 ${deviceKinds.join(" / ")}）`,
       );
       const deviceType = String(a.deviceType || "").trim() || "未分类";
-      devs.unshift({
+      // 建档时一并录入的检测项：与「新增检测项」同一口径（同设备内检测目标不可重复）
+      const items: InspectItem[] = [];
+      (Array.isArray(a.items) ? (a.items as any[]) : []).forEach((raw) => {
+        const it = buildInspectItem(did, raw);
+        if (!it.target) return;
+        must(
+          !items.some((x) => x.target === it.target),
+          `检测目标「${it.target}」重复`,
+        );
+        items.push(it);
+      });
+      const dev: DeviceAsset = {
         id: did,
         name,
         // 注意：动作名是 a.type，设备类型必须用独立字段 a.deviceType
         type: deviceType,
         deviceKind:
           (deviceKind as DeviceKind) || defaultDeviceKindOfType(deviceType),
-        regionCode: String(a.regionCode || "R-A03"),
+        regionCode: String(a.regionCode || "").trim(),
         region: String(a.region || "").trim() || undefined,
         locationDesc: String(a.locationDesc || "").trim(),
-        // 安装位置地图选点：底图坐标（x,y）+ 所属地图 id（与导入口径字段一致）
         coord: String(a.coord || "").trim() || undefined,
         coordSys: String(a.coordSys || "").trim() || undefined,
-        items: [],
+        items,
         state: "在用",
         // 建档时间 = 「更新时间」的起点（台账列表展示，编辑 / 导入 / 检测项变动时刷新）
         updatedAt: now(),
-      });
+      };
+      devs.unshift(dev);
+      // 检测目标即工厂树第三层的仪表（id 同源），一并新增
+      items.forEach((it) => pushInstrumentOf(s, dev, it));
       object = did;
-      detail = `已新增设备「${name}」`;
+      detail = items.length
+        ? `已新增设备「${name}」（含 ${items.length} 个检测项）`
+        : `已新增设备「${name}」`;
       break;
     }
     case "UPDATE_DEVICE": {
@@ -3493,7 +3729,15 @@ export function transition(state: State, a: Action): State {
       );
       const list = (s.robotPayloads ??= []);
       must(!list.some((p) => p.id === pid), `上装编码「${pid}」已存在`);
-      list.unshift({ id: pid, name, ...payloadFields(a), state: "启用" });
+      list.unshift({
+        id: pid,
+        name,
+        // 上装型号台账口径：版本 + 厂家（采购 / 售后按这两个字段对账）
+        version: String(a.version || "").trim() || undefined,
+        vendor: String(a.vendor || "").trim() || undefined,
+        ...payloadFields(a),
+        state: "启用",
+      });
       object = pid;
       detail = `已新增上装「${name}」`;
       break;
@@ -3504,7 +3748,12 @@ export function transition(state: State, a: Action): State {
       must(hit, "未找到要编辑的上装");
       const name = String(a.name || "").trim();
       must(name, "请填写上装名称");
-      Object.assign(hit!, { name, ...payloadFields(a) });
+      Object.assign(hit!, {
+        name,
+        version: String(a.version || "").trim() || undefined,
+        vendor: String(a.vendor || "").trim() || undefined,
+        ...payloadFields(a),
+      });
       object = hit!.id;
       detail = `已更新上装「${name}」`;
       break;
@@ -3623,6 +3872,8 @@ export function transition(state: State, a: Action): State {
   });
   // 状态收口：按"机器持有版本 + 下发记录"重算每张图的状态（派生值，任何动作后都保持一致）
   refreshMapStates(s);
+  // 「停用中」的地图：图上任务全部结束后落「停用」终态
+  settleMapStopping(s);
   releaseOutputs(s);
   return s;
 }

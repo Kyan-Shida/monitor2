@@ -38,10 +38,6 @@ export function DeviceSummary({ dev }: { dev: DeviceAsset }) {
           <dt>所属区域</dt>
           <dd>{region}</dd>
         </div>
-        <div>
-          <dt>安装位置</dt>
-          <dd>{dev.locationDesc || dev.coord || "—"}</dd>
-        </div>
       </dl>
       {editing && <DeviceEdit dev={dev} onClose={() => EDITING(false)} />}
     </>
@@ -60,14 +56,13 @@ function DeviceEdit({
   onClose: () => void;
 }) {
   const { s, act } = useStore();
-  /** 字段初值：归属区域显式字段优先，未指定时回落到按安装位置推导 */
+  /** 字段初值：归属区域显式字段优先，未指定时回落到区域主数据推导 */
   const initial = () => {
     const area0 = dev.region || areaNameOf(s, dev);
     return {
       name: dev.name,
       kind: deviceKindOf(dev),
       region: area0 === "未分区" ? "" : area0,
-      location: dev.locationDesc || "",
     };
   };
   const [init] = useState(initial);
@@ -77,8 +72,7 @@ function DeviceEdit({
   const dirty =
     form.name !== init.name ||
     form.kind !== init.kind ||
-    form.region !== init.region ||
-    form.location !== init.location;
+    form.region !== init.region;
   return (
     <Modal
       title="编辑设备信息"
@@ -96,7 +90,6 @@ function DeviceEdit({
                 name,
                 deviceKind: form.kind,
                 region: form.region,
-                locationDesc: form.location,
               });
               if (ok) onClose();
             }}
@@ -135,12 +128,6 @@ function DeviceEdit({
             <option key={x}>{x}</option>
           ))}
         </select>
-      </Field>
-      <Field label="安装位置">
-        <input
-          value={form.location}
-          onChange={(e) => FORM({ ...form, location: e.target.value })}
-        />
       </Field>
     </Modal>
   );

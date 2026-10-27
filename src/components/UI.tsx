@@ -27,6 +27,26 @@ export const Btn = ({
 );
 /** 分级等级（告警级别 / 业务状态通用）：显式 tone 优先，缺省时按文字关键字推断 */
 type Tone = "red" | "amber" | "blue" | "green";
+/**
+ * 任务状态的专属色（对应 styles.css 的 `.badge.st-*`）
+ * @description 12 个状态各占一个色相：原来「待调度 / 待执行 / 待下发」全落到同一个黄，
+ *              「已分配 / 执行中 / 下发中」全落到同一个蓝，列表里等于没区分
+ */
+const TASK_STATE_CLASS: Record<string, string> = {
+  待下发: "st-pending",
+  待调度: "st-todo",
+  已分配: "st-assigned",
+  下发中: "st-dispatch",
+  待执行: "st-queued",
+  执行中: "st-running",
+  已被接管: "st-taken",
+  暂停: "st-paused",
+  完成: "st-done",
+  部分完成: "st-partial",
+  失败: "st-failed",
+  取消: "st-canceled",
+  超期: "st-overdue",
+};
 export const Badge = ({
   children,
   tone,
@@ -38,10 +58,11 @@ export const Badge = ({
   const text = String(children);
   /**
    * 无显式 tone 时按语义着色：
-   * 红 = 异常结束，绿 = 正常结束，黄 = 待处理 / 人工介入，蓝 = 进行中
+   * 任务状态 → 专属色（一状态一色）；其余 → 红=异常、绿=正常、黄=待处理、蓝=进行中
    */
   const cls =
     tone ??
+    TASK_STATE_CLASS[text] ??
     (/失败|异常|歧义|离线|超限|待确认|已驳回|超期|取消|一级|紧急/.test(text)
       ? "red"
       : /已启用|已同步|完成|空闲|已关闭|已确认|已通过|通过|正常|已落位/.test(
@@ -127,6 +148,7 @@ export function MultiSelect({
   onChange,
   placeholder = "不限",
   searchable,
+  labelOf,
 }: {
   options: string[];
   value: string[];
@@ -134,7 +156,10 @@ export function MultiSelect({
   placeholder?: string;
   /** 候选多时给个搜索框（按关键词过滤候选，仍可多选） */
   searchable?: boolean;
+  /** 值的展示文案（值仍是 options 里的 id / 编码，界面显示中文名） */
+  labelOf?: (v: string) => string;
 }) {
+  const label = (v: string) => (labelOf ? labelOf(v) : v);
   const [open, OPEN] = useState(false);
   /** 搜索关键词：收起时清空，避免下次展开还残留上次的过滤条件 */
   const [kw, KW] = useState("");
@@ -154,12 +179,14 @@ export function MultiSelect({
   const toggle = (x: string) =>
     onChange(value.includes(x) ? value.filter((v) => v !== x) : [...value, x]);
   const k = kw.trim();
-  const shown = k ? options.filter((x) => x.includes(k)) : options;
+  const shown = k
+    ? options.filter((x) => label(x).includes(k) || x.includes(k))
+    : options;
   return (
     <div className="msel" ref={box}>
       <button type="button" className="msel-box" onClick={() => OPEN(!open)}>
         <span className={value.length ? "" : "muted"}>
-          {value.length ? value.join(" / ") : placeholder}
+          {value.length ? value.map(label).join(" / ") : placeholder}
         </span>
         <ChevronDown size={14} />
       </button>
@@ -181,7 +208,7 @@ export function MultiSelect({
                 checked={value.includes(x)}
                 onChange={() => toggle(x)}
               />
-              {x}
+              {label(x)}
             </label>
           ))}
           {!shown.length && <p className="msel-empty">无匹配项</p>}
@@ -308,7 +335,9 @@ export function Modal({
 export function Confirm({
   title,
   message,
+  children,
   confirmText = "确定",
+  confirmDisabled = false,
   danger = false,
   onConfirm,
   onClose,
@@ -316,7 +345,14 @@ export function Confirm({
   title: string;
   /** 一句话说清后果，可省 */
   message?: string;
+  /**
+   * 自定义正文：需要列出影响面或让人填原因时用
+   * @description 传了 children 就不再渲染 message，避免两段话重复
+   */
+  children?: ReactNode;
   confirmText?: string;
+  /** 必填项没填时置灰确认按钮，替代"点了才报错" */
+  confirmDisabled?: boolean;
   danger?: boolean;
   onConfirm: () => void;
   onClose: () => void;
@@ -329,13 +365,47 @@ export function Confirm({
       footer={
         <>
           <Btn onClick={onClose}>取消</Btn>
-          <Btn primary={!danger} danger={danger} onClick={onConfirm}>
+          <Btn
+            primary={!danger}
+            danger={danger}
+            disabled={confirmDisabled}
+            onClick={onConfirm}
+          >
             {confirmText}
           </Btn>
         </>
       }
     >
-      {message && <p>{message}</p>}
+      {children ?? (message && <p>{message}</p>)}
+    </Modal>
+  );
+}
+/**
+ * 居中提示弹窗
+ * @description 承载「被校验拦下来的操作原因」（如：至少需要一个已标注业务点位）；
+ *              这类反馈底部轻提示一闪而过、用户常常没看到就继续点，故改为居中弹窗等确认
+ * @param message 拦截原因，直接来自引擎校验
+ * @param onClose 关闭（点按钮 / 点遮罩 / 右上角 ×）
+ */
+export function Alert({
+  message,
+  onClose,
+}: {
+  message: string;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      title="无法完成该操作"
+      slim
+      onClose={onClose}
+      footer={
+        <Btn primary onClick={onClose}>
+          知道了
+        </Btn>
+      }
+    >
+      <p className="alert-hint">{message}</p>
     </Modal>
   );
 }
@@ -353,6 +423,7 @@ export function Drawer({
   children,
   onClose,
   footer,
+  className = "",
 }: {
   title: string;
   subtitle?: string;
@@ -360,6 +431,11 @@ export function Drawer({
   onClose: () => void;
   /** 固定底栏：按钮不随内容滚动，也不悬浮在内容之上 */
   footer?: ReactNode;
+  /**
+   * 附加类名：按场景收窄默认 940px 宽度
+   * @description 字段很少的轻表单（如租户）用窄版，避免正文大片留白
+   */
+  className?: string;
 }) {
   /* 同样挂 body：页面根有 transform 时 fixed 会以它为基准，抽屉会偏位并跟着缩放 */
   return createPortal(
@@ -367,7 +443,7 @@ export function Drawer({
       <aside
         role="dialog"
         aria-label={title}
-        className="drawer"
+        className={"drawer" + (className ? " " + className : "")}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="drawer-head">
@@ -395,12 +471,18 @@ export function Switch({
   onChange,
   label,
   disabled = false,
+  stopping = false,
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   /** 无障碍名称（视觉上不显示） */
   label: string;
   disabled?: boolean;
+  /**
+   * 过渡态：已点停用但还没生效（图上 / 队列里还有活）
+   * @description 滑块走半程并转琥珀色，再点一次即取消停用
+   */
+  stopping?: boolean;
 }) {
   return (
     <button
@@ -409,7 +491,9 @@ export function Switch({
       aria-checked={checked}
       aria-label={label}
       disabled={disabled}
-      className={"ui-switch" + (checked ? " on" : "")}
+      className={
+        "ui-switch" + (checked ? " on" : "") + (stopping ? " stopping" : "")
+      }
       onClick={() => onChange(!checked)}
     >
       <i />

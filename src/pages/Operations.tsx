@@ -3,14 +3,13 @@ import { useStore } from "../data/store";
 import { go, usePageSize, useViewState } from "../data/navigation";
 import { Btn, Badge, Panel, Table, Note, Empty, Confirm, Switch } from "../components/UI";
 import { profileOf, deviceTypes } from "../data/deviceProfile";
-import { areaOptions } from "../data/deviceMaster";
 import { capabilityMatrix, componentStatuses } from "../data/robotCapabilities";
 import { ObjectLink, Kpis, Pager } from "../components/Business";
 import { FilterPanel } from "../components/FilterPanel";
 import { MapCanvas } from "../components/MapCanvas";
 import { Operations as Legacy } from "./OperationsLegacy";
 import { ControlConsole } from "./Execution";
-import type { Robot, DeviceType } from "../data/types";
+import { captureKinds, type Robot, type DeviceType } from "../data/types";
 import {
   currentTask,
   queueFor,
@@ -135,7 +134,7 @@ export function Operations({
               "机器名称",
               "当前状态",
               "电量",
-              "待执行",
+              "队列",
               "启用",
               "更新时间",
               "操作",
@@ -146,35 +145,57 @@ export function Operations({
               <ObjectLink type="robot" id={r.id}>
                 {r.name}
               </ObjectLink>,
-              <Badge>{r.state}</Badge>,
+              <span className="actions">
+                {/* 状态口径：已停用优先（此时既不接单也不跑队列），否则看机器人自身状态 */}
+                {r.enabled === false ? (
+                  <Badge>已停用</Badge>
+                ) : (
+                  <Badge>{r.state}</Badge>
+                )}
+                {/* 停用中：已点停用但队列任务未跑完，任务结束才落停用终态 */}
+                {r.stopping && <Badge>停用中</Badge>}
+              </span>,
               `${r.battery}%`,
               queueFor(s, r.id).length ? (
-                <ObjectLink type="queue" id={r.id}>
-                  {queueFor(s, r.id).length} 个
-                </ObjectLink>
+                <span
+                  title={
+                    r.enabled === false
+                      ? "机器人已停用，队列任务不会执行；重新启用后自动继续"
+                      : undefined
+                  }
+                >
+                  <ObjectLink type="queue" id={r.id}>
+                    {queueFor(s, r.id).length} 个
+                  </ObjectLink>
+                </span>
               ) : (
-                <span className="muted">—</span>
+                ""
               ),
               (() => {
                 const on = r.enabled !== false;
-                // 关联状态：执行任务中的机器人只能保持启用，不允许停用
-                const locked = on && EXECUTING_STATES.includes(r.state);
+                /** 停用中：开关显示为关，再点即取消停用（防呆不硬中断作业） */
+                const stopping = !!r.stopping;
                 return (
                   <span
-                    className={locked ? "switch-cell locked" : "switch-cell"}
+                    className={stopping ? "switch-cell stopping" : "switch-cell"}
                     title={
-                      locked ? `执行任务中（${r.state}），不可停用` : undefined
+                      stopping
+                        ? `停用中：当前${r.state}任务结束后生效，期间不再接新任务`
+                        : undefined
                     }
                   >
                     <Switch
-                      checked={on}
+                      checked={on && !stopping}
                       label={`${r.id} 启用状态`}
-                      disabled={locked}
-                      onChange={(next) => {
-                        // 停用：二次确认后再落库；启用：直接生效
-                        if (next) act({ type: "TOGGLE_ROBOT", id: r.id });
-                        else ASKSTOP(r);
-                      }}
+                      onChange={(next) =>
+                        next
+                          ? act({
+                              type: "TOGGLE_ROBOT",
+                              id: r.id,
+                              enabled: true,
+                            })
+                          : ASKSTOP(r)
+                      }
                     />
                   </span>
                 );
@@ -196,16 +217,24 @@ export function Operations({
             }}
           />
         </Panel>
-        {/* 停用二次确认：任务状态已挡住执行中的机器人，这里再问一次避免误点 */}
+        {/* 停用二次确认：执行中不硬停，改为「停用中」，等队列任务跑完才落终态 */}
         {stopRobot && (
           <Confirm
-            title="停用机器人"
-            message={`停用「${stopRobot.name}」后不再参与调度派单，之后可随时重新启用。`}
+            title={
+              EXECUTING_STATES.includes(stopRobot.state)
+                ? "标记停用"
+                : "停用机器人"
+            }
+            message={
+              EXECUTING_STATES.includes(stopRobot.state)
+                ? `「${stopRobot.name}」当前${stopRobot.state}。确认后进入「停用中」：不再接新任务，等当前队列任务执行结束后才真正停用；期间可随时关闭开关取消。`
+                : `停用「${stopRobot.name}」后不再参与调度派单，之后可随时重新启用。`
+            }
             confirmText="停用"
             danger
             onClose={() => ASKSTOP(null)}
             onConfirm={() => {
-              act({ type: "TOGGLE_ROBOT", id: stopRobot.id });
+              act({ type: "TOGGLE_ROBOT", id: stopRobot.id, enabled: false });
               ASKSTOP(null);
             }}
           />
@@ -391,8 +420,7 @@ export function Operations({
           <div>
             <h2>{r.name}</h2>
             <span>
-              {r.deviceType} · {r.region || "未分配区域"} ·{" "}
-              {r.state === "离线" ? "离线" : "在线"}
+              {r.deviceType} · {r.state === "离线" ? "离线" : "在线"}
             </span>
           </div>
           <Badge>{r.state}</Badge>
@@ -744,11 +772,28 @@ export function Operations({
  *              面板排成卡片栅格（同类信息并排、标签—值多列），不再是 5 段纵向长条
  * @param robot 目标机器人
  */
+/** 秒 → 「N天N小时N分钟」（统计数据口径） */
+function fmtSeconds(sec?: number) {
+  if (!sec || sec < 0) return "—";
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return `${d ? `${d}天` : ""}${h || d ? `${h}小时` : ""}${m}分钟`;
+}
+
+/** 起始时间 → 距今时长（本次运行时长口径），兼容 "YYYY-MM-DD HH:mm:ss" */
+function fmtSpan(from?: string) {
+  if (!from) return "—";
+  const t = new Date(from.replace(" ", "T")).getTime();
+  if (!Number.isFinite(t)) return "—";
+  return fmtSeconds(Math.max(0, Math.floor((Date.now() - t) / 1000)));
+}
+
 /**
  * 机器参数里每张表的独立分页（页码 + 每页条数都按会话记忆）
  * @param key 视图状态前缀，如 "robot.ability.comp"
  */
-function useTablePager(key: string, defaultSize = 5) {
+function useTablePager(key: string, defaultSize = 10) {
   const [page, PAGE] = useViewState(`${key}.page`, 1);
   const [size, SIZE] = usePageSize(`${key}.size`, defaultSize);
   return { page, size, PAGE, SIZE };
@@ -756,10 +801,9 @@ function useTablePager(key: string, defaultSize = 5) {
 
 function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
   const { s, act } = useStore();
-  /** 子标签：五块内容原本纵向堆成一条长页，按主题分开、一次只看一块 */
+  /** 子标签：同一机器人按主题分开看（基本信息 / 组件状态 / 能力与上装 / 地图与版本） */
   const [capTab, SETCAPTAB] = useViewState("robot.ability.tab", "hw");
-  /** 三张表格各自分页：与全站列表同一套 Pager（共 N 条 / 每页 / 上一页 · 下一页） */
-  const comp = useTablePager("robot.ability.comp");
+  /** 两张表格各自分页：与全站列表同一套 Pager（共 N 条 / 每页 / 上一页 · 下一页） */
   const cap = useTablePager("robot.ability.cap");
   const payload = useTablePager("robot.ability.payload");
   const profile = profileOf(r.deviceType);
@@ -771,13 +815,24 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
   /** 机型与硬件编辑：草稿字段 + 编辑中标记 + 保存二次确认 */
   const [editing, EDITING] = useState(false);
   const [ask, ASK] = useState(false);
+  const [name, NAME] = useState(r.name);
   const [sn, SN] = useState(r.sn ?? "");
   const [deviceType, DT] = useState<DeviceType>(r.deviceType);
-  const [region, REGION] = useState(r.region ?? "");
   const [firmware, FW] = useState(r.firmware ?? "");
+  const [caps, CAPS] = useState<string[]>(r.capabilities);
   const [minBattery, MINB] = useState(r.constraints.minBattery);
+  const [needCharging, CHARGE] = useState(r.constraints.needChargingPlan);
   const [maxSpeed, MAXS] = useState(r.constraints.maxSpeed ?? 1.5);
   const [railSectionId, RAIL] = useState(r.constraints.railSectionId ?? "");
+  /** 可选采集能力：与新增表单同口径（启用中的上装能力，缺省退回内置采集方式） */
+  const enabledKinds = [
+    ...new Set(
+      (s.robotPayloads || [])
+        .filter((p) => p.state === "启用")
+        .flatMap((p) => p.abilities.map((a) => a.kind)),
+    ),
+  ];
+  const capOptions = enabledKinds.length ? enabledKinds : captureKinds;
   /** 三张表的分页切片（数据源不变，只交付当前页；页码越界时按最后一页兜底） */
   const compAll = componentStatuses(r);
   const capAll = capabilityMatrix(s, r);
@@ -798,10 +853,10 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
   );
   return (
     <div className="cap-grid">
-      {/* 子标签条：机型与硬件 / 组件状态 / 能力与影响 / 地图与版本 / 上装与配套 */}
+      {/* 子标签条：基本信息 / 组件状态 / 能力与影响 / 地图与版本 / 上装与配套 */}
       <div className="cap-tabs segmented" role="tablist">
         {[
-          ["hw", "机型与硬件"],
+          ["hw", "基本信息"],
           ["comp", "组件状态"],
           ["cap", "能力与影响"],
           ["map", "地图与版本"],
@@ -822,7 +877,7 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
       {capTab === "hw" && (
         <Panel
           className="cap-span2"
-          title="机型与硬件"
+          title="基本信息"
           extra={
             editing ? (
               <div className="actions">
@@ -836,11 +891,13 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
                 <span className="muted">更新于 {r.updatedAt ?? "—"}</span>
                 <Btn
                   onClick={() => {
+                    NAME(r.name);
                     SN(r.sn ?? "");
                     DT(r.deviceType);
-                    REGION(r.region ?? "");
                     FW(r.firmware ?? "");
+                    CAPS(r.capabilities);
                     MINB(r.constraints.minBattery);
+                    CHARGE(r.constraints.needChargingPlan);
                     MAXS(r.constraints.maxSpeed ?? 1.5);
                     RAIL(r.constraints.railSectionId ?? "");
                     EDITING(true);
@@ -855,6 +912,11 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
           <Note>{profile.summary}</Note>
           {editing ? (
             <dl className="cap-kv">
+              {kv("机器人编码", r.id)}
+              {kv(
+                "机器人名称",
+                <input value={name} onChange={(e) => NAME(e.target.value)} />,
+              )}
               {kv(
                 "机器人编号（SN）",
                 <input
@@ -881,19 +943,6 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
                 </select>,
               )}
               {kv(
-                "所属区域",
-                <select
-                  value={region}
-                  onChange={(e) => REGION(e.target.value)}
-                >
-                  {areaOptions(s).map((x) => (
-                    <option key={x} value={x}>
-                      {x}
-                    </option>
-                  ))}
-                </select>,
-              )}
-              {kv(
                 "固件版本",
                 <input
                   value={firmware}
@@ -901,63 +950,118 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
                 />,
               )}
               {kv(
-                "机型约束",
-                <div className="edit-constraints">
-                  <label>
-                    最低派单电量（%）
-                    <input
-                      type="number"
-                      value={minBattery}
-                      onChange={(e) => MINB(Number(e.target.value))}
-                    />
-                  </label>
-                  {deviceType === "四轮车" && (
-                    <label>
-                      限速（m/s）
+                "最低派单电量（%）",
+                <input
+                  type="number"
+                  value={minBattery}
+                  onChange={(e) => MINB(Number(e.target.value))}
+                />,
+              )}
+              {kv(
+                "参与充电排队规划",
+                <label className="inline-filter">
+                  <input
+                    type="checkbox"
+                    checked={needCharging}
+                    onChange={(e) => CHARGE(e.target.checked)}
+                  />
+                  <span>{needCharging ? "参与" : "不参与"}</span>
+                </label>,
+              )}
+              {deviceType === "四轮车" &&
+                kv(
+                  "限速（m/s）",
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={maxSpeed}
+                    onChange={(e) => MAXS(Number(e.target.value))}
+                  />,
+                )}
+              {deviceType === "挂轨" &&
+                kv(
+                  "所在轨道区段",
+                  <input
+                    value={railSectionId}
+                    onChange={(e) => RAIL(e.target.value)}
+                  />,
+                )}
+              {kv(
+                "采集能力",
+                <div className="actions">
+                  {capOptions.map((c) => (
+                    <label key={c} className="inline-filter">
                       <input
-                        type="number"
-                        step="0.1"
-                        value={maxSpeed}
-                        onChange={(e) => MAXS(Number(e.target.value))}
+                        type="checkbox"
+                        checked={caps.includes(c)}
+                        onChange={(e) =>
+                          CAPS(
+                            e.target.checked
+                              ? [...caps, c]
+                              : caps.filter((x) => x !== c),
+                          )
+                        }
                       />
+                      <span>{c}</span>
                     </label>
-                  )}
-                  {deviceType === "挂轨" && (
-                    <label>
-                      所在轨道区段
-                      <input
-                        value={railSectionId}
-                        onChange={(e) => RAIL(e.target.value)}
-                      />
-                    </label>
-                  )}
+                  ))}
                 </div>,
                 true,
               )}
             </dl>
           ) : (
             <dl className="cap-kv">
+              {kv("机器人编码", r.id)}
               {kv("机器人编号（SN）", r.sn || "—")}
+              {kv("机器人名称", r.name)}
               {kv("机型", r.deviceType)}
-              {kv("所属区域", r.region || "未分配区域")}
               {kv("固件版本", r.firmware)}
+              {kv("最低派单电量", `${r.constraints.minBattery}%`)}
               {kv(
-                "机型约束",
-                `最低派单电量 ${r.constraints.minBattery}%` +
-                  (r.constraints.railSectionId
-                    ? ` · 所在区段 ${r.constraints.railSectionId}`
-                    : "") +
-                  (r.constraints.maxSpeed
-                    ? ` · 限速 ${r.constraints.maxSpeed} m/s`
-                    : ""),
-                true,
+                "参与充电排队规划",
+                r.constraints.needChargingPlan ? "参与" : "不参与",
               )}
+              {kv(
+                "限速（m/s）",
+                r.constraints.maxSpeed ? `${r.constraints.maxSpeed} m/s` : "—",
+              )}
+              {kv("所在轨道区段", r.constraints.railSectionId || "—")}
+              {kv("采集能力", r.capabilities.join(" / "), true)}
             </dl>
           )}
+          {/* 统计数据：运行 / 巡检口径（只读，随任务与充电记录刷新） */}
+          <div className="cap-sub">统计数据</div>
+          <dl
+            className="cap-kv"
+            style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
+          >
+            {kv(
+              "当前状态",
+              <span
+                className={
+                  ["离线", "故障", "维护"].includes(r.state) ? "kv-bad" : "kv-ok"
+                }
+              >
+                {r.state}
+              </span>,
+            )}
+            {kv(
+              "当前电量",
+              <span className={r.battery < 25 ? "kv-bad" : "kv-ok"}>
+                {r.battery}%
+              </span>,
+            )}
+            {kv("本次运行时长", fmtSpan(r.runSince))}
+            {kv("累计巡检次数", `${r.inspectCount ?? 0} 次`)}
+            {kv("累计巡检时长", fmtSeconds(r.inspectSeconds))}
+            {kv("本次运行里程", `${(r.tripMileage ?? 0).toFixed(1)} km`)}
+            {kv("累计运行里程", `${(r.totalMileage ?? 0).toFixed(1)} km`)}
+            {kv("上次充电时间", r.lastChargeAt || "—")}
+          </dl>
           {/* 保存二次确认：挂在 Panel 内，点遮罩只关确认框 */}
           {ask && (
             <Confirm
-              title="保存机型与硬件"
+              title="保存机器人信息"
               message={`「${r.name}」的主数据保存后，更新时间会同步刷新。`}
               confirmText="保存"
               onClose={() => ASK(false)}
@@ -965,10 +1069,12 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
                 act({
                   type: "UPDATE_ROBOT",
                   id: r.id,
+                  name,
                   sn,
                   deviceType,
-                  region,
                   firmware,
+                  capabilities: caps,
+                  needChargingPlan: needCharging,
                   minBattery,
                   maxSpeed: deviceType === "四轮车" ? maxSpeed : undefined,
                   railSectionId:
@@ -984,25 +1090,20 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
       {/* 组件状态：机器人本体自检（组件 / 传感器健康），口径与能力表同源 */}
       {capTab === "comp" && (
       <Panel className="cap-span2" title="组件状态">
-        {/* 手写 <table> 换成共享 Table：列宽、行高、表头底色与全站表格一致 */}
-        <Table
-          heads={["组件 / 传感器", "状态"]}
-          rows={sliceOf(compAll, comp).map((c) => [
-            c.name,
-            <span
-              className={`comp-status ${c.status === "正常" ? "ok" : "bad"}`}
-            >
-              {c.status}
-            </span>,
-          ])}
-        />
-        <Pager
-          page={comp.page}
-          count={compAll.length}
-          size={comp.size}
-          onChange={comp.PAGE}
-          onSize={comp.SIZE}
-        />
+        {/* 自检项都是短「标签: 状态」，用三列标签栅格比表格更省高度（组件数量固定，不分页） */}
+        <dl
+          className="cap-kv"
+          style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
+        >
+          {compAll.map((c) =>
+            kv(
+              c.name,
+              <span className={c.status === "正常" ? "kv-ok" : "kv-bad"}>
+                {c.status}
+              </span>,
+            ),
+          )}
+        </dl>
       </Panel>
       )}
       {capTab === "cap" && (
@@ -1049,14 +1150,15 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
         </div>
       </Panel>
       )}
+      {/* 上装与配套：只记型号 / 版本 / 厂家（采购与售后对账口径），能力细节看「能力与影响」 */}
       {capTab === "payload" && (
       <Panel className="cap-span2" title="上装与配套">
         <Table
-          heads={["上装", "采集方式", "支持动作"]}
+          heads={["上装型号", "版本", "厂家"]}
           rows={sliceOf(payloads, payload).map((p) => [
             p.name,
-            p.abilities.map((a) => a.kind).join(" / "),
-            p.abilities.flatMap((a) => a.actions).join(" / "),
+            p.version || <span className="muted">—</span>,
+            p.vendor || <span className="muted">—</span>,
           ])}
         />
         {!payloads.length && <Empty>该机型暂无适用上装。</Empty>}

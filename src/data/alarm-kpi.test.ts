@@ -125,7 +125,7 @@ test("告警推送人员：登录名唯一、仅管理员可维护、等级留�
   });
   const got = added.alarmPushStaff!.find((x) => x.login === "zhangsan")!;
   assert.equal(got.levels.length, 0);
-  assert.equal(got.updatedBy, "王姐");
+  assert.equal(got.updatedBy, "Admin");
   assert.ok(got.updatedAt);
   const user = seed();
   user.roleId = "user";

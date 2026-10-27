@@ -14,9 +14,7 @@ import { FilterPanel } from "../components/FilterPanel";
 import { useListDelete } from "../components/ListDelete";
 import { Pager } from "../components/Business";
 import { DeviceTree } from "../components/DeviceTree";
-import { MapImageCanvas, type ImageMarker } from "../components/MapImageCanvas";
 import {
-  deviceStats,
   deviceKindOf,
   archiveIdOf,
   areaNameOf,
@@ -24,9 +22,11 @@ import {
   defaultTargetKindOfTarget,
   defaultDeviceKindOfType,
   parseDeviceKind,
+  itemKindOfType,
+  itemTypes,
 } from "../data/deviceMaster";
 import { readSheetRows, downloadXlsx } from "../data/excel";
-import { fmtDateTime } from "../data/types";
+import { fmtDateTime, itemCategories } from "../data/types";
 import { deviceKinds } from "../data/types";
 import type { DeviceAsset, DeviceKind } from "../data/types";
 
@@ -69,6 +69,17 @@ type ImportRow = {
 /** 巡检项列 → 检测目标数组（去空、去重） */
 const splitTargets = (raw: string) =>
   [...new Set(raw.split(/[、,，;；/]/).map((x) => x.trim()).filter(Boolean))];
+/** 新增设备时一并录入的检测项：一行 = 一个检测项，字段与「新增检测项」弹窗同口径 */
+type ItemRow = {
+  /** 类型（实体 / 虚拟） */
+  type: (typeof itemTypes)[number];
+  /** 分类（压力 / 温度 / 阀位…）：给建议项、允许手填 */
+  category: string;
+  /** 检测目标名称（如 出口压力表） */
+  target: string;
+};
+/** 空行：三个字段都空即忽略（用户点了「新增检测项」但没填） */
+const isBlankItemRow = (r: ItemRow) => !r.target.trim() && !r.category.trim();
 
 export function DeviceMaster() {
   const { s, act } = useStore();
@@ -93,33 +104,54 @@ export function DeviceMaster() {
     deviceKind: DeviceKind;
     /** 所属区域（必填） */
     region: string;
-    /** 厂区坐标文本：点地图自动代入，或用户手动输入（x, y） */
-    coordInput: string;
-    /** 安装位置：全厂区 2D 底图上打点得到的厂区坐标（底图百分比口径） */
-    x?: number;
-    y?: number;
+    /** 建档时一并录入的检测项（可多行，空行忽略） */
+    items: ItemRow[];
   } | null>(null);
-  /** 安装位置底图：全厂区 2D 地图（各分区地图当前共用同一张厂区底图） */
-  const plantMapImage = (s.maps || []).find((m) => m.image)?.image;
-  /** 打点后的厂区坐标文本：自动代入「安装位置」，未打点为空 */
-  const coordText =
-    devForm?.x != null && devForm?.y != null ? `${devForm.x}, ${devForm.y}` : "";
-  /** 安装位置选点标记：仅当已打点时显示 */
-  const pickMarkers: ImageMarker[] =
-    devForm && devForm.x != null && devForm.y != null
-      ? [
-          {
-            id: "pick",
-            x: devForm.x,
-            y: devForm.y,
-            label: devForm.name || "新设备",
-          },
-        ]
-      : [];
 
-  const stat = deviceStats(s);
   const all = s.devices || [];
   const kw = q.trim();
+
+  /** 新增设备表单是否可提交（编码 / 名称 / 区域必填；检测项非空行必须三项齐全） */
+  const devFormReady = (f: NonNullable<typeof devForm>) =>
+    !!f.id.trim() &&
+    !!f.name.trim() &&
+    !!f.region &&
+    !f.items.some(
+      (r) => !isBlankItemRow(r) && (!r.target.trim() || !r.category.trim()),
+    );
+  /**
+   * 提交新增设备
+   * @param keepOpen 保存并新增：保留形态与区域，清掉编码 / 名称 / 检测项，
+   *                 抽屉不关，接着录下一台（同批设备通常同区域、同形态）
+   */
+  function submitDevice(keepOpen: boolean) {
+    if (!devForm) return;
+    // 空行只是用户点了「新增」没填，落库前剔掉
+    const items = devForm.items
+      .filter((r) => !isBlankItemRow(r))
+      .map((r) => ({
+        target: r.target.trim(),
+        targetKind: itemKindOfType(r.type),
+        category: r.category.trim(),
+      }));
+    const ok = act({
+      type: "ADD_DEVICE",
+      id: devForm.id.trim(),
+      name: devForm.name.trim(),
+      deviceKind: devForm.deviceKind,
+      region: devForm.region,
+      items,
+    });
+    if (!ok) return;
+    if (!keepOpen) return DEVFORM(null);
+    DEVFORM({
+      id: "",
+      name: "",
+      deviceKind: devForm.deviceKind,
+      region: devForm.region,
+      items: [{ type: "实体", category: "", target: "" }],
+    });
+  }
 
   /**
    * 设备所属区域：统一走区域主数据口径（areaNameOf）——
@@ -129,7 +161,7 @@ export function DeviceMaster() {
 
   /** 分页 */
   const [page, PAGE] = useState(1);
-  const [pageSize, PAGE_SIZE] = useState(5);
+  const [pageSize, PAGE_SIZE] = useState(10);
   /** 已生效的筛选条件数（用于「筛选」按钮上的计数） */
   const filterCount = (kindF !== "全部" ? 1 : 0) + (kw ? 1 : 0);
   /** 展开筛选面板：用当前生效值填充草稿 */
@@ -298,17 +330,6 @@ export function DeviceMaster() {
 
   return (
     <>
-      <div className="metric-strip">
-        <div>
-          <span>设备总数</span>
-          <strong>{stat.total}</strong>
-        </div>
-        <div>
-          <span>巡检项</span>
-          <strong>{stat.itemTotal}</strong>
-        </div>
-      </div>
-
       <div className="device-layout">
         <DeviceTree value={treeSel} onChange={TREE} ariaLabel="设备树" />
 
@@ -334,8 +355,8 @@ export function DeviceMaster() {
                       deviceKind: "实体设备",
                       // 已按区域筛选时预填该区域，减少一次重复选择
                       region: treeSel.startsWith("r:") ? treeSel.slice(2) : "",
-                      // 安装位置统一用坐标：默认空，点地图自动代入或手动输入
-                      coordInput: "",
+                      // 检测项默认给一空行：填完设备信息即可接着录检测项，一步到位
+                      items: [{ type: "实体", category: "", target: "" }],
                     })
                   }
                 >
@@ -502,9 +523,10 @@ export function DeviceMaster() {
         </Modal>
       )}
 
-      {/* 新增设备：就地建档（设备主数据由「设备台账」独家维护） */}
+      {/* 新增设备：就地建档（设备主数据由「设备台账」独家维护），检测项随设备一并录入 */}
       {devForm && (
         <Drawer
+          className="drawer-narrow"
           title="新增设备"
           subtitle={devForm.id ? `${devForm.id} · ${devForm.name || "未命名"}` : undefined}
           onClose={() => DEVFORM(null)}
@@ -512,94 +534,157 @@ export function DeviceMaster() {
             <>
               <Btn onClick={() => DEVFORM(null)}>取消</Btn>
               <Btn
+                disabled={!devFormReady(devForm)}
+                onClick={() => submitDevice(true)}
+              >
+                保存并新增
+              </Btn>
+              <Btn
                 primary
-                disabled={
-                  !devForm.id.trim() || !devForm.name.trim() || !devForm.region
-                }
-                onClick={() => {
-                  // 安装位置统一使用厂区坐标：以输入框为准（点地图会写入，也可手动改）
-                  const coord = devForm.coordInput.trim() || coordText;
-                  const ok = act({
-                    type: "ADD_DEVICE",
-                    id: devForm.id.trim(),
-                    name: devForm.name.trim(),
-                    deviceKind: devForm.deviceKind,
-                    region: devForm.region,
-                    coord: coord || undefined,
-                    coordSys: coord ? "厂区局部坐标" : undefined,
-                  });
-                  if (ok) DEVFORM(null);
-                }}
+                disabled={!devFormReady(devForm)}
+                onClick={() => submitDevice(false)}
               >
                 保存
               </Btn>
             </>
           }
         >
-          <div className="device-form-split">
-            <div>
-              <Field label="设备编码" required>
-                <input
-                  value={devForm.id}
-                  placeholder="例如 V012"
-                  onChange={(e) => DEVFORM({ ...devForm, id: e.target.value })}
-                />
-              </Field>
-              <Field label="设备名称" required>
-                <input
-                  value={devForm.name}
-                  placeholder="例如 V012 新增储罐"
-                  onChange={(e) => DEVFORM({ ...devForm, name: e.target.value })}
-                />
-              </Field>
-              <Field label="设备形态" required>
+          <div className="device-form-grid">
+            <Field label="设备编码" required>
+              <input
+                value={devForm.id}
+                placeholder="例如 V012"
+                onChange={(e) => DEVFORM({ ...devForm, id: e.target.value })}
+              />
+            </Field>
+            <Field label="设备名称" required>
+              <input
+                value={devForm.name}
+                placeholder="例如 V012 新增储罐"
+                onChange={(e) => DEVFORM({ ...devForm, name: e.target.value })}
+              />
+            </Field>
+            <Field label="设备形态" required>
+              <select
+                value={devForm.deviceKind}
+                onChange={(e) =>
+                  DEVFORM({
+                    ...devForm,
+                    deviceKind: e.target.value as DeviceKind,
+                  })
+                }
+              >
+                {deviceKinds.map((k) => (
+                  <option key={k}>{k}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="所属区域" required>
+              <select
+                value={devForm.region}
+                onChange={(e) => DEVFORM({ ...devForm, region: e.target.value })}
+              >
+                <option value="">（未指定）</option>
+                {areaOptions(s).map((x) => (
+                  <option key={x}>{x}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          <div className="device-item-editor">
+            <div className="device-item-head">
+              <span>检测项</span>
+              <Btn
+                onClick={() =>
+                  DEVFORM({
+                    ...devForm,
+                    items: [
+                      ...devForm.items,
+                      { type: "实体", category: "", target: "" },
+                    ],
+                  })
+                }
+              >
+                ＋ 新增检测项
+              </Btn>
+            </div>
+            {/* 列名：与行同一套栅格，长表单里一眼看出每列填什么 */}
+            {!!devForm.items.length && (
+              <div className="device-item-cols">
+                <span>类型</span>
+                <span>分类</span>
+                <span>检测项名称</span>
+                <span />
+              </div>
+            )}
+            {devForm.items.map((row, i) => (
+              <div className="device-item-row" key={i}>
                 <select
-                  value={devForm.deviceKind}
-                  onChange={(e) =>
+                  aria-label={`检测项 ${i + 1} 类型`}
+                  value={row.type}
+                  onChange={(e) => {
+                    const type = e.target.value as ItemRow["type"];
                     DEVFORM({
                       ...devForm,
-                      deviceKind: e.target.value as DeviceKind,
+                      items: devForm.items.map((x, j) =>
+                        j === i ? { ...x, type } : x,
+                      ),
+                    });
+                  }}
+                >
+                  {itemTypes.map((t) => (
+                    <option key={t}>{t}</option>
+                  ))}
+                </select>
+                <input
+                  aria-label={`检测项 ${i + 1} 分类`}
+                  list="device-item-categories"
+                  value={row.category}
+                  placeholder="分类，如 压力"
+                  onChange={(e) => {
+                    const category = e.target.value;
+                    DEVFORM({
+                      ...devForm,
+                      items: devForm.items.map((x, j) =>
+                        j === i ? { ...x, category } : x,
+                      ),
+                    });
+                  }}
+                />
+                <input
+                  aria-label={`检测项 ${i + 1} 名称`}
+                  value={row.target}
+                  placeholder="检测项名称，如 出口压力表"
+                  onChange={(e) => {
+                    const target = e.target.value;
+                    DEVFORM({
+                      ...devForm,
+                      items: devForm.items.map((x, j) =>
+                        j === i ? { ...x, target } : x,
+                      ),
+                    });
+                  }}
+                />
+                <Btn
+                  danger
+                  onClick={() =>
+                    DEVFORM({
+                      ...devForm,
+                      items: devForm.items.filter((_, j) => j !== i),
                     })
                   }
                 >
-                  {deviceKinds.map((k) => (
-                    <option key={k}>{k}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="所属区域" required>
-                <select
-                  value={devForm.region}
-                  onChange={(e) => DEVFORM({ ...devForm, region: e.target.value })}
-                >
-                  <option value="">（未指定）</option>
-                  {areaOptions(s).map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-
-            <div className="device-form-map">
-              <Field label="安装位置">
-                <input
-                  value={devForm.coordInput}
-                  placeholder="点击下方地图自动代入，或手动输入厂区坐标（x, y）"
-                  onChange={(e) =>
-                    DEVFORM({ ...devForm, coordInput: e.target.value })
-                  }
-                />
-              </Field>
-              <MapImageCanvas
-                image={plantMapImage}
-                markers={pickMarkers}
-                selected="pick"
-                onAdd={(x, y) =>
-                  DEVFORM({ ...devForm, x, y, coordInput: `${x}, ${y}` })
-                }
-                height={360}
-              />
-            </div>
+                  删除
+                </Btn>
+              </div>
+            ))}
+            {/* 分类建议：与「新增检测项」弹窗同一份清单，允许手填清单外的值 */}
+            <datalist id="device-item-categories">
+              {itemCategories.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
           </div>
         </Drawer>
       )}

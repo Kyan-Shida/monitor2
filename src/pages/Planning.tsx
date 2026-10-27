@@ -22,11 +22,16 @@ import { PointPicker } from "../components/PointPicker";
 import { RoutePreview } from "../components/RoutePreview";
 import { MapBindPicker } from "../components/MapBindPicker";
 import { useListDelete } from "../components/ListDelete";
+import { RetryTaskModal } from "../components/RetryTaskModal";
 import { fmtTime } from "../data/selectors";
 import { actionsOfPoint, captureKindsOfPoint } from "../data/deviceMaster";
 import { targetsOf } from "../data/mapCalibration";
 import { constraints } from "../data/engine";
-import { businessDate, planKindOf, planOccurrences } from "../data/planSchedule";
+import {
+  planKindOf,
+  planMapBlockedOf,
+  planOccurrences,
+} from "../data/planSchedule";
 import { routeMapIds, routeRenderMapId } from "../data/routeMaps";
 import {
   planCycles,
@@ -37,6 +42,7 @@ import {
 } from "../data/types";
 import type {
   MapAsset,
+  Plan,
   PlanCycle,
   PlanKind,
   PlanUnit,
@@ -45,6 +51,13 @@ import type {
   RouteNode,
   Task,
 } from "../data/types";
+/** 任务列表一行：真实任务，或「还没到下发时间」的计划占位行（置灰） */
+type TaskListRow =
+  | { kind: "task"; task: Task }
+  | { kind: "pending"; plan: Plan; at: number };
+/** 时间戳 → 北京时间「MM-DD HH:mm」，与排期口径一致 */
+const mdhm = (ms: number) =>
+  new Date(ms + 8 * 3600000).toISOString().slice(5, 16).replace("T", " ");
 export function Planning({ page, id }: { page: string; id?: string }) {
   const { s, act } = useStore();
   const initial = s.plans.find((p) => p.id === id);
@@ -75,21 +88,21 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       "planning.tasks.robotFilter",
       "全部",
     ),
-    /** TASK-02：时间范围筛选，默认「当天」；最大跨度锁 30 天，避免列表爆量 */
-    [timeRange, TR] = useViewState<string>("planning.tasks.timeRange", "今日"),
+    /**
+     * TASK-02：时间范围筛选
+     * @description 默认「全部」（实际回看 30 天）：默认只给「今日」会把昨天以前的任务藏起来，
+     *              调度台/队列里看得到的任务在列表里找不到，数量就对不上
+     */
+    [timeRange, TR] = useViewState<string>("planning.tasks.timeRange2", "全部"),
     [srcPage, SP] = useState(1),
     /** 任务列表筛选面板展开态：条件默认收起，点「筛选」才显示 */
     [taskFilterOpen, SETTASKFILTEROPEN] = useState(false),
     /** TASK-04：派单（未分配任务选机器人一键派单） */
     [dispatchTask, setDispatchTask] = useState<Task>(),
     [dispatchRobot, setDispatchRobot] = useState(""),
-    /** TASK-05：多选删除（勾选后点击「删除」二次确认） */
-    [picked, setPicked] = useState<string[]>([]),
-    /**
-     * 选择态：列表常态不显示复选框列，点击「删除」进入选择态后才出现
-     * @description 常态每行长驻复选框会抢占操作列的视觉焦点，改为按需展开
-     */
-    [pickMode, setPickMode] = useState(false),
+    /** 超期补派：待确认的超期任务（确认后新建一条任务，原任务留档只读） */
+    [retryTask, setRetryTask] = useState<Task>(),
+    /** TASK-05：多选删除已下线——「取消」已能终止任务，同一件事只留一个入口 */
     /** 计划操作的二次确认：取消 / 开始 共用一个确认弹窗 */
     [confirm, setConfirm] = useState<{
       title: string;
@@ -774,6 +787,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             ]}
             rows={planRows.map((p) => {
               const k = planKindOf(p);
+              /** 受阻：计划本身还在，但它依赖的地图被停用 / 停用中，到点也生成不出任务 */
+              const block = planMapBlockedOf(s, p);
               return [
               // 编号 是任务 / 排程引用计划的主键，独立成列便于对账
               <span className="cell-muted">{p.id}</span>,
@@ -792,25 +807,32 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               k === "定时任务"
                 ? `${p.start} 当日一次`
                 : `${p.start} 至 ${p.end}`,
-              // 状态 = 开关：停用即停止后续自动生成，启用即恢复按时生成
-              <Switch
-                checked={p.state === "启用"}
-                label={`${p.name} 启停状态`}
-                onChange={() =>
-                  setConfirm({
-                    title: p.state === "启用" ? "停用计划" : "启用计划",
-                    text:
-                      p.state === "启用"
-                        ? `确认停用计划「${p.name}」？停用后停止后续自动生成任务。`
-                        : `确认启用计划「${p.name}」？将恢复按时自动生成任务。`,
-                    run: () =>
-                      act({
-                        type: p.state === "启用" ? "STOP_PLAN" : "START_PLAN",
-                        id: p.id,
-                      }),
-                  })
-                }
-              />,
+              // 状态 = 开关：停用即停止后续自动生成，启用即恢复按时生成；受阻时并列一个标签
+              <span className="actions">
+                <Switch
+                  checked={p.state === "启用"}
+                  label={`${p.name} 启停状态`}
+                  onChange={() =>
+                    setConfirm({
+                      title: p.state === "启用" ? "停用计划" : "启用计划",
+                      text:
+                        p.state === "启用"
+                          ? `确认停用计划「${p.name}」？停用后停止后续自动生成任务。`
+                          : `确认启用计划「${p.name}」？将恢复按时自动生成任务。`,
+                      run: () =>
+                        act({
+                          type: p.state === "启用" ? "STOP_PLAN" : "START_PLAN",
+                          id: p.id,
+                        }),
+                    })
+                  }
+                />
+                {block && (
+                  <span title={block}>
+                    <Badge tone="amber">受阻</Badge>
+                  </span>
+                )}
+              </span>,
               <div className="actions">
                 <Btn
                   onClick={() => {
@@ -820,6 +842,12 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 >
                   编辑
                 </Btn>
+                {/* 受阻时给一跳转：直接去地图管理启用，不必自己猜是哪张图 */}
+                {block && (
+                  <Btn title={block} onClick={() => go("maps")}>
+                    去处理
+                  </Btn>
+                )}
                 <Btn
                   primary
                   disabled={p.state !== "启用"}
@@ -1080,13 +1108,43 @@ export function Planning({ page, id }: { page: string; id?: string }) {
   /** 从任务数据动态派生下拉选项，避免硬编码与种子数据不同步 */
   const sourceOpts = ["全部", ...new Set(s.tasks.map((x) => x.source))];
   /** 状态筛选：只留常用决策状态（完整状态仍由行内 Badge 表达，避免下拉过长） */
-  const statusOpts = ["全部", "取消", "已分配", "超期", "暂停", "待调度"];
+  const statusOpts = [
+    "全部",
+    "待下发",
+    "待调度",
+    "已分配",
+    "超期",
+    "暂停",
+    "取消",
+  ];
   const robotOpts = [
     "全部",
     "未分配",
     ...new Set(s.tasks.map((x) => x.robotId).filter(Boolean)),
   ];
-  const allFiltered = (() => {
+  /**
+   * 未来 24 小时内将要下发的计划任务（此刻还没生成任务）
+   * @description 计划到点才由引擎生成任务；提前 24 小时先把这些时刻作为**置灰占位行**列进任务列表，
+   *              调度员一个列表就能看到「接下来要干什么」，不必再单开一个「今日待生成」页
+   */
+  const upcomingRows = (() => {
+    const now = Date.now();
+    return s.plans
+      .filter((p) => p.state === "启用")
+      .flatMap((p) =>
+        planOccurrences(p, now)
+          .filter((at) => at > now && at - now <= 24 * 3600000)
+          .filter(
+            (at) =>
+              !s.tasks.some(
+                (t) => t.planId === p.id && t.scheduleKey === String(at),
+              ),
+          )
+          .map((at) => ({ plan: p, at })),
+      )
+      .sort((a, b) => a.at - b.at);
+  })();
+  const allFiltered: TaskListRow[] = (() => {
     /** TASK-02：按所选时间范围过滤（生成时间 created）；「今日」= 当天；最大 30 天 */
     const now = Date.now();
     const dayStart = new Date();
@@ -1107,82 +1165,60 @@ export function Planning({ page, id }: { page: string; id?: string }) {
       const c = Date.parse(t.created);
       return Number.isNaN(c) ? true : c >= loMs && c <= now;
     };
-    const rows = s.tasks.filter((t) => {
-      if ((t.name + t.id).includes(query) === false) return false;
-      if (srcFilter !== "全部" && t.source !== srcFilter) return false;
-      if (statusFilter !== "全部" && t.state !== statusFilter) return false;
-      if (robotFilter !== "全部" && (t.robotId || "未分配") !== robotFilter)
-        return false;
-      if (!inWindow(t)) return false;
-      return true;
-    });
+    const taskRows: Extract<TaskListRow, { kind: "task" }>[] = s.tasks
+      .filter((t) => {
+        if ((t.name + t.id).includes(query) === false) return false;
+        if (srcFilter !== "全部" && t.source !== srcFilter) return false;
+        if (statusFilter !== "全部" && t.state !== statusFilter) return false;
+        if (robotFilter !== "全部" && (t.robotId || "未分配") !== robotFilter)
+          return false;
+        if (!inWindow(t)) return false;
+        return true;
+      })
+      .map((task) => ({ kind: "task" as const, task }));
+    /** 预告行还没生成任务，按「计划生成 / 待下发」参与同一套筛选口径 */
+    const pending: TaskListRow[] = upcomingRows
+      .filter((x) => (x.plan.name + x.plan.id).includes(query))
+      .filter((x) => srcFilter === "全部" || srcFilter === "计划生成")
+      .filter((x) => statusFilter === "全部" || statusFilter === "待下发")
+      .filter(
+        (x) =>
+          robotFilter === "全部" ||
+          (x.plan.robotId || "未分配") === robotFilter,
+      )
+      .map((x) => ({ kind: "pending" as const, ...x }));
     /** TASK-02：未完成（待调度/已分配/下发中/待执行/执行中/暂停/…）置顶，已完成置后 */
     const TERMINAL = new Set(["完成", "部分完成", "失败", "取消", "超期"]);
-    rows.sort((a, b) => {
-      const adone = TERMINAL.has(a.state) ? 1 : 0;
-      const bdone = TERMINAL.has(b.state) ? 1 : 0;
+    taskRows.sort((x, y) => {
+      const adone = TERMINAL.has(x.task.state) ? 1 : 0;
+      const bdone = TERMINAL.has(y.task.state) ? 1 : 0;
       if (adone !== bdone) return adone - bdone;
-      return Date.parse(b.created) - Date.parse(a.created);
+      return Date.parse(y.task.created) - Date.parse(x.task.created);
     });
-    return rows;
+    // 待下发的排最前：它们都是最近 24 小时内的事，比历史记录更该先看到
+    return [...pending, ...taskRows];
   })();
-  const pageMax = Math.max(1, Math.ceil(allFiltered.length / taskPageSize));
+  // 分页只算真实任务：预告行（计划有这一刻但还没生成）是常驻提示，不计入条数、也不参与翻页
+  const pendingRows = allFiltered.filter((r) => r.kind === "pending");
+  const allTasks = allFiltered.filter((r) => r.kind === "task");
+  const pageMax = Math.max(1, Math.ceil(allTasks.length / taskPageSize));
   const curPage = Math.min(srcPage, pageMax);
-  const pageRows = allFiltered.slice(
+  const pageRows = allTasks.slice(
     (curPage - 1) * taskPageSize,
     curPage * taskPageSize,
   );
-  /** 任务列表视图：今日计划（含尚未到点下发的） / 任务记录（已生成的任务） */
-  const [taskView, TASKVIEW] = useViewState<"今日计划" | "任务记录">(
-    "planning.tasks.view",
-    "今日计划",
-  );
-  /**
-   * 今日计划任务
-   * @description 按启用计划展开当天所有发生时刻，**没到提前量的也列出来**（状态记「待下发」）；
-   *              已生成的任务按 planId + scheduleKey 对应回计划时刻，状态取任务状态
-   */
-  const todayRows = (() => {
-    const now = Date.now();
-    const today = businessDate(now);
-    /** 发生时刻 → 北京时间 HH:mm（与排期口径一致） */
-    const hhmm = (ms: number) =>
-      new Date(ms + 8 * 3600000).toISOString().slice(11, 16);
-    const rows = s.plans
-      .filter((p) => p.state === "启用")
-      .flatMap((p) =>
-        planOccurrences(p, now)
-          .filter((at) => businessDate(at) === today)
-          .map((at) => {
-            const task = s.tasks.find(
-              (t) => t.planId === p.id && t.scheduleKey === String(at),
-            );
-            return {
-              key: `${p.id}-${at}`,
-              plan: p,
-              time: hhmm(at),
-              at,
-              route: s.templates.find((x) => x.id === p.templateId)?.name || p.templateId,
-              robot:
-                s.robots.find((r) => r.id === p.robotId)?.name ||
-                p.robotId ||
-                "待绑定",
-              task,
-            };
-          }),
-      )
-      .sort((a, b) => a.at - b.at);
-    return rows;
-  })();
-  const [todayPage, SETTODAYPAGE] = useState(1);
-  const todayPageMax = Math.max(1, Math.ceil(todayRows.length / taskPageSize));
-  const todayCur = Math.min(todayPage, todayPageMax);
-  const todayPageRows = todayRows.slice(
-    (todayCur - 1) * taskPageSize,
-    todayCur * taskPageSize,
-  );
+  /** 表格实际渲染的行：预告行固定在最前，后面跟当页任务 */
+  const tableRows: TaskListRow[] = [...pendingRows, ...pageRows];
   /** 筛选器统一切换回第一页 */
   const resetPage = () => SP(1);
+  /** 生效中的筛选条件数：按钮上标出来，免得列表"莫名少了几条" */
+  const activeFilters = [
+    timeRange !== "全部",
+    srcFilter !== "全部",
+    statusFilter !== "全部",
+    robotFilter !== "全部",
+    !!query,
+  ].filter(Boolean).length;
   /** 任务列表筛选：复用全站 FilterPanel（草稿条件，点「查询」才生效） */
   const [taskDraft, SETTASKDRAFT] = useState<Record<string, string>>({
     src: srcFilter,
@@ -1200,7 +1236,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     SP(1);
   };
   const resetTaskFilter = () => {
-    const d = { src: "全部", state: "全部", robot: "全部", range: "今日", kw: "" };
+    const d = { src: "全部", state: "全部", robot: "全部", range: "全部", kw: "" };
     SETTASKDRAFT(d);
     SF(d.src);
     STF(d.state);
@@ -1216,103 +1252,20 @@ export function Planning({ page, id }: { page: string; id?: string }) {
         title="任务列表"
         extra={
           <div className="actions">
-            {/* 筛选 / 删除只作用于「任务记录」；今日计划是排期展开，不参与筛选 */}
-            {taskView === "任务记录" && (
-              <Btn onClick={() => SETTASKFILTEROPEN(!taskFilterOpen)}>
-                {taskFilterOpen ? "收起筛选" : "筛选"}
-              </Btn>
-            )}
+            <Btn onClick={() => SETTASKFILTEROPEN(!taskFilterOpen)}>
+              {taskFilterOpen
+                ? "收起筛选"
+                : activeFilters
+                  ? `筛选 · ${activeFilters}`
+                  : "筛选"}
+            </Btn>
             {/* 建临时任务要「左表单 + 右路线图」同屏，直接进内置页而不是盖一层浮层 */}
             <Btn primary onClick={() => go("quick")}>
               ＋ 临时巡检任务
             </Btn>
-            {taskView === "任务记录" && (
-              // TASK-05：点「删除」进入选择态（复选框列出现），勾选后再次点击即二次确认删除
-              <Btn
-                danger
-              onClick={() => {
-                if (!pickMode) return setPickMode(true);
-                if (!picked.length) return setPickMode(false);
-                setConfirm({
-                  title: "删除任务",
-                  text: `确认删除所选 ${picked.length} 条任务？删除后不可恢复。`,
-                  run: () => {
-                    picked.forEach((id) => act({ type: "DELETE_TASK", id }));
-                    setPicked([]);
-                    setPickMode(false);
-                  },
-                });
-              }}
-            >
-              {!pickMode
-                ? "删除"
-                : picked.length
-                  ? `删除（${picked.length}）`
-                  : "退出选择"}
-              </Btn>
-            )}
           </div>
         }
       >
-        {/* 视图切换：今日待生成（含未到点下发的）/ 任务记录（已生成的任务） */}
-        <div className="segmented task-view-tabs">
-          <button
-            className={taskView === "今日计划" ? "active" : ""}
-            onClick={() => TASKVIEW("今日计划")}
-          >
-            今日待生成 {todayRows.length}
-          </button>
-          <button
-            className={taskView === "任务记录" ? "active" : ""}
-            onClick={() => TASKVIEW("任务记录")}
-          >
-            任务记录 {allFiltered.length}
-          </button>
-        </div>
-        {taskView === "今日计划" ? (
-          <>
-            <Table
-              heads={[
-                "计划时刻",
-                "计划",
-                "巡检路线",
-                "机器人",
-                "状态",
-                "操作",
-              ]}
-              rows={todayPageRows.map((x) => [
-                <b>{x.time}</b>,
-                <>
-                  <b>{x.plan.name}</b>
-                  <small className="cell-muted">{x.plan.id}</small>
-                </>,
-                x.route,
-                x.robot,
-                x.task ? <Badge>{x.task.state}</Badge> : <Badge>待下发</Badge>,
-                <div className="actions">
-                  {x.task ? (
-                    <Btn onClick={() => setTaskPeek(x.task)}>详情</Btn>
-                  ) : (
-                    <Btn onClick={() => go("plan-edit", x.plan.id)}>
-                      查看计划
-                    </Btn>
-                  )}
-                </div>,
-              ])}
-            />
-            <Pager
-              page={todayCur}
-              count={todayRows.length}
-              size={taskPageSize}
-              onChange={(n) => SETTODAYPAGE(n)}
-              onSize={(n) => {
-                SETTASKSIZE(n);
-                SETTODAYPAGE(1);
-              }}
-            />
-          </>
-        ) : (
-          <>
         {/* TASK-01：任务生成规则说明；DSP-01：计划任务直接绑定机器人、临时任务走调度 */}
         {/* 筛选：条件收进「筛选」按钮，展开后复用全站 FilterPanel（草稿条件，点「查询」才生效） */}
         {taskFilterOpen && (
@@ -1321,7 +1274,11 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               { key: "src", label: "来源", options: sourceOpts },
               { key: "state", label: "状态", options: statusOpts },
               { key: "robot", label: "机器人", options: robotOpts },
-              { key: "range", label: "时间范围", options: ["今日", "近 7 天", "近 30 天"] },
+              {
+                key: "range",
+                label: "时间范围",
+                options: ["全部", "今日", "近 7 天", "近 30 天"],
+              },
               { key: "kw", label: "搜索任务", placeholder: "任务名称 / 编号" },
             ]}
             value={taskDraft}
@@ -1331,107 +1288,105 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           />
         )}
         <Table
-          heads={[
-            // 选择态下才渲染复选框列（含表头全选）
-            ...(pickMode
-              ? [
-                  <input
-                    type="checkbox"
-                    aria-label="全选任务"
-                    checked={
-                      !!pageRows.length &&
-                      pageRows.every((t) => picked.includes(t.id))
+          heads={["编号", "任务名称", "任务来源", "状态", "机器人", "时间", "操作"]}
+          rowClass={(_, i) =>
+            tableRows[i]?.kind === "pending" ? "row-pending" : ""
+          }
+          rows={tableRows.map((row) => {
+            // 置灰占位行：计划里有这一刻的任务，但还没到下发时间
+            if (row.kind === "pending") {
+              const plan = row.plan;
+              const robot =
+                s.robots.find((x) => x.id === plan.robotId)?.name ||
+                plan.robotId ||
+                "待绑定";
+              return [
+                <span className="cell-muted">{plan.id}</span>,
+                <>
+                  <b>{plan.name}</b>
+                  <small className="cell-muted">未生成</small>
+                </>,
+                "计划生成",
+                <Badge>待下发</Badge>,
+                robot,
+                <>
+                  <span>{mdhm(row.at)}</span>
+                  <small className="cell-muted">未到下发时间</small>
+                </>,
+                <div className="actions">
+                  <Btn onClick={() => go("plan-edit", plan.id)}>查看计划</Btn>
+                </div>,
+              ];
+            }
+            const t = row.task;
+            return [
+              // 编号 是结果 / 告警 / 快照引用的主键，独立成列便于对账
+              <span className="cell-muted">{t.id}</span>,
+              <>
+                <b>{t.name}</b>
+                {/* 补派溯源只标在「新任务」上；原任务的去向统一放在操作列，避免同一句话出现两次 */}
+                {t.retryOf && (
+                  <small className="cell-muted">补派自 {t.retryOf}</small>
+                )}
+              </>,
+              t.source,
+              <Badge>{t.state}</Badge>,
+              t.robotId || "未分配",
+              <>
+                <span>{fmtTime(t.created)}</span>
+                <small className="cell-muted">
+                  {t.finishedAt
+                    ? `结束 ${fmtTime(t.finishedAt)}`
+                    : t.deadline
+                      ? `要求 ${fmtTime(t.deadline)} 前完成`
+                      : "尚未结束"}
+                </small>
+              </>,
+              <div className="actions">
+                {/* TASK-04：待调度任务一键派单 */}
+                {t.state === "待调度" && (
+                  <Btn
+                    primary
+                    onClick={() => {
+                      setDispatchTask(t);
+                      setDispatchRobot(t.robotId || "");
+                    }}
+                  >
+                    派单
+                  </Btn>
+                )}
+                {/* 超期已留档、不再流转：要接着干只能基于快照新建补派任务 */}
+                {t.state === "超期" &&
+                  (t.retriedBy ? (
+                    <span className="cell-muted">已补派 {t.retriedBy}</span>
+                  ) : (
+                    <Btn primary onClick={() => setRetryTask(t)}>
+                      重新派单
+                    </Btn>
+                  ))}
+                {/* TASK-05：单条取消（点击二次确认，确认即终止该任务） */}
+                {!["完成", "失败", "部分完成", "取消"].includes(t.state) && (
+                  <Btn
+                    danger
+                    onClick={() =>
+                      setConfirm({
+                        title: "取消任务",
+                        text: `确认取消任务「${t.name}」？取消后不可自动恢复。`,
+                        run: () => act({ type: "STOP", id: t.id }),
+                      })
                     }
-                    onChange={(e) =>
-                      setPicked(
-                        e.target.checked
-                          ? [
-                              ...new Set([
-                                ...picked,
-                                ...pageRows.map((t) => t.id),
-                              ]),
-                            ]
-                          : picked.filter(
-                              (id) => !pageRows.some((t) => t.id === id),
-                            ),
-                      )
-                    }
-                  />,
-                ]
-              : []),
-            "编号",
-            "任务名称",
-            "任务来源",
-            "状态",
-            "机器人",
-            "时间",
-            "操作",
-          ]}
-          rows={pageRows.map((t) => [
-            // 选择态下才渲染行复选框
-            ...(pickMode
-              ? [
-                  <input
-                    type="checkbox"
-                    aria-label={`选择任务 ${t.id}`}
-                    checked={picked.includes(t.id)}
-                    onChange={() =>
-                      setPicked(
-                        picked.includes(t.id)
-                          ? picked.filter((x) => x !== t.id)
-                          : [...picked, t.id],
-                      )
-                    }
-                  />,
-                ]
-              : []),
-            // 编号 是结果 / 告警 / 快照引用的主键，独立成列便于对账
-            <span className="cell-muted">{t.id}</span>,
-            <b>{t.name}</b>,
-            t.source,
-            <Badge>{t.state}</Badge>,
-            t.robotId || "未分配",
-            <>
-              <span>{fmtTime(t.created)}</span>
-              <small className="cell-muted">
-                {t.finishedAt ? `结束 ${fmtTime(t.finishedAt)}` : "尚未结束"}
-              </small>
-            </>,
-            <div className="actions">
-              {/* TASK-04：未分配机器人的待调度 / 超期任务选机器人一键派单（超期只做高亮，不冻结操作） */}
-              {!t.robotId && ["待调度", "超期"].includes(t.state) && (
-                <Btn
-                  primary
-                  onClick={() => {
-                    setDispatchTask(t);
-                    setDispatchRobot("");
-                  }}
-                >
-                  派单
-                </Btn>
-              )}
-              {/* TASK-05：单条取消（点击二次确认，确认即终止该任务） */}
-              {!["完成", "失败", "部分完成", "取消"].includes(t.state) && (
-                <Btn
-                  danger
-                  onClick={() =>
-                    setConfirm({
-                      title: "取消任务",
-                      text: `确认取消任务「${t.name}」？取消后不可自动恢复。`,
-                      run: () => act({ type: "STOP", id: t.id }),
-                    })
-                  }
-                >
-                  取消
-                </Btn>
-              )}
-              <Btn onClick={() => setTaskPeek(t)}>详情</Btn>
-            </div>,
-          ])}
+                  >
+                    取消
+                  </Btn>
+                )}
+                <Btn onClick={() => setTaskPeek(t)}>详情</Btn>
+              </div>,
+            ];
+          })}
         />
         <Pager
           page={curPage}
-          count={allFiltered.length}
+          count={allTasks.length}
           size={taskPageSize}
           onChange={(n) => SP(n)}
           onSize={(n) => {
@@ -1439,8 +1394,6 @@ export function Planning({ page, id }: { page: string; id?: string }) {
             SP(1);
           }}
         />
-          </>
-        )}
       </Panel>
       {t && (
         <Panel title={`${t.name} · 不可变任务快照`}>
@@ -1459,6 +1412,13 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           </p>
           <Btn onClick={() => go("results", t.id)}>查看任务结果</Btn>
         </Panel>
+      )}
+      {/* 超期补派：确认后新建任务，原任务保持「超期」留档 */}
+      {retryTask && (
+        <RetryTaskModal
+          task={retryTask}
+          onClose={() => setRetryTask(undefined)}
+        />
       )}
       {/* TASK-04：派单弹窗（按调度约束列出适配机器人，选其一即可一键派单） */}
       {dispatchTask && (

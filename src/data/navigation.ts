@@ -676,15 +676,25 @@ export function backTrailPage(): string {
   const h = trail.length ? trail[trail.length - 1] : "";
   return h ? parse(h).page : "";
 }
+/** 全站统一的「每页条数」档位（分页下拉只给这三档） */
+export const PAGE_SIZES = [10, 20, 50];
 /**
- * 列表「每页条数」的会话状态（全站列表页共用，默认 5 条）
- * @description 与 `Pager` 组件配套：`size` 传本值、`onSize` 传本 setter
+ * 列表「每页条数」的会话状态（全站列表页共用，默认 10 条）
+ * @description 与 `Pager` 组件配套：`size` 传本值、`onSize` 传本 setter。
+ *              旧会话里可能存着已下线的 5 条/页，加载时归一到合法档位，
+ *              否则下拉框里选不中当前值
  * @param key 视图状态键（各页面唯一，如 "maps.size"）
  * @param initial 初始条数
  * @returns [每页条数, 设置函数]
  */
-export const usePageSize = (key: string, initial = 5) =>
-  useViewState<number>(key, initial);
+export const usePageSize = (key: string, initial: number = PAGE_SIZES[0]) => {
+  const [raw, set] = useViewState<number>(key, initial);
+  const size = PAGE_SIZES.includes(raw) ? raw : PAGE_SIZES[0];
+  return [size, set] as [
+    number,
+    (value: number | ((old: number) => number)) => void,
+  ];
+};
 
 export function useViewState<T>(
   key: string,

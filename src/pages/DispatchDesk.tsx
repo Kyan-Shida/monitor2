@@ -13,13 +13,15 @@ import {
   robotAvailability,
   stageOf,
   schedule,
-  taskPriority,
   timeAt,
 } from "../data/selectors";
-import { Btn, Badge, Panel, Table, Note, Modal } from "../components/UI";
+import { Btn, Badge, Panel, Table, Note } from "../components/UI";
+import { Map as MapIcon } from "lucide-react";
+import { mapVer } from "../data/versionLabel";
 import { QuickTaskDrawer } from "../components/QuickTaskDrawer";
 import { ScheduleTimeline } from "../components/ScheduleTimeline";
 import { TaskPeekDrawer } from "../components/TaskPeekDrawer";
+import { RetryTaskModal } from "../components/RetryTaskModal";
 import { fmtDateTime, type Task } from "../data/types";
 
 export function DispatchDesk({ id }: { id?: string }) {
@@ -29,7 +31,8 @@ export function DispatchDesk({ id }: { id?: string }) {
     s.robots.find((r) => r.id === id || r.id === linked)?.id || s.robots[0].id,
   );
   const [quick, setQuick] = useState(false);
-  const [preempt, setPreempt] = useState<Task>();
+  /** 待补派的超期任务：确认后生成新任务，原任务留档 */
+  const [retry, setRetry] = useState<Task>();
   /** 「详情」抽屉中的任务：调度场景就地查看，不打断当前机器人与队列的上下文 */
   const [peek, setPeek] = useState<Task>();
   const r = s.robots.find((r) => r.id === rid)!;
@@ -44,22 +47,25 @@ export function DispatchDesk({ id }: { id?: string }) {
   /**
    * 待安排：需要人工决策派单的任务
    * @description 尚未进入队列（待调度）、被接管待恢复、或已分配却被阻塞需改派的这几类；
-   *              与下面的「历史记录」分开陈列——前者可派单，后者已留档只读
+   *              这是一个**全平台的人工决策池**，不按当前选中的机器人过滤 ——
+   *              顶部 KPI「待安排」与右栏列表共用同一个数组，两处数字必须一致。
+   *              超期任务**不在这里**：它已留档、不再流转，另列「待补派」
    */
   const scheduling = s.tasks.filter(
     (t) =>
-      (!t.robotId || t.robotId === rid) &&
-      (t.state === "待调度" ||
-        t.state === "已被接管" ||
-        (t.state === "已分配" && !!t.blockedReason)),
+      t.state === "待调度" ||
+      t.state === "已被接管" ||
+      (t.state === "已分配" && !!t.blockedReason),
   );
+  /** 待补派：已超期且还没补派过的任务（补派对原任务不做任何改动，只新建一条） */
+  const overdue = s.tasks.filter((t) => t.state === "超期" && !t.retriedBy);
   /**
    * 待安排的表格
    * @description 超期任务不再单独留档于调度台 —— 统一在「任务列表 › 任务记录」里展示与补派
    */
   const decisionTable = (list: Task[]) => (
     <Table
-      heads={["任务", "来源 / 优先级", "处理提示", "操作"]}
+      heads={["任务", "来源", "处理提示", "操作"]}
       rows={list.map((t) => {
         const reasons = constraints(s, t, r);
         return [
@@ -68,7 +74,7 @@ export function DispatchDesk({ id }: { id?: string }) {
             <small>{t.id}</small>
           </>,
           <>
-            {t.source} · {taskPriority(s, t)}
+            {t.source}
             <Badge>{t.state}</Badge>
           </>,
           reasons.join("；") ||
@@ -81,14 +87,6 @@ export function DispatchDesk({ id }: { id?: string }) {
             >
               {current ? "加入队列" : "下发执行"}
             </Btn>
-            {taskPriority(s, t) !== "普通" && current?.state === "执行中" && (
-              <Btn
-                disabled={!!reasons.length}
-                onClick={() => setPreempt(t)}
-              >
-                紧急插单
-              </Btn>
-            )}
             {reasons.includes("地图版本待同步") && (
               <Btn onClick={() => go("map-detail", t.mapId, "sync")}>
                 同步地图
@@ -114,6 +112,14 @@ export function DispatchDesk({ id }: { id?: string }) {
   const startOf = (taskId: string) =>
     windows.find((w) => w.task?.id === taskId)?.start;
   /**
+   * 当前任务所在地图
+   * @description 任务自带 mapId（任务快照绑定的那张图），没有则退回机器人当前地图；
+   *              抬头右侧直接给出「图名 + 机器人已同步的版本」，不用再去「地图管理」比对
+   */
+  const currentMap = s.maps.find(
+    (m) => m.id === (current?.mapId || r.mapId),
+  );
+  /**
    * 「详情」就地打开右侧抽屉，而不是跳到任务详情页
    * @description 调度是连续决策场景（常要连着比较多个排队任务），跳页会丢失当前调度对象与队列位置；
    *              抽屉只给"调度决策最小信息集"，需要派单历史 / 结果下钻时再由抽屉底部跳完整详情内置页
@@ -132,7 +138,8 @@ export function DispatchDesk({ id }: { id?: string }) {
       s.tasks.filter((t) => ["已分配", "下发中", "待执行"].includes(t.state))
         .length,
     ],
-    ["待安排", s.tasks.filter((t) => t.state === "待调度").length],
+    // 与右栏「待安排」同源：待调度 / 已被接管 / 超期 / 已分配被阻塞，直接取同一个数组
+    ["待安排", scheduling.length],
     [
       "阻塞任务",
       s.tasks.filter(
@@ -164,7 +171,21 @@ export function DispatchDesk({ id }: { id?: string }) {
           </Panel>
         </div>
         <div className="dispatch-work dd-col dd-col-c">
-          <Panel title={`当前任务 · ${r.name}`}>
+          <Panel
+            title={`当前任务 · ${r.name}`}
+            extra={
+              currentMap && (
+                <div className="panel-map-info" title={currentMap.name}>
+                  <MapIcon size={12} />
+                  <span>{currentMap.name}</span>
+                  <em>{mapVer(r.mapVersion)}</em>
+                  {r.mapVersion < currentMap.version && (
+                    <Badge tone="amber">待同步</Badge>
+                  )}
+                </div>
+              )
+            }
+          >
             {current ? (
               <div className="context-bar">
                 <div>
@@ -292,7 +313,7 @@ export function DispatchDesk({ id }: { id?: string }) {
             </p>
           </Panel>
         </div>
-        {/* 右栏：待安排（要人工决策）；超期任务不在此留档，统一在「任务列表 › 任务记录」展示 */}
+        {/* 右栏：待安排（要人工决策） + 待补派（超期留档，需新建任务接力） */}
         <div className="dispatch-work dd-col dd-col-r">
           {/* 待安排：需要人工决策派单的任务 */}
           <Panel title={`待安排 · ${scheduling.length} 项`}>
@@ -309,6 +330,27 @@ export function DispatchDesk({ id }: { id?: string }) {
                 <p className="empty">没有需要人工安排的任务。</p>
               )}
           </Panel>
+          {/* 待补派：超期任务是留档终点，补派会基于快照新建一条任务，原任务不动 */}
+          {!!overdue.length && (
+            <Panel title={`待补派 · ${overdue.length} 项`}>
+              <Table
+                heads={["任务", "截止时间", "操作"]}
+                rows={overdue.map((t) => [
+                  <>
+                    <b>{t.name}</b>
+                    <small>{t.id}</small>
+                  </>,
+                  fmtDateTime(t.deadline),
+                  <div className="actions">
+                    <Btn primary onClick={() => setRetry(t)}>
+                      重新派单
+                    </Btn>
+                    <Btn onClick={() => detail(t)}>详情</Btn>
+                  </div>,
+                ])}
+              />
+            </Panel>
+          )}
         </div>
       </div>
       {quick && (
@@ -321,24 +363,8 @@ export function DispatchDesk({ id }: { id?: string }) {
           onClose={() => setPeek(undefined)}
         />
       )}
-      {preempt && (
-        <Modal title="确认紧急插单" onClose={() => setPreempt(undefined)}>
-          <Note>
-            暂停当前任务“{current?.name}”，先执行“{preempt.name}
-            ”。被暂停任务保留，可在任务详情处理恢复。
-          </Note>
-          <Btn
-            danger
-            onClick={() => {
-              if (act({ type: "PREEMPT", id: preempt.id, robotId: rid })) {
-                act({ type: "ENQUEUE", id: preempt.id, robotId: rid });
-                setPreempt(undefined);
-              }
-            }}
-          >
-            确认暂停并插单
-          </Btn>
-        </Modal>
+      {retry && (
+        <RetryTaskModal task={retry} onClose={() => setRetry(undefined)} />
       )}
     </div>
   );

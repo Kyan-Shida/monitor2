@@ -17,8 +17,15 @@
 import { useMemo, useState } from "react";
 import { dropTenantCache, useStore } from "../data/store";
 import { usePageSize, useViewState } from "../data/navigation";
-import type { Tenant } from "../data/types";
-import { TENANT_CODE } from "../data/tenants";
+import type { Tenant, Customer } from "../data/types";
+import {
+  TENANT_CODE,
+  CUSTOMER_CODE,
+  loadCustomers,
+  saveCustomers,
+  customerNameOf,
+  DEFAULT_CUSTOMER,
+} from "../data/tenants";
 import {
   addAccount,
   checkAccount,
@@ -28,11 +35,13 @@ import {
   tenantAdminOf,
   updateAccount,
 } from "../data/auth";
-import { Btn, Panel, Table, Field, Badge, Modal, Note } from "../components/UI";
+import { Btn, Panel, Table, Field, Badge, Modal, Drawer, Note } from "../components/UI";
 import { Pager } from "../components/Business";
 
 /** 弹窗草稿：租户字段 + 该租户管理员账号（密码不回填，留空 = 不改） */
 type Draft = Tenant & {
+  /** 所属客户（集团）：平台超管开厂区时指定；客户管理员锁定本客户 */
+  customerId: string;
   adminName: string;
   adminUser: string;
   adminPwd: string;
@@ -45,6 +54,7 @@ const blankDraft = (): Draft => ({
   name: "",
   code: "",
   status: "启用",
+  customerId: "",
   adminName: "",
   adminUser: "",
   adminPwd: "",
@@ -52,8 +62,15 @@ const blankDraft = (): Draft => ({
 });
 
 export function Tenants() {
-  const { s, act } = useStore();
+  const { s, act, account, platformMode } = useStore();
   const list = s.tenants || [];
+  /** 超管的平台管理视角不落在任何租户内，「当前使用」列无意义，整列隐藏 */
+  const showCurrent = !(account.level === "super" && platformMode);
+  // 客户管理员只看本客户下的厂区；平台超管看全部
+  const visible =
+    account.level === "customer"
+      ? list.filter((t) => t.customerId === account.customerId)
+      : list;
   const [edit, E] = useState<Draft | null>(null);
   /** 待删除租户：非空时弹二次确认 */
   const [del, DEL] = useState<Tenant | null>(null);
@@ -61,18 +78,47 @@ export function Tenants() {
   /** 账号库版本：账号存 localStorage、不由 store 驱动，建号 / 改号后 +1 触发列表重渲染 */
   const [accVer, BUMP] = useState(0);
   const accounts = useMemo(() => loadAccounts(), [accVer]);
+  /** 客户（集团）清单：用于列表「所属客户」列与表单「所属客户」下拉（custVer 触发重载） */
+  const [custVer, BUMPC] = useState(0);
+  const customers = useMemo(() => loadCustomers(), [custVer]);
+  /** 新建客户内联表单：添加租户时可直接补建客户 */
+  const [custOpen, CUSTOPEN] = useState(false);
+  const [custName, CUSTNAME] = useState("");
+  const [custCode, CUSTCODE] = useState("");
+  const [custErr, CUSTERR] = useState("");
   const [pn, PN] = useViewState("tenants.page", 1);
   // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
   const [pageSize, SETPAGESIZE] = usePageSize("tenants.size");
 
-  const pages = Math.max(1, Math.ceil(list.length / pageSize));
+  const pages = Math.max(1, Math.ceil(visible.length / pageSize));
   const cur = Math.min(Math.max(1, pn), pages);
-  const pageRows = list.slice((cur - 1) * pageSize, cur * pageSize);
+  const pageRows = visible.slice((cur - 1) * pageSize, cur * pageSize);
 
   /** 打开弹窗并清掉上一次的校验提示 */
   const open = (d: Draft) => {
     ERRS({});
     E(d);
+  };
+
+  /** 内联新建客户：写入平台客户清单并选中，供租户归属 */
+  const createCustomer = () => {
+    const name = custName.trim();
+    const code = custCode.trim().toUpperCase();
+    if (!name) return CUSTERR("请填写客户名称");
+    if (!CUSTOMER_CODE.test(code)) return CUSTERR("客户编码为 2–6 位大写字母或数字");
+    if (customers.some((c) => c.code === code)) return CUSTERR("客户编码已存在");
+    const next: Customer = {
+      id: `C-${Date.now().toString(36).toUpperCase()}`,
+      name,
+      code,
+    };
+    saveCustomers([...customers, next]);
+    BUMPC((v) => v + 1);
+    E((d) => (d ? { ...d, customerId: next.id } : d));
+    CUSTOPEN(false);
+    CUSTNAME("");
+    CUSTCODE("");
+    CUSTERR("");
   };
 
   /** 打开编辑弹窗：带回该租户现有管理员账号（密码不回填，留空即不改） */
@@ -98,12 +144,15 @@ export function Tenants() {
       name: edit.name.trim(),
       code: edit.code.trim().toUpperCase(),
       status: edit.status,
+      // 客户管理员锁定本客户；平台超管必须选一个客户
+      customerId: edit.customerId || DEFAULT_CUSTOMER,
       updatedAt: edit.updatedAt,
     };
     const bad: Record<string, string> = {};
     if (!next.name) bad.name = "请填写租户名称";
     if (!next.code) bad.code = "请填写租户编码";
     else if (!TENANT_CODE.test(next.code)) bad.code = "2–6 位大写字母或数字";
+    if (!next.customerId) bad.customerId = "请选择所属客户";
 
     // 已有管理员：姓名 / 账号必填、密码留空即不改；未绑定管理员的租户：整组留空则不建号
     const self = next.id ? tenantAdminOf(accounts, next.id) : undefined;
@@ -145,7 +194,7 @@ export function Tenants() {
               password: edit.adminPwd,
               name: edit.adminName,
             },
-            `${next.name} · 普通管理员`,
+            `${next.name} · 厂区管理员`,
           );
           if (changed) BUMP((v) => v + 1);
         } else if (touched) {
@@ -198,7 +247,15 @@ export function Tenants() {
       title="租户管理"
       extra={
         <div className="actions">
-          <Btn primary onClick={() => open(blankDraft())}>
+          <Btn
+            primary
+            onClick={() =>
+              open({
+                ...blankDraft(),
+                customerId: account.level === "customer" ? account.customerId || "" : "",
+              })
+            }
+          >
             + 添加租户
           </Btn>
         </div>
@@ -208,9 +265,10 @@ export function Tenants() {
         heads={[
           "租户名称",
           "租户编码",
+          "所属客户",
           "管理员账号",
           "状态",
-          "当前使用",
+          ...(showCurrent ? ["当前使用"] : []),
           "更新时间",
           "操作",
         ]}
@@ -222,6 +280,7 @@ export function Tenants() {
               {t.name}
             </button>,
             t.code,
+            customerNameOf(customers, t.customerId),
             admin ? (
               <code>{admin.username}</code>
             ) : (
@@ -245,7 +304,15 @@ export function Tenants() {
             >
               {t.status === "停用" ? "停用" : "启用"}
             </button>,
-            t.id === s.tenantId ? <Badge>当前</Badge> : <span className="muted">—</span>,
+            ...(showCurrent
+              ? [
+                  t.id === s.tenantId ? (
+                    <Badge>当前</Badge>
+                  ) : (
+                    <span className="muted">—</span>
+                  ),
+                ]
+              : []),
             <span className="muted">{t.updatedAt || "—"}</span>,
             <span className="rt-links">
               <button type="button" className="rt-link" onClick={() => openEdit(t)}>
@@ -264,7 +331,7 @@ export function Tenants() {
       />
       <Pager
         page={cur}
-        count={list.length}
+        count={visible.length}
         size={pageSize}
         onChange={PN}
         onSize={(n) => {
@@ -274,8 +341,74 @@ export function Tenants() {
       />
       {/* 新增态一次建两样东西（租户 + 客户自己的管理员），编辑态也能一并改管理员 */}
       {edit && (
-        <Modal title={edit.id ? "编辑租户" : "添加租户"} slim onClose={() => E(null)}>
+        <Drawer
+          title={edit.id ? "编辑租户" : "添加租户"}
+          className="tenant-drawer"
+          onClose={() => E(null)}
+          footer={
+            <>
+              <Btn onClick={() => E(null)}>取消</Btn>
+              <Btn
+                primary
+                disabled={
+                  !edit.name.trim() ||
+                  !edit.code.trim() ||
+                  (isNew &&
+                    (!edit.adminName.trim() ||
+                      !edit.adminUser.trim() ||
+                      !edit.adminPwd ||
+                      !edit.adminPwd2))
+                }
+                onClick={save}
+              >
+                保存
+              </Btn>
+            </>
+          }
+        >
           <div className="tenant-form">
+            <Field
+              label="所属客户"
+              required
+              className="span-2"
+              error={errs.customerId}
+            >
+              <div className="customer-pick">
+                <select
+                  value={edit.customerId}
+                  disabled={account.level === "customer"}
+                  onChange={(e) => E({ ...edit, customerId: e.target.value })}
+                >
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                {/* 客户管理员的客户固定，其余角色可顺手补建新客户 */}
+                {account.level !== "customer" && (
+                  <Btn small onClick={() => CUSTOPEN((v) => !v)}>
+                    {custOpen ? "取消" : "+ 新建客户"}
+                  </Btn>
+                )}
+              </div>
+              {custOpen && (
+                <div className="customer-new">
+                  <input
+                    placeholder="客户名称，如 华南石化"
+                    value={custName}
+                    onChange={(e) => CUSTNAME(e.target.value)}
+                  />
+                  <input
+                    placeholder="客户编码，如 HN"
+                    value={custCode}
+                    onChange={(e) => CUSTCODE(e.target.value.toUpperCase())}
+                  />
+                  <Btn small primary onClick={createCustomer}>
+                    创建
+                  </Btn>
+                </div>
+              )}
+              {custErr && <span className="customer-err">{custErr}</span>}
+            </Field>
             <Field
               label="租户名称"
               required
@@ -354,25 +487,7 @@ export function Tenants() {
               </Field>
             )}
           </div>
-          <div className="modal-actions">
-            <Btn onClick={() => E(null)}>取消</Btn>
-            <Btn
-              primary
-              disabled={
-                !edit.name.trim() ||
-                !edit.code.trim() ||
-                (isNew &&
-                  (!edit.adminName.trim() ||
-                    !edit.adminUser.trim() ||
-                    !edit.adminPwd ||
-                    !edit.adminPwd2))
-              }
-              onClick={save}
-            >
-              保存
-            </Btn>
-          </div>
-        </Modal>
+        </Drawer>
       )}
       {/* 删除租户：账号与业务数据一并清除，二次确认避免误删 */}
       {del && (

@@ -11,7 +11,7 @@ import { useStore } from "../data/store";
 import { mapVer } from "../data/versionLabel";
 import { Badge, Btn, Empty, Note, Panel, Table } from "./UI";
 import { Pager } from "./Business";
-import { ROOT_AREA_NAME, fmtDateTime } from "../data/types";
+import { fmtDateTime } from "../data/types";
 
 export function MapDispatch({ mapId }: { mapId: string }) {
   const { s, act } = useStore();
@@ -19,10 +19,10 @@ export function MapDispatch({ mapId }: { mapId: string }) {
   const [sel, SEL] = useState<string[]>([]);
   /** 下发记录分页：记录按「每台每次下发一条」累积，后期会很长，复用标准分页器 */
   const [pg, PG] = useState(1);
-  const [size, SIZE] = useState(5);
+  const [size, SIZE] = useState(10);
   /** 设备表分页：设备台账会持续增加，同样走标准分页（勾选跨页保留） */
   const [dpg, DPG] = useState(1);
-  const [dsize, DSIZE] = useState(5);
+  const [dsize, DSIZE] = useState(10);
   if (!m) return <Note>地图不存在。</Note>;
   /** 该地图的标定数据版本 c{n}（来自独立标定集合，与地图空间版本解耦） */
   /**
@@ -34,17 +34,8 @@ export function MapDispatch({ mapId }: { mapId: string }) {
   const rpages = Math.max(1, Math.ceil(syncs.length / size));
   const rcur = Math.min(pg || 1, rpages);
   const rrows = syncs.slice((rcur - 1) * size, rcur * size);
-  /**
-   * 区域是否适用：地图与机器人**任一方为「全厂区」即视为万能**，可跨区域下发；
-   * 其余情况要求区域一致，未分配区域的机器首次下发即归入本图区域
-   */
-  const areaFits = (r: (typeof s.robots)[number]) =>
-    !r.region ||
-    r.region === m.region ||
-    r.region === ROOT_AREA_NAME ||
-    m.region === ROOT_AREA_NAME;
-  /** 可下发 = 区域适用 */
-  const dispatchable = s.robots.filter(areaFits);
+  /** 可下发：地图不按区域归属，全部设备都可选（是否可维护看下面的窗口状态） */
+  const dispatchable = s.robots;
   const dpages = Math.max(1, Math.ceil(s.robots.length / dsize));
   const dcur = Math.min(dpg || 1, dpages);
   const drows = s.robots.slice((dcur - 1) * dsize, dcur * dsize);
@@ -57,29 +48,12 @@ export function MapDispatch({ mapId }: { mapId: string }) {
         x.mapVersion === m.version,
     );
   /**
-   * 维护窗口：区域不匹配不可下发；任务中需等结束；非空闲需等待
+   * 维护窗口：任务中需等结束；非空闲需等待
    * @param r 机器人
    * @returns 一句话可用性说明
    */
   const windowOf = (r: (typeof s.robots)[number]) =>
-    !areaFits(r)
-      ? "不适用区域"
-      : !r.region
-        ? "首次下发即归属本区域"
-        : r.region !== m.region
-          ? // 区域不一致仍可下发 = 有一方是全厂区（万能区域）
-            `全厂区通用 · ${
-              r.current
-                ? "任务结束后"
-                : r.state === "空闲"
-                  ? "当前可维护"
-                  : "等待空闲"
-            }`
-          : r.current
-            ? "任务结束后"
-            : r.state === "空闲"
-              ? "当前可维护"
-              : "等待空闲";
+    r.current ? "任务结束后" : r.state === "空闲" ? "当前可维护" : "等待空闲";
   const toggle = (rid: string) =>
     SEL((old) => (old.includes(rid) ? old.filter((x) => x !== rid) : [...old, rid]));
   const send = () => {
@@ -118,7 +92,6 @@ export function MapDispatch({ mapId }: { mapId: string }) {
               }
             />,
             "设备",
-            "区域",
             "当前状态",
             "实际版本",
             "维护窗口",
@@ -128,22 +101,18 @@ export function MapDispatch({ mapId }: { mapId: string }) {
             <input
               type="checkbox"
               aria-label={`选择 ${r.name}`}
-              disabled={!areaFits(r)}
               checked={sel.includes(r.id)}
               onChange={() => toggle(r.id)}
             />,
             <>
               {r.name} <small>{r.id}</small>
             </>,
-            r.region || "未分配",
             <Badge>{r.state}</Badge>,
             r.mapId
               ? `${mapNameOf(r.mapId)} V${r.mapVersion}`
               : "未分配地图",
             windowOf(r),
-            !areaFits(r) ? (
-              <span className="muted">不适用</span>
-            ) : synced(r.id) ? (
+            synced(r.id) ? (
               <Badge>已同步</Badge>
             ) : (
               <Badge tone="amber">待更新</Badge>

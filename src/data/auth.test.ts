@@ -68,7 +68,7 @@ test("账号库：无存储时回落到内置演示账号", () => {
   );
   // 返回副本：改动不会污染内置常量
   list[0].name = "改名";
-  assert.equal(ACCOUNTS[0].name, "王姐");
+  assert.equal(ACCOUNTS[0].name, "Admin");
 });
 
 test("开通租户建号：姓名 / 账号 / 密码逐项校验", () => {
@@ -89,7 +89,13 @@ test("开通租户建号：姓名 / 账号 / 密码逐项校验", () => {
 });
 
 test("开通租户建号：生成绑定该租户的管理员账号", () => {
-  const tenant = { id: "T-HN", name: "华南石化" };
+  const tenant = {
+    id: "T-HN",
+    name: "华南石化",
+    code: "HN",
+    customerId: "C-DEFAULT",
+    status: "启用" as const,
+  };
   const admin = makeTenantAdmin(tenant, {
     username: " hn.admin ",
     password: "Hn@2026x",
@@ -98,7 +104,7 @@ test("开通租户建号：生成绑定该租户的管理员账号", () => {
   assert.equal(admin.id, "A-T-HN");
   assert.equal(admin.username, "hn.admin");
   assert.equal(admin.name, "陈工");
-  assert.equal(admin.title, "华南石化 · 普通管理员");
+  assert.equal(admin.title, "华南石化 · 厂区管理员");
   assert.equal(admin.tenantId, "T-HN");
   assert.equal(admin.level, "tenant");
   // 租户管理员默认拿管理员档位，进不了别的租户

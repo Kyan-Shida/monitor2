@@ -195,7 +195,8 @@ export function MapNavigate({ id, tab }: { id?: string; tab?: string }) {
     );
   }
 
-  const disabled = m.status === "停用";
+  /** 停用 / 停用中都不接受新导航：停用中说明图上还有任务在跑 */
+  const disabled = m.status === "停用" || !!m.stopping;
 
   /** 终止回库：中断当前导航，机器人停止并返回库位 */
   const abortAndReturn = () => {

@@ -15,12 +15,10 @@ import {
   defaultTargetKindOfTarget,
   itemTypeLabel,
   itemKindOfType,
+  itemTypes,
 } from "../data/deviceMaster";
 import { itemCategories } from "../data/types";
 import type { InspectItem } from "../data/types";
-
-/** 检测项「类型」的界面两档（数据仍沿用仪表 / 区域，见 deviceMaster.itemKindOfType） */
-const itemTypes = ["实体", "虚拟"] as const;
 
 export function DeviceTargets({ id }: { id?: string }) {
   const { s, act } = useStore();

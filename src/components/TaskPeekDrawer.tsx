@@ -1,6 +1,6 @@
 /**
  * @file TaskPeekDrawer.tsx
- * @description 调度中心的「任务详情」抽屉：就地展示调度决策所需的最小信息集（来源/优先级/点位快照/排队位置/阻塞原因），
+ * @description 调度中心的「任务详情」抽屉：就地展示调度决策所需的最小信息集（来源/点位快照/排队位置/阻塞原因），
  *              不打断调度上下文；需要派单历史与结果下钻时再跳「完整任务详情」内置页
  * @interaction DispatchDesk.tsx（待执行队列与待安排的「详情」按钮、队列顺序条点击块）
  */
@@ -104,6 +104,15 @@ export function TaskPeekDrawer({
                   ? "无阻塞"
                   : `若派给 ${robot?.id}：满足执行条件`)}
           </dd>
+          {/* 补派溯源：超期任务留档后由新任务接力，两个方向都能看到对方 */}
+          {(t.retryOf || t.retriedBy) && (
+            <>
+              <dt>补派关联</dt>
+              <dd>
+                {t.retryOf ? `补派自 ${t.retryOf}` : `已补派为 ${t.retriedBy}`}
+              </dd>
+            </>
+          )}
           <dt>生成时间</dt>
           <dd>{fmtTime(t.created)}</dd>
         </dl>

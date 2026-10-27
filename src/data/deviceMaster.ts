@@ -265,6 +265,9 @@ export const defaultCategoryOfTarget = (target: string) =>
               ? "气体浓度"
               : "环境";
 
+/** 检测项「类型」的界面两档（新增设备内联录入 / 检测项弹窗共用同一份选项） */
+export const itemTypes = ["实体", "虚拟"] as const;
+
 /**
  * 检测项「类型」的界面口径：仪表 → 实体、区域 → 虚拟
  * @description 界面统一按实体 / 虚拟展示（与设备形态同词），数据仍沿用仪表 / 区域两档，
@@ -363,6 +366,50 @@ export function areaNameOf(s: State, d: DeviceAsset): string {
   if (d.locationDesc.startsWith("一期罐区")) return "一期罐区";
   if (d.locationDesc.startsWith("装置区")) return "装置区";
   return "未分区";
+}
+
+/** 点是否落在多边形内（射线法；顶点按绘制顺序首尾相接） */
+function insidePolygon(
+  x: number,
+  y: number,
+  poly: { x: number; y: number }[],
+): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x,
+      yi = poly[i].y,
+      xj = poly[j].x,
+      yj = poly[j].y;
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)
+      inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * 坐标 → 所属区域
+ * @description 区域主数据里画过范围轮廓的，按点包含判断归属（轮廓与点位同为
+ *              「全厂区底图百分比」口径）；坐标缺失或没落在任何轮廓内时回落到兜底区域
+ * @param s 状态
+ * @param x 底图百分比 X
+ * @param y 底图百分比 Y
+ * @param fallback 兜底区域名（通常是地图所属区域）
+ * @returns 区域名称
+ */
+export function areaOfCoord(
+  s: State,
+  x: number | undefined,
+  y: number | undefined,
+  fallback = "",
+): string {
+  if (x == null || y == null) return fallback;
+  // 区域可多级嵌套、轮廓允许重叠：后画的覆盖先画的，取最后一个命中的
+  let hit = "";
+  (s.areas || []).forEach((a) => {
+    if (a.polygon && a.polygon.length >= 3 && insidePolygon(x, y, a.polygon))
+      hit = a.name;
+  });
+  return hit || fallback;
 }
 
 /**

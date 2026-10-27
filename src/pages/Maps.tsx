@@ -3,7 +3,7 @@
  * @description 地图管理（第一个模块）：**只管理纯点云地图文件**
  *              ——MAP-02 口径：**采集一趟、产出两件；存储两份、上传两处；模块两个、ID 一绑**。
  *              本模块负责其中的 ① <b>点云地图文件</b>：
- *              ① 地图列表（筛选 / 搜索 / 分页，展示空间版本、区域、状态、底图与下发情况）
+ *              ① 地图列表（筛选 / 搜索 / 分页，展示空间版本、来源、状态、底图与下发情况）
  *              ② 「＋ 导入地图」：上传纯点云地图（**不含任何定位ID与巡检点**）
  *              ③ 地图下发与机器同步（抽屉，见 components/MapDispatch.tsx）
  *              另一件产出（**巡检点标定文件**）归第二个模块：「巡检点管理」
@@ -42,6 +42,7 @@ import { MapDispatch } from "../components/MapDispatch";
 import { DeleteConfirm } from "../components/ListDelete";
 import { SAMPLE_MAP_FILE, SAMPLE_MAP_IMAGE } from "../data/sampleMap";
 import { MAP_IMAGE_MAX_SIZE, mapNo, fmtDateTime } from "../data/types";
+import { mapLifecycleOf, runningTasksOf } from "../data/robotMaps";
 import type { MapAsset, MapPacket } from "../data/types";
 import { areaOptions } from "../data/deviceMaster";
 
@@ -61,8 +62,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const m = s.maps.find((x) => x.id === id) || s.maps[0];
   const [modal, M] = useState(""),
     [name, N] = useState("罐区补充采集地图"),
-    /** 地图所属区域：既可从既有区域下拉选择，也允许用户输入新区域 */
-    [region, RG] = useState("一期罐区"),
     [file, F] = useState(""),
     [cloud, C] = useState(""),
     [video, V] = useState(""),
@@ -80,10 +79,9 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const [scanRid, SRID] = useState("");
   const [pct, SETPCT] = useState(0);
   const [scanning, SETSCANNING] = useState(false);
-  /** 「构建地图」弹窗：待转成可标定 SLAM 地图的数据包 + 目标地图名称 / 区域 */
+  /** 「构建地图」弹窗：待转成可标定 SLAM 地图的数据包 + 目标地图名称 */
   const [packet, PKT] = useState<MapPacket | null>(null);
   const [pkName, PKN] = useState("");
-  const [pkRegion, PKR] = useState("一期罐区");
   /** 卡片「⋯」：当前打开更多操作的地图 id */
   const [moreId, MORED] = useState("");
   /** 地图下发弹窗：打开时等于目标地图 id，空串则关闭 */
@@ -103,38 +101,43 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const [bindMap, SETBIND] = useState<MapAsset | null>(null);
   /** 启停二次确认：待切换的地图（确认后才落库） */
   const [toggleMap, SETTOGGLE] = useState<MapAsset | null>(null);
+  /** 启停原因：必填，随动作写入审计 */
+  const [toggleReason, SETREASON] = useState("");
+  /** 停用策略：图上还有在跑任务时才需要选 */
+  const [toggleStrategy, SETSTRATEGY] = useState<"温和" | "立即">("温和");
   const [query, Q] = useViewState("maps.query", ""),
-    [regionF, RF] = useViewState("maps.filter.region", "全部"),
     [stateF, SF] = useViewState("maps.filter.state", "全部"),
+    /** 启停状态筛选：启用 / 停用中 / 停用 */
+    [lifeF, LF] = useViewState("maps.filter.life", "全部"),
     [pager, PG] = useViewState("maps.page", 1),
     /** 每页条数：全站统一走 usePageSize（默认 5 条） */
     [pageSize, SETPAGESIZE] = usePageSize("maps.size");
   /** 列表块筛选：展开态 + 草稿条件（点「查询」才写回生效值，与设备台账同款） */
   const [filterOpen, SETFILTEROPEN] = useState(false);
-  const [draft, DRAFT] = useState({ region: regionF, state: stateF, q: query });
+  const [draft, DRAFT] = useState({ state: stateF, life: lifeF, q: query });
   /** 已生效的筛选条件数（「筛选」按钮上的计数） */
   const filterCount =
-    (regionF !== "全部" ? 1 : 0) +
     (stateF !== "全部" ? 1 : 0) +
+    (lifeF !== "全部" ? 1 : 0) +
     (query.trim() ? 1 : 0);
   /** 展开筛选面板：用当前生效值填充草稿 */
   function toggleFilter() {
-    if (!filterOpen) DRAFT({ region: regionF, state: stateF, q: query });
+    if (!filterOpen) DRAFT({ state: stateF, life: lifeF, q: query });
     SETFILTEROPEN(!filterOpen);
   }
   /** 查询：草稿写回生效值并收起面板（列表回到第 1 页） */
   function applyFilter() {
-    RF(draft.region);
     SF(draft.state);
+    LF(draft.life);
     Q(draft.q);
     PG(1);
     SETFILTEROPEN(false);
   }
   /** 重置：清空草稿并立即生效 */
   function resetFilter() {
-    DRAFT({ region: "全部", state: "全部", q: "" });
-    RF("全部");
+    DRAFT({ state: "全部", life: "全部", q: "" });
     SF("全部");
+    LF("全部");
     Q("");
     PG(1);
   }
@@ -251,7 +254,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
       act({
         type: "IMPORT",
         name,
-        region,
         file: file || "map-" + Date.now().toString(36) + ".map",
         image,
         cloud,
@@ -357,15 +359,29 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
       </>
     );
 
-  const regions = ["全部", ...new Set(s.maps.map((x) => x.region))];
   // 同步状态是派生值：未同步 = 当前版本还没下发给所有旧版本机器（新图从未下发也算）；已同步 = 已下发到位
   const states = ["全部", "未同步", "已同步"];
+  /**
+   * 停用影响面：绑定机器人数 / 依赖计划数 / 在跑任务数
+   * @description 确认框里先摊开再让人点——「停用会伤到什么」不该等点完才知道
+   */
+  function impactOf(mapId: string) {
+    const bound = s.robots.filter((r) => r.mapId === mapId).length;
+    const plans = (s.plans || []).filter((p) =>
+      (s.templates.find((t) => t.id === p.templateId)?.points || []).some(
+        (pid) => s.points.find((x) => x.id === pid)?.mapId === mapId,
+      ),
+    ).length;
+    const running = runningTasksOf(s, mapId).length;
+    return { bound, plans, running };
+  }
+
   const kw = query.trim();
   const list = s.maps.filter(
     (x) =>
-      (!kw || (x.name + x.id + mapNo(x.id) + x.region).includes(kw)) &&
-      (regionF === "全部" || x.region === regionF) &&
-      (stateF === "全部" || x.syncState === stateF),
+      (!kw || (x.name + x.id + mapNo(x.id) + x.source).includes(kw)) &&
+      (stateF === "全部" || x.syncState === stateF) &&
+      (lifeF === "全部" || mapLifecycleOf(x) === lifeF),
   );
   const pages = Math.max(1, Math.ceil(list.length / pageSize));
   const cur = Math.min(pager || 1, pages);
@@ -414,12 +430,16 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         {filterOpen && (
           <FilterPanel
             fields={[
-              { key: "region", label: "区域", options: regions },
               { key: "state", label: "同步状态", options: states },
+              {
+                key: "life",
+                label: "启停状态",
+                options: ["全部", "启用", "停用中", "停用"],
+              },
               {
                 key: "q",
                 label: "搜索地图",
-                placeholder: "名称 / 编号 / 区域",
+                placeholder: "名称 / 编号 / 来源",
               },
             ]}
             value={draft}
@@ -437,7 +457,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             heads={[
               "地图编号",
               "地图名称",
-              "区域 / 来源",
+              "来源",
               "版本",
               "同步状态",
               "更新时间",
@@ -462,7 +482,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                     onClick={() => {
                       PKT(k);
                       PKN(k.name);
-                      PKR(areaOptions(s)[0] || "一期罐区");
                     }}
                   >
                     编辑
@@ -499,7 +518,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                             closeMore();
                             PKT(k);
                             PKN(k.name);
-                            PKR(areaOptions(s)[0] || "一期罐区");
                           }}
                         >
                           <RefreshCw size={14} />
@@ -529,15 +547,26 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                   // 地图编号：统一 MAP-XXX 格式，只读展示（与详情页「地图编号」同源）
                   mapNo(x.id),
                   <b>{x.name}</b>,
-                  x.region,
+                  x.source || <span className="muted">—</span>,
                   `V${x.version}`,
-                  <Badge>{x.syncState}</Badge>,
+                  <span className="actions">
+                    <Badge>{x.syncState}</Badge>
+                    {/* 启停三态：停用 / 停用中各给一个标签，避免只看开关猜当前处于哪种 */}
+                    {mapLifecycleOf(x) !== "启用" && (
+                      <Badge tone="amber">{mapLifecycleOf(x)}</Badge>
+                    )}
+                  </span>,
                   fmtDateTime(x.updatedAt),
-                  // 启停开关：点一下先弹二次确认，确认后才切换
+                  // 启停开关：点一下先弹二次确认；停用中显示琥珀半程，再点即取消停用
                   <Switch
-                    checked={x.status !== "停用"}
+                    checked={mapLifecycleOf(x) !== "停用"}
+                    stopping={mapLifecycleOf(x) === "停用中"}
                     label={`${x.name} 启停状态`}
-                    onChange={() => SETTOGGLE(x)}
+                    onChange={() => {
+                      SETREASON("");
+                      SETSTRATEGY("温和");
+                      SETTOGGLE(x);
+                    }}
                   />,
                   // 绑定机器：可点击 → 抽屉查看使用该地图的机器人及其版本
                   bound.length ? (
@@ -551,7 +580,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                       {outdated.length ? ` · ⚠${outdated.length} 待更新` : ""}
                     </button>
                   ) : (
-                    <span className="muted">—</span>
+                    ""
                   ),
                   <div className="actions">
                     <Btn
@@ -597,7 +626,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                               onClick={() => {
                                 closeMore();
                                 N(x.name);
-                                RG(x.region);
                                 IMG("");
                                 F("");
                                 C("");
@@ -669,7 +697,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           </Field>
           <Note>
             选择机器人后开始扫描：机器人按当前位置建图，地图数据包回传平台。
-            <b>回传完成的数据包还不是地图</b>，需在列表里「编辑」命名 / 定区域后，才成为正式地图。
+            <b>回传完成的数据包还不是地图</b>，需在列表里「编辑」命名后，才成为正式地图。
           </Note>
           {scanning && (
             <div style={{ marginTop: 12 }}>
@@ -703,12 +731,12 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         </Modal>
       )}
 
-      {/* 构建地图：把数据包转成**可标定的 SLAM 地图**（命名 / 定区域） */}
+      {/* 构建地图：把数据包转成**可标定的 SLAM 地图**（命名） */}
       {packet && (
         <Modal title="构建地图" onClose={() => PKT(null)}>
           <Note>
             数据包「{packet.name}」来自 {packet.robotId}（{fmtDateTime(packet.at)}）。
-            填写地图名称与所属区域后，它将作为一张<b>可标定的 SLAM 地图</b>进入列表，
+            填写地图名称后，它将作为一张<b>可标定的 SLAM 地图</b>进入列表，
             其路网与定位点由标定工作台维护（按分辨率 / 原点做像素 → 全局坐标换算）。
           </Note>
           <Field label="地图名称">
@@ -717,13 +745,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               placeholder="例如 二期装置区巡检地图"
               onChange={(e) => PKN(e.target.value)}
             />
-          </Field>
-          <Field label="所属区域">
-            <select value={pkRegion} onChange={(e) => PKR(e.target.value)}>
-              {areaOptions(s).map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
           </Field>
           <div className="modal-actions">
             <Btn onClick={() => PKT(null)}>取消</Btn>
@@ -735,7 +756,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                   type: "BUILD_MAP",
                   packetId: packet.id,
                   name: pkName.trim(),
-                  region: pkRegion,
                 });
                 if (ok) PKT(null);
               }}
@@ -898,33 +918,110 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           );
         })()}
 
-      {/* 启停二次确认：确认后才切换地图逻辑启停状态 */}
-      {toggleMap && (
-        <Confirm
-          title={toggleMap.status === "停用" ? "启用地图" : "停用地图"}
-          message={
-            toggleMap.status === "停用"
-              ? `启用「${toggleMap.name}」后，可再次用于导航与任务下发。`
-              : `停用「${toggleMap.name}」后，该地图不再允许用于导航 / 任务下发。`
-          }
-          confirmText={toggleMap.status === "停用" ? "启用" : "停用"}
-          danger={toggleMap.status !== "停用"}
-          onClose={() => SETTOGGLE(null)}
-          onConfirm={() => {
-            act({ type: "TOGGLE_MAP_STATUS", id: toggleMap.id });
-            SETTOGGLE(null);
-          }}
-        />
-      )}
+      {/* 启停二次确认：停用前列影响面 + 在跑策略 + 必填原因，确认后才落库 */}
+      {toggleMap &&
+        (() => {
+          const life = mapLifecycleOf(toggleMap);
+          const off = life === "启用";
+          const face = impactOf(toggleMap.id);
+          return (
+            <Confirm
+              title={off ? "停用地图" : life === "停用中" ? "取消停用" : "启用地图"}
+              confirmText={off ? "停用" : life === "停用中" ? "取消停用" : "启用"}
+              danger={off}
+              confirmDisabled={!toggleReason.trim()}
+              onClose={() => SETTOGGLE(null)}
+              onConfirm={() => {
+                act({
+                  type: "TOGGLE_MAP_STATUS",
+                  id: toggleMap.id,
+                  status: off ? "停用" : "启用",
+                  strategy: off ? toggleStrategy : undefined,
+                  reason: toggleReason.trim(),
+                });
+                SETTOGGLE(null);
+              }}
+            >
+              {off ? (
+                <>
+                  <p>
+                    停用「{toggleMap.name}」后，该地图不再允许用于导航 / 任务下发。
+                  </p>
+                  <dl className="kv">
+                    <dt>绑定机器人</dt>
+                    <dd>{face.bound} 台</dd>
+                    <dt>依赖计划</dt>
+                    <dd>{face.plans} 条</dd>
+                    <dt>在跑任务</dt>
+                    <dd>{face.running} 个</dd>
+                  </dl>
+                  {face.running > 0 && (
+                    <Field label="在跑任务处理">
+                      <div className="radio-row">
+                        <label>
+                          <input
+                            type="radio"
+                            name="map-stop-strategy"
+                            checked={toggleStrategy === "温和"}
+                            onChange={() => SETSTRATEGY("温和")}
+                          />
+                          温和（跑完再停）
+                        </label>
+                        <label>
+                          <input
+                            type="radio"
+                            name="map-stop-strategy"
+                            checked={toggleStrategy === "立即"}
+                            onChange={() => SETSTRATEGY("立即")}
+                          />
+                          立即（中断任务）
+                        </label>
+                      </div>
+                    </Field>
+                  )}
+                </>
+              ) : life === "停用中" ? (
+                <p>
+                  取消停用后，「{toggleMap.name}」恢复接单与下发，图上任务照常执行。
+                </p>
+              ) : (
+                <p>
+                  启用「{toggleMap.name}」后，可再次用于导航与任务下发。
+                  {face.plans > 0 &&
+                    `依赖它的 ${face.plans} 条计划不会自动补跑。`}
+                </p>
+              )}
+              <Field label="操作原因" required>
+                <input
+                  value={toggleReason}
+                  placeholder="例如 地图待重建 / 现场环境变更"
+                  onChange={(e) => SETREASON(e.target.value)}
+                />
+              </Field>
+            </Confirm>
+          );
+        })()}
 
       {modal === "import" && (
-        <Modal
+        <Drawer
           title={importTarget ? `更新地图 · ${name}` : "导入地图"}
-          wide
+          subtitle={importTarget || undefined}
           onClose={() => {
             M("");
             IT("");
           }}
+          footer={
+            <>
+              <Btn onClick={() => M("")}>取消</Btn>
+              <Btn
+                primary
+                disabled={!image || !name.trim()}
+                onClick={() => CI(true)}
+              >
+                {importTarget ? "更新地图" : "导入地图"}
+              </Btn>
+            </>
+          }
         >
           <Field label="地图名称">
             <input
@@ -932,14 +1029,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               placeholder="例如 二期装置区巡检地图"
               onChange={(e) => N(e.target.value)}
             />
-          </Field>
-          <Field label="区域">
-            {/* 区域取自「后台管理」的区域主数据：只允许下拉选择，不允许手填 */}
-            <select value={region} onChange={(e) => RG(e.target.value)}>
-              {areaOptions(s).map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
           </Field>
           <Field label="地图图片（底图）">
             <input
@@ -981,17 +1070,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               />
             </>
           )}
-          <div className="modal-actions">
-            <Btn onClick={() => M("")}>取消</Btn>
-            <Btn
-              primary
-              disabled={!image || !name.trim()}
-              onClick={() => CI(true)}
-            >
-              {importTarget ? "更新地图" : "导入地图"}
-            </Btn>
-          </div>
-        </Modal>
+        </Drawer>
       )}
 
       {modal === "import" && confirmImport && (
@@ -1004,7 +1083,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             rows={[
               ...(importTarget ? [["目标地图", importTarget]] : []),
               ["地图名称", name || "—"],
-              ["区域", region || "—"],
               ["底图", image ? "已上传" : "未上传"],
             ]}
           />
@@ -1081,7 +1159,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             </Btn>
             <p>{file}</p>
             <Note>
-              提交后重新发布试验版本、同步验证、正式发布，再核对区域机器人完成变化关闭。
+              提交后重新发布试验版本、同步验证、正式发布，再核对已绑定该地图的机器人完成变化关闭。
             </Note>
             <Btn
               primary

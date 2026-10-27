@@ -93,97 +93,7 @@ const actionsOf = (pages: string[], kinds?: string[]) =>
         .map((a) => actionKey(c.pageId, a)),
     );
 
-/** 登录账号（User）：账号密码 + 人员信息，角色通过 members 关联 */
-export interface Account {
-  id: string;
-  /** 登录账号 */
-  login: string;
-  /** 初始密码（原型演示明文，列表展示掩码） */
-  password: string;
-  name: string;
-  dept: string;
-  status: "启用" | "禁用";
-  /** 最近登录时间 */
-  lastLogin: string;
-}
 
-/** 默认账号库：覆盖各业务部门 */
-export function seedAccounts(): Account[] {
-  return [
-    {
-      id: "U-001",
-      login: "wang.jie",
-      password: "Init@2026",
-      name: "王姐",
-      dept: "信息中心",
-      status: "启用",
-      lastLogin: "2026-10-19 09:02:11",
-    },
-    {
-      id: "U-002",
-      login: "zhou.lao",
-      password: "Init@2026",
-      name: "老周",
-      dept: "设备部",
-      status: "启用",
-      lastLogin: "2026-10-19 08:41:37",
-    },
-    {
-      id: "U-003",
-      login: "li.gong",
-      password: "Init@2026",
-      name: "李工",
-      dept: "设备部",
-      status: "启用",
-      lastLogin: "2026-10-18 17:22:05",
-    },
-    {
-      id: "U-004",
-      login: "chen.gong",
-      password: "Init@2026",
-      name: "陈工",
-      dept: "生产一部",
-      status: "启用",
-      lastLogin: "2026-10-18 15:10:48",
-    },
-    {
-      id: "U-005",
-      login: "zhao.min",
-      password: "Init@2026",
-      name: "赵敏",
-      dept: "安环部",
-      status: "启用",
-      lastLogin: "2026-10-17 10:33:19",
-    },
-    {
-      id: "U-006",
-      login: "sun.lei",
-      password: "Init@2026",
-      name: "孙磊",
-      dept: "生产二部",
-      status: "禁用",
-      lastLogin: "2026-09-30 16:08:52",
-    },
-    {
-      id: "U-007",
-      login: "zhou.ning",
-      password: "Init@2026",
-      name: "周宁",
-      dept: "调度中心",
-      status: "启用",
-      lastLogin: "2026-10-19 08:05:44",
-    },
-    {
-      id: "U-008",
-      login: "wu.tong",
-      password: "Init@2026",
-      name: "吴桐",
-      dept: "区域巡检组",
-      status: "启用",
-      lastLogin: "2026-10-16 14:27:30",
-    },
-  ];
-}
 
 /** 角色（Role） */
 export interface AdminRole {
@@ -230,13 +140,12 @@ export interface Impersonation {
 
 export interface RoleAdminState {
   roles: AdminRole[];
-  accounts: Account[];
   logs: RoleAuditLog[];
   impersonation: Impersonation | null;
 }
 
 /** 固定演示操作人与来源 IP（原型不接真实登录） */
-export const OPERATOR = "王姐";
+export const OPERATOR = "Admin";
 const IP = "10.20.31.56";
 
 function stamp() {
@@ -265,27 +174,27 @@ function seedRoles(): AdminRole[] {
     {
       id: "ROLE-SUPER",
       code: "SUPER_ADMIN",
-      name: "普通管理员",
-      description: "厂区最高权限，负责组织、角色与审计（系统内置，不可删除）",
+      name: "管理员",
+      description: "组织唯一管理员，负责组织、角色与审计（系统内置，不可删除、不可禁用）",
       status: "启用",
       updatedAt: "2026-10-18 09:12:00",
       isSuper: true,
       baseRole: "admin",
       menus: ALL_PAGES,
       actions: ALL_ACTIONS,
-      members: ["U-001"],
+      members: ["U-000", "U-001", "U-002", "U-003", "U-004", "U-005", "U-006"],
     },
     {
       id: "ROLE-INSPECT",
       code: "INSPECT_ADMIN",
-      name: "巡检管理员",
+      name: "巡检主管",
       description: "负责巡检计划、任务调度、结果复核与告警处置",
       status: "启用",
       updatedAt: "2026-10-17 16:40:00",
       baseRole: "admin",
       menus: allCenterPages,
       actions: actionsOf(allCenterPages),
-      members: ["U-002", "U-003"],
+      members: ["U-008", "U-009"],
     },
     {
       id: "ROLE-DISPATCH",
@@ -313,7 +222,7 @@ function seedRoles(): AdminRole[] {
       actions: actionsOf(
         pagesOf("工作台", "巡检执行", "告警管理", "资源与地图"),
       ),
-      members: ["U-004", "U-008"],
+      members: ["U-010"],
     },
     {
       id: "ROLE-VIEWER",
@@ -325,7 +234,7 @@ function seedRoles(): AdminRole[] {
       baseRole: "user",
       menus: ALL_PAGES,
       actions: actionsOf(ALL_PAGES, ["查看", "导出"]),
-      members: ["U-005", "U-006"],
+      members: [],
     },
   ];
 }
@@ -334,9 +243,9 @@ function seedLogs(): RoleAuditLog[] {
   return [
     {
       id: "AL-20261018-01",
-      operator: "王姐",
+      operator: "Admin",
       action: "修改权限",
-      target: "巡检管理员",
+      target: "巡检主管",
       before: "菜单 21 个 · 按钮 84 项",
       after: "菜单 21 个 · 按钮 86 项",
       time: "2026-10-18 09:20:41",
@@ -344,7 +253,7 @@ function seedLogs(): RoleAuditLog[] {
     },
     {
       id: "AL-20261017-02",
-      operator: "王姐",
+      operator: "Admin",
       action: "新增角色",
       target: "现场保障员",
       before: "—",
@@ -354,7 +263,7 @@ function seedLogs(): RoleAuditLog[] {
     },
     {
       id: "AL-20261015-03",
-      operator: "王姐",
+      operator: "Admin",
       action: "模拟登录",
       target: "调度员",
       before: "—",
@@ -367,6 +276,12 @@ function seedLogs(): RoleAuditLog[] {
 
 const KEY = "inspection-role-admin-v1";
 
+/** 内置角色名的历史命名收敛：系统只有一个「管理员」，其余角色不再带「管理员」字样 */
+const BUILTIN_ROLE_NAME: Record<string, string> = {
+  SUPER_ADMIN: "管理员",
+  INSPECT_ADMIN: "巡检主管",
+};
+
 /**
  * 旧缓存收敛：清除已下线的数据范围 / 审批字段，
  * 并剔除页面已经不存在的菜单与按钮
@@ -374,13 +289,13 @@ const KEY = "inspection-role-admin-v1";
 function normalize(raw: RoleAdminState): RoleAdminState {
   return {
     ...raw,
-    accounts: raw.accounts?.length ? raw.accounts : seedAccounts(),
     roles: raw.roles.map((r) => {
       const next = { ...r } as AdminRole & {
         dataTargets?: string[];
         dataScope?: string;
         approvals?: string[];
       };
+      if (BUILTIN_ROLE_NAME[next.code]) next.name = BUILTIN_ROLE_NAME[next.code];
       delete next.dataTargets;
       delete next.dataScope;
       delete next.approvals;
@@ -390,6 +305,10 @@ function normalize(raw: RoleAdminState): RoleAdminState {
       next.actions = (next.actions || []).filter((k) => validActions.has(k));
       return next;
     }),
+    // 操作人改名：历史日志记的是旧姓名，按当前操作人收敛
+    logs: (raw.logs || []).map((l) =>
+      l.operator === "王姐" ? { ...l, operator: OPERATOR } : l,
+    ),
   };
 }
 
@@ -402,7 +321,6 @@ function load(): RoleAdminState {
   }
   return {
     roles: seedRoles(),
-    accounts: seedAccounts(),
     logs: seedLogs(),
     impersonation: null,
   };
@@ -546,116 +464,42 @@ export function assignMembers(id: string, members: string[]) {
 export const roleOfAccount = (roles: AdminRole[], accountId: string) =>
   roles.find((r) => r.members.includes(accountId));
 
-/** 新增账号：创建登录凭证并挂到指定角色 */
-export function addAccount(input: {
-  login: string;
-  password: string;
-  name: string;
-  dept: string;
-  roleId: string;
-}) {
-  const account: Account = {
-    id: `U-${Date.now().toString(36).toUpperCase()}`,
-    login: input.login,
-    password: input.password,
-    name: input.name,
-    dept: input.dept,
-    status: "启用",
-    lastLogin: "—",
-  };
-  const roles = state.roles.map((r) =>
-    r.id === input.roleId
-      ? { ...r, members: [...r.members, account.id], updatedAt: stamp() }
-      : r,
-  );
-  commit(
-    { ...state, accounts: [...state.accounts, account], roles },
-    entry(
-      "新增账号",
-      `${input.name}（${input.login}）`,
-      "—",
-      `所属角色：${state.roles.find((r) => r.id === input.roleId)?.name ?? "—"}`,
-    ),
-  );
-  return account;
-}
-
-/** 编辑账号：登录名 / 姓名 / 部门 / 状态 / 归属角色 */
-export function updateAccount(
-  id: string,
-  patch: {
-    login: string;
-    name: string;
-    dept: string;
-    status: Account["status"];
-    roleId: string;
-  },
+/**
+ * 角色实际成员：只认账号库里真实存在的账号，且一人只归第一个角色
+ * @description 与账号管理页「所属角色」（roleOfAccount 反查）同口径，
+ *              避免已删账号 / 旧演示 id 残留把成员数撑大
+ * @param roles 全部角色
+ * @param role 目标角色
+ * @param alive 账号库里存在的账号 id
+ */
+export function membersOf(
+  roles: AdminRole[],
+  role: AdminRole,
+  alive: Set<string>,
 ) {
-  const before = state.accounts.find((a) => a.id === id);
-  if (!before) return;
-  const roles = state.roles.map((r) => {
-    const has = r.members.includes(id);
-    if (r.id === patch.roleId)
-      return has ? r : { ...r, members: [...r.members, id] };
-    return has ? { ...r, members: r.members.filter((x) => x !== id) } : r;
-  });
-  commit(
-    {
-      ...state,
-      accounts: state.accounts.map((a) =>
-        a.id === id
-          ? {
-              ...a,
-              login: patch.login,
-              name: patch.name,
-              dept: patch.dept,
-              status: patch.status,
-            }
-          : a,
-      ),
-      roles,
-    },
-    entry("编辑账号", before.name, before.dept, patch.dept),
+  return role.members.filter(
+    (id) => alive.has(id) && roleOfAccount(roles, id)?.id === role.id,
   );
 }
 
-/** 重置密码：管理员设定新密码，审计只记动作不记内容 */
-export function resetPassword(id: string, password: string) {
-  const account = state.accounts.find((a) => a.id === id);
-  if (!account) return;
+/**
+ * 从所有角色中解除某账号的成员关联（删除账号后调用，避免残留引用）
+ * @description 账号实体已统一到 auth.ts，本模块只维护角色的成员关系
+ */
+export function unlinkAccount(id: string) {
+  const touched = state.roles.some((r) => r.members.includes(id));
+  if (!touched) return;
   commit(
     {
       ...state,
-      accounts: state.accounts.map((a) =>
-        a.id === id ? { ...a, password } : a,
-      ),
-    },
-    entry("重置密码", account.name, "已加密存储", "已重置"),
-  );
-}
-
-/** 删除账号：同时从所有角色中解除关联 */
-export function removeAccount(id: string) {
-  const account = state.accounts.find((a) => a.id === id);
-  if (!account) return false;
-  commit(
-    {
-      ...state,
-      accounts: state.accounts.filter((a) => a.id !== id),
       roles: state.roles.map((r) =>
         r.members.includes(id)
           ? { ...r, members: r.members.filter((x) => x !== id) }
           : r,
       ),
     },
-    entry(
-      "删除账号",
-      `${account.name}（${account.login}）`,
-      "已启用",
-      "已删除",
-    ),
+    entry("解除角色关联", id, "—", "已移除"),
   );
-  return true;
 }
 
 /** 进入角色模拟：记录审计，返回模拟上下文 */

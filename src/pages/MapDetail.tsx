@@ -19,6 +19,7 @@ import { MapImageCanvas } from "../components/MapImageCanvas";
 import { MapDispatch } from "../components/MapDispatch";
 import { mapVer } from "../data/versionLabel";
 import { mapNo, fmtDateTime } from "../data/types";
+import { mapLifecycleOf } from "../data/robotMaps";
 import { SAMPLE_MAP_IMAGE } from "../data/sampleMap";
 
 export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
@@ -62,11 +63,22 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
               </dd>
               <dt>地图编号</dt>
               <dd>{mapNo(m.id)}</dd>
-              <dt>所属区域</dt>
-              <dd>{m.region}</dd>
               <dt>空间版本</dt>
               <dd>第 {m.version} 版</dd>
-              {/* 启停已收敛到地图列表的开关（带二次确认），详情页不再重复入口 */}
+              {/* 启停开关只在地图列表（带二次确认）；详情页只读展示当前状态与停用原因 */}
+              <dt>启停状态</dt>
+              <dd>
+                {mapLifecycleOf(m) === "启用" ? (
+                  <Badge>启用</Badge>
+                ) : (
+                  <>
+                    <Badge tone="amber">{mapLifecycleOf(m)}</Badge>
+                    {m.statusReason && (
+                      <span className="muted"> · {m.statusReason}</span>
+                    )}
+                  </>
+                )}
+              </dd>
               <dt>更新时间</dt>
               <dd>{fmtDateTime(m.updatedAt)}</dd>
             </dl>
@@ -144,31 +156,6 @@ export function MapDetail({ id, tab }: { id?: string; tab?: string }) {
             )}
           </Panel>
 
-          {/*
-            区域范围：画在全厂区 2D 底图上的闭合多边形（后台管理 › 区域配置 绘制）。
-            没有任何区域画过范围时不占版面
-          */}
-          {(() => {
-            const shaded = (s.areas || []).filter(
-              (a) => (a.polygon?.length || 0) >= 3,
-            );
-            if (!shaded.length) return null;
-            return (
-              <Panel title="区域范围" extra={<span>{shaded.length} 个区域</span>}>
-                <MapImageCanvas
-                  image={SAMPLE_MAP_IMAGE}
-                  height={300}
-                  hint="区域范围 · 到「后台管理 › 区域配置」调整"
-                  areas={shaded.map((a) => ({
-                    id: a.id,
-                    name: a.name,
-                    points: a.polygon!,
-                    closed: true,
-                  }))}
-                />
-              </Panel>
-            );
-          })()}
         </div>
 
         {/* 右栏：地图本体。sticky 常驻，翻左栏信息时地图始终在视口里，不用上下拉动 */}

@@ -42,7 +42,7 @@ export interface SysLog {
 }
 
 const SYS_OPERATORS = [
-  { name: "王姐", no: "EMP-0012" },
+  { name: "Admin", no: "EMP-0012" },
   { name: "老周", no: "EMP-0087" },
   { name: "李工", no: "EMP-0103" },
   { name: "赵敏", no: "EMP-0216" },
@@ -59,7 +59,7 @@ const SYS_MODULES = [
 const SYS_TYPES: SysLog["type"][] = ["新增", "修改", "删除", "导出"];
 const SYS_DETAILS = [
   "修改角色「调度员」的数据范围与按钮权限，涉及 3 个页面、6 个按钮",
-  "新增角色「夜班巡检员」，复制自「巡检管理员」并调整数据范围",
+  "新增角色「夜班巡检员」，复制自「巡检主管」并调整数据范围",
   "导出巡检结果报表（第 42 周），条件：华东大区 / 全部设备 / 含异常项",
   "删除角色「临时观察员」，该角色未关联任何成员",
   "修改系统参数「告警去重窗口」由 30s 调整为 60s",
@@ -108,7 +108,7 @@ const SYS_DIFFS = [
       参数名: "告警去重窗口",
       值: "60s",
       生效范围: "全租户",
-      更新人: "王姐",
+      更新人: "Admin",
     },
   },
   {
@@ -245,7 +245,7 @@ export const TASK_LOGS: TaskLog[] = Array.from({ length: 20 }, (_, i) => {
     steps: buildSteps(start, st),
     request: {
       taskId: `TASK-${i + 1}`,
-      trigger: i % 3 === 0 ? "manual(王姐)" : "cron(0 22 * * *)",
+      trigger: i % 3 === 0 ? "manual(Admin)" : "cron(0 22 * * *)",
       robot: `R-0${(i % 3) + 1}`,
       route: `RT-${100 + i}`,
       points: 28,

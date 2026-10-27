@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { Boxes, LogIn, ShieldCheck } from "lucide-react";
 import { useStore } from "../data/store";
 import { loadAccounts } from "../data/auth";
+import { loadTenants } from "../data/tenants";
 import { Btn, Field } from "../components/UI";
 
 export function Login() {
@@ -16,8 +17,14 @@ export function Login() {
   const [username, U] = useState("");
   const [password, P] = useState("");
   const [err, ERR] = useState("");
+  // 登录页可选进入的厂区（留空 = 按账号权限自动进入）
+  const [tenantId, T] = useState("");
   // 演示账号一览：含平台超管与各客户开通租户时创建的管理员
   const accounts = useMemo(() => loadAccounts(), []);
+  const tenants = useMemo(
+    () => loadTenants().filter((t) => t.status !== "停用"),
+    [],
+  );
 
   function submit() {
     if (!username.trim() || !password) {
@@ -26,7 +33,7 @@ export function Login() {
     }
     ERR("");
     // 失败原因（账号错误 / 租户停用）由 store 写入 message
-    signIn(username, password);
+    signIn(username, password, tenantId || undefined);
   }
 
   return (
@@ -73,11 +80,23 @@ export function Login() {
               onKeyDown={(e) => e.key === "Enter" && submit()}
             />
           </Field>
+          <Field label="厂区 / 租户">
+            <select value={tenantId} onChange={(e) => T(e.target.value)}>
+              <option value="">自动（按账号权限进入）</option>
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </Field>
           {(err || message) && <div className="login-error">{err || message}</div>}
           <Btn primary className="login-submit" onClick={submit}>
             <LogIn size={15} />
             登录
           </Btn>
+          {/* 演示账号清单：点击任一账号快速填入账号密码 */}
+          <div className="login-accounts-hint">演示账号 · 点击填入</div>
           <div className="login-accounts">
             {accounts.map((a) => (
               <button
@@ -90,7 +109,6 @@ export function Login() {
                 }}
               >
                 <b>{a.name}</b>
-                <span>{a.title}</span>
                 <code>
                   {a.username} / {a.password}
                 </code>

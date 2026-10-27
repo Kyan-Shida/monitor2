@@ -346,12 +346,16 @@ export function AlarmItems({
             ))}
             {/* 删除只作用自己：挡掉冒泡，免得顺手打开了编辑弹窗 */}
             <span onClick={(e) => e.stopPropagation()}>
-              <Btn danger disabled={items.length <= 1} onClick={() => onRemove(i)}>
+              {/* 告警项由用户手动维护：允许删到空表（空表时保存会被拦住，提示去新增） */}
+              <Btn danger onClick={() => onRemove(i)}>
                 删除
               </Btn>
             </span>
           </div>
         ))}
+        {!items.length && (
+          <p className="ai-empty">还没有告警项，点「+ 告警等级配置」新增一条</p>
+        )}
       </div>
       {draft && (
         <AlarmItemDialog

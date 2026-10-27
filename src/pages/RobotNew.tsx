@@ -1,8 +1,8 @@
 /**
  * @file RobotNew.tsx
- * @description 新增机器人（内置页）：按 Robot 数据模型录入编码 / 名称 / 所属区域 / 机型 /
- *              采集能力 / 机型约束 / 固件；区域下拉取自「后台管理 › 区域配置」，
- *              未指定时在首次「地图下发」自动归属。
+ * @description 新增机器人（内置页）：按 Robot 数据模型录入编码 / SN / 名称 / 机型 / 固件 / 约束 / 采集能力；
+ *              表单按「标签—控件」成对双列排布，操作按钮收在表单底部；
+ *              区域不再手工填写，由首次「地图下发」按地图归属自动带出。
  * @interaction 菜单「机器人管理 › 新增机器人」；引擎 action：ADD_ROBOT
  */
 import { useState } from "react";
@@ -10,7 +10,6 @@ import { useStore } from "../data/store";
 import { go } from "../data/navigation";
 import { Badge, Btn, Panel, Confirm } from "../components/UI";
 import { deviceTypes, profileOf } from "../data/deviceProfile";
-import { areaOptions } from "../data/deviceMaster";
 import { captureKinds } from "../data/types";
 import type { DeviceType } from "../data/types";
 
@@ -21,8 +20,6 @@ export function RobotNew() {
   /** 机器人编号（SN）：厂商出厂的硬件序列号，资产与售后口径 */
   const [sn, SN] = useState("");
   const [name, NAME] = useState("");
-  /** 所属区域：取自「后台管理 › 区域配置」，留空则首次「地图下发」时自动归属 */
-  const [region, REGION] = useState("");
   const [deviceType, DT] = useState<DeviceType>("四轮车");
   /** 采集能力（可见光 / 红外 / 气体 / 声音）：任务下发时按能力校验 */
   const [caps, CAPS] = useState<string[]>(["可见光"]);
@@ -54,7 +51,6 @@ export function RobotNew() {
     !!sn.trim() &&
     !snTaken &&
     !!name.trim() &&
-    !!region.trim() &&
     !!firmware.trim() &&
     caps.length > 0;
 
@@ -66,7 +62,6 @@ export function RobotNew() {
       id: rid.trim(),
       sn: sn.trim(),
       name: name.trim(),
-      region: region || undefined,
       deviceType,
       capabilities: caps,
       minBattery,
@@ -81,17 +76,7 @@ export function RobotNew() {
 
   return (
     <>
-      <div className="context-bar">
-        <b>新增机器人</b>
-        <div className="actions">
-          <Btn onClick={() => ASK(true)}>取消</Btn>
-          <Btn primary disabled={!valid} onClick={save}>
-            确认新增
-          </Btn>
-        </div>
-      </div>
-
-      {/* 整页一张大表：左列字段名、右列录入控件，分区行做小标题 */}
+      {/* 整页一张大表：双列「标签—控件」，分区行做小标题 */}
       <Panel
         className="robot-form"
         title="机器人信息"
@@ -101,7 +86,7 @@ export function RobotNew() {
           <table className="form-table">
             <tbody>
               <tr className="form-sec">
-                <th colSpan={2}>① 基础身份</th>
+                <th colSpan={4}>① 基础身份</th>
               </tr>
               <tr>
                 <th>
@@ -119,8 +104,6 @@ export function RobotNew() {
                     </p>
                   )}
                 </td>
-              </tr>
-              <tr>
                 <th>
                   机器人编号（SN）<em className="req">*</em>
                 </th>
@@ -141,7 +124,7 @@ export function RobotNew() {
                 <th>
                   机器人名称<em className="req">*</em>
                 </th>
-                <td>
+                <td colSpan={3}>
                   <input
                     value={name}
                     placeholder="例如 罐区巡检四号"
@@ -151,7 +134,7 @@ export function RobotNew() {
               </tr>
 
               <tr className="form-sec">
-                <th colSpan={2}>② 机型与硬件</th>
+                <th colSpan={4}>② 机型与硬件</th>
               </tr>
               <tr>
                 <th>
@@ -175,28 +158,6 @@ export function RobotNew() {
                     ))}
                   </select>
                 </td>
-              </tr>
-              <tr>
-                <th>
-                  所属区域<em className="req">*</em>
-                </th>
-                <td>
-                  <select
-                    value={region}
-                    onChange={(e) => REGION(e.target.value)}
-                  >
-                    <option value="" disabled>
-                      请选择区域
-                    </option>
-                    {areaOptions(s).map((x) => (
-                      <option key={x} value={x}>
-                        {x}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-              </tr>
-              <tr>
                 <th>
                   固件版本<em className="req">*</em>
                 </th>
@@ -210,7 +171,7 @@ export function RobotNew() {
               </tr>
 
               <tr className="form-sec">
-                <th colSpan={2}>③ 机型约束</th>
+                <th colSpan={4}>③ 机型约束</th>
               </tr>
               <tr>
                 <th>
@@ -225,8 +186,6 @@ export function RobotNew() {
                     onChange={(e) => MINB(Number(e.target.value))}
                   />
                 </td>
-              </tr>
-              <tr>
                 <th>
                   是否参与充电排队规划<em className="req">*</em>
                 </th>
@@ -244,7 +203,7 @@ export function RobotNew() {
               {deviceType === "四轮车" && (
                 <tr>
                   <th>限速（m/s）</th>
-                  <td>
+                  <td colSpan={3}>
                     <input
                       type="number"
                       step="0.1"
@@ -258,7 +217,7 @@ export function RobotNew() {
               {deviceType === "挂轨" && (
                 <tr>
                   <th>当前所在轨道区段</th>
-                  <td>
+                  <td colSpan={3}>
                     <select
                       value={railSection}
                       onChange={(e) => RAIL(e.target.value)}
@@ -275,13 +234,13 @@ export function RobotNew() {
               )}
 
               <tr className="form-sec">
-                <th colSpan={2}>④ 采集能力</th>
+                <th colSpan={4}>④ 采集能力</th>
               </tr>
               <tr>
                 <th>
                   采集能力<em className="req">*</em>
                 </th>
-                <td>
+                <td colSpan={3}>
                   <div className="actions">
                     {capOptions.map((c) => (
                       <label key={c} className="inline-filter">
@@ -308,13 +267,21 @@ export function RobotNew() {
             </tbody>
           </table>
         </div>
-      </Panel>
 
-      {err && (
-        <p role="alert" className="reference-upload-error">
-          {err}
-        </p>
-      )}
+        {err && (
+          <p role="alert" className="reference-upload-error">
+            {err}
+          </p>
+        )}
+
+        {/* 操作收在表单底部：读完整张表再提交 */}
+        <div className="actions form-actions">
+          <Btn onClick={() => ASK(true)}>取消</Btn>
+          <Btn primary disabled={!valid} onClick={save}>
+            确认新增
+          </Btn>
+        </div>
+      </Panel>
 
       {/* 取消二次确认：放弃已填写内容，不落库 */}
       {ask && (

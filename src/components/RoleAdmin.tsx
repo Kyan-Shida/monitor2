@@ -3,8 +3,8 @@
  * @description 角色 / 权限管理主页面：角色列表、权限配置、成员分配、角色模拟与审计日志
  * @interaction 由 pages/Supporting.tsx 在 page === "roles" 时渲染
  */
-import { useState } from "react";
-import { Badge, Btn, Confirm, Field, Modal, Panel, Switch, Table } from "./UI";
+import { useMemo, useState } from "react";
+import { Badge, Btn, Confirm, Drawer, Field, MultiSelect, Panel, Switch, Table } from "./UI";
 import { Pager } from "./Business";
 import { FilterPanel } from "./FilterPanel";
 import { Segmented } from "./Segmented";
@@ -12,17 +12,23 @@ import { RoleDrawer } from "./RoleDrawer";
 import { useStore } from "../data/store";
 import { roleOf } from "../data/roles";
 import { go, usePageSize, useViewState } from "../data/navigation";
+import { loadCustomers, loadTenants } from "../data/tenants";
 import {
+  loadAccounts,
   addAccount,
-  assignMembers,
+  updateAccount,
   removeAccount,
-  removeRole,
   resetPassword,
+  type AuthAccount,
+} from "../data/auth";
+import {
+  assignMembers,
+  membersOf,
+  removeRole,
   roleOfAccount,
   startImpersonation,
-  updateAccount,
+  unlinkAccount,
   useRoleAdmin,
-  type Account,
   type AdminRole,
   type RoleAuditLog,
 } from "../data/roleAdmin";
@@ -31,13 +37,16 @@ import {
 function MemberForm({
   role,
   accounts,
+  members,
   onClose,
 }: {
   role: AdminRole;
-  accounts: Account[];
+  accounts: AuthAccount[];
+  /** 对账后的真实成员：已剔除已删账号与已归其他角色的账号 */
+  members: string[];
   onClose: () => void;
 }) {
-  const [picked, setPicked] = useState(role.members);
+  const [picked, setPicked] = useState(members);
   const [ask, ASK] = useState(false);
   const toggle = (id: string) =>
     setPicked(
@@ -46,8 +55,9 @@ function MemberForm({
 
   return (
     <>
-      <Modal
+      <Drawer
         title={`分配成员 · ${role.name}`}
+        className="account-drawer"
         onClose={onClose}
         footer={
           <>
@@ -68,12 +78,12 @@ function MemberForm({
               />
               {u.name}
               <small>
-                {u.login} · {u.dept}
+                {u.username} · {u.dept}
               </small>
             </label>
           ))}
         </div>
-      </Modal>
+      </Drawer>
       {ask && (
         <Confirm
           title="保存成员分配"
@@ -90,36 +100,80 @@ function MemberForm({
   );
 }
 
-/** 新增 / 编辑登录账号 */
+/** 新增 / 编辑登录账号（账号统一来自 auth.ts） */
 function AccountForm({
   account,
   roles,
+  me,
   onClose,
 }: {
-  account?: Account;
+  account?: AuthAccount;
   roles: AdminRole[];
+  /** 当前登录者：决定可分配的客户 / 厂区 / 级别范围（超管全开） */
+  me: AuthAccount;
   onClose: () => void;
 }) {
+  const customers = loadCustomers();
+  const tenants = loadTenants();
   const current = account ? roleOfAccount(roles, account.id) : undefined;
-  const [login, LOGIN] = useState(account?.login ?? "");
+  // 当前操作者能分配的客户 / 厂区范围：超管全开，其余锁定到自己的客户（厂区管理员再锁到本厂）
+  const isSuper = me.level === "super";
+  const scopeCustomers = isSuper
+    ? customers
+    : customers.filter((c) => c.id === me.customerId);
+  const scopeTenants = isSuper
+    ? tenants
+    : me.level === "tenant"
+      ? tenants.filter((t) => t.id === me.tenantId)
+      : tenants.filter((t) => t.customerId === me.customerId);
+  const [username, USERNAME] = useState(account?.username ?? "");
   const [password, PWD] = useState("");
   const [name, NAME] = useState(account?.name ?? "");
   const [dept, DEPT] = useState(account?.dept ?? "");
-  const [status, STATUS] = useState<Account["status"]>(
+  const [customerId, CUSTOMER] = useState(
+    isSuper ? (account?.customerId ?? "") : (me.customerId ?? ""),
+  );
+  const [tenantIds, TENANTS] = useState<string[]>(account?.tenantIds ?? []);
+  const [status, STATUS] = useState<AuthAccount["status"]>(
     account?.status ?? "启用",
   );
   const [roleId, ROLEID] = useState(current?.id ?? roles[0]?.id ?? "");
   const [ask, ASK] = useState(false);
+
+  // 换客户：清空已选厂区，避免残留别的客户的厂区
+  const onCustomer = (cid: string) => {
+    CUSTOMER(cid);
+    TENANTS([]);
+  };
+
+  // 可分配厂区 = 当前所选客户下、且在操作者权限范围内的厂区
+  const custTenants = scopeTenants.filter((t) => t.customerId === customerId);
+  const allTenantIds = custTenants.map((t) => t.id);
+  const allPicked =
+    allTenantIds.length > 0 && allTenantIds.every((id) => tenantIds.includes(id));
+  /**
+   * 级别由厂区选择推导（不再单独填写）：
+   * 勾 1 个 = 厂区管理员；全选 = 客户管理员；勾多个 = 普通用户
+   */
+  const derivedLevel: AuthAccount["level"] =
+    allPicked && allTenantIds.length > 1
+      ? "customer"
+      : tenantIds.length === 1
+        ? "tenant"
+        : "user";
+  const isSuperAccount = account?.level === "super";
   const ready =
-    !!login.trim() &&
+    (isSuperAccount || (!!customerId && tenantIds.length > 0)) &&
+    !!username.trim() &&
     !!name.trim() &&
     !!roleId &&
     (!!account || !!password.trim());
 
   return (
     <>
-      <Modal
+      <Drawer
         title={account ? "编辑账号" : "新增账号"}
+        className="account-drawer"
         onClose={onClose}
         footer={
           <>
@@ -131,7 +185,7 @@ function AccountForm({
         }
       >
         <Field label="登录账号" required>
-          <input value={login} onChange={(e) => LOGIN(e.target.value)} />
+          <input value={username} onChange={(e) => USERNAME(e.target.value)} />
         </Field>
         {!account && (
           <Field label="初始密码" required>
@@ -148,6 +202,43 @@ function AccountForm({
         <Field label="所属部门">
           <input value={dept} onChange={(e) => DEPT(e.target.value)} />
         </Field>
+        {!isSuperAccount && (
+          <Field label="所属客户" required>
+            <select
+              value={customerId}
+              disabled={!isSuper}
+              onChange={(e) => onCustomer(e.target.value)}
+            >
+              {/* 平台超管需先选客户，厂区选项才会按客户收敛 */}
+              {isSuper && <option value="">请选择客户</option>}
+              {scopeCustomers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {!isSuperAccount && (
+          <Field label="管理厂区" required>
+            <MultiSelect
+              options={allTenantIds}
+              value={tenantIds}
+              onChange={TENANTS}
+              labelOf={(id) => tenants.find((t) => t.id === id)?.name || id}
+              placeholder={
+                custTenants.length ? "请选择厂区" : "请先选择所属客户"
+              }
+            />
+            {custTenants.length > 1 && (
+              <div className="actions" style={{ marginTop: 8 }}>
+                <Btn small onClick={() => TENANTS(allPicked ? [] : allTenantIds)}>
+                  {allPicked ? "清空" : "全选"}
+                </Btn>
+              </div>
+            )}
+          </Field>
+        )}
         <Field label="所属角色" required>
           <select value={roleId} onChange={(e) => ROLEID(e.target.value)}>
             {roles.map((r) => (
@@ -162,32 +253,78 @@ function AccountForm({
             <Switch
               checked={status === "启用"}
               label="启用状态"
-              onChange={(on) => STATUS(on ? "启用" : "禁用")}
+              onChange={(on) => STATUS(on ? "启用" : "停用")}
             />
             {status}
           </div>
         </Field>
-      </Modal>
+      </Drawer>
       {ask && (
         <Confirm
           title={account ? "保存账号信息" : "创建账号"}
           message={
             account
-              ? `「${login}」的信息保存后立即生效。`
-              : `将新建账号「${login}」并绑定角色。`
+              ? `「${username}」的信息保存后立即生效。`
+              : `将新建账号「${username}」并绑定角色。`
           }
           confirmText="保存"
           onClose={() => ASK(false)}
           onConfirm={() => {
-            if (account)
+            const role = roles.find((r) => r.id === roleId);
+            const baseRole = role?.baseRole ?? "user";
+            const custName = customers.find((c) => c.id === customerId)?.name || "";
+            const tenName = tenants.find((t) => t.id === tenantIds[0])?.name || "";
+            // 级别由厂区勾选推导；超管账号本身不在此处维护
+            const lv: AuthAccount["level"] = isSuperAccount ? "super" : derivedLevel;
+            const title = isSuperAccount
+              ? "平台超级管理员"
+              : lv === "customer"
+                ? `${custName} · 客户管理员`
+                : lv === "tenant"
+                  ? `${tenName} · 厂区管理员`
+                  : `${custName} · 普通用户`;
+            const finalTenantIds = isSuperAccount ? [] : tenantIds;
+            // 主属厂区：厂区管理员 / 普通用户落到第一个勾选厂区，客户管理员不指定
+            const mainTenantId =
+              isSuperAccount || lv === "customer" ? undefined : tenantIds[0];
+            const id = account?.id ?? `U-${Date.now().toString(36).toUpperCase()}`;
+            if (account) {
               updateAccount(account.id, {
-                login,
+                username,
+                password,
                 name,
+                customerId: isSuperAccount ? undefined : customerId,
+                tenantId: mainTenantId,
+                tenantIds: finalTenantIds,
+                level: lv,
+                roleId: baseRole,
                 dept,
                 status,
-                roleId,
+                title,
               });
-            else addAccount({ login, password, name, dept, roleId });
+            } else {
+              addAccount({
+                id,
+                username,
+                password,
+                name,
+                title,
+                customerId: isSuperAccount ? undefined : customerId,
+                tenantId: mainTenantId,
+                tenantIds: finalTenantIds,
+                level: lv,
+                roleId: baseRole,
+                dept,
+                status,
+              });
+            }
+            // 角色成员同步：先从其他角色移除，再加入所选角色，保证「所属角色」列与成员数一致
+            for (const r of roles) {
+              if (r.id !== roleId && r.members.includes(id))
+                assignMembers(r.id, r.members.filter((x) => x !== id));
+            }
+            if (role && !role.members.includes(id))
+              assignMembers(role.id, [...role.members, id]);
             onClose();
           }}
         />
@@ -201,7 +338,7 @@ function ResetPasswordForm({
   account,
   onClose,
 }: {
-  account: Account;
+  account: AuthAccount;
   onClose: () => void;
 }) {
   const [password, PWD] = useState("");
@@ -210,8 +347,9 @@ function ResetPasswordForm({
 
   return (
     <>
-      <Modal
+      <Drawer
         title={`重置密码 · ${account.name}`}
+        className="account-drawer"
         onClose={onClose}
         footer={
           <>
@@ -229,7 +367,7 @@ function ResetPasswordForm({
             onChange={(e) => PWD(e.target.value)}
           />
         </Field>
-      </Modal>
+      </Drawer>
       {ask && (
         <Confirm
           title="重置密码"
@@ -268,9 +406,33 @@ function AuditTable({ logs }: { logs: RoleAuditLog[] }) {
 }
 
 export function RoleAdmin() {
-  const { s, setRole } = useStore();
-  const { roles, accounts, logs, impersonation } = useRoleAdmin();
-  const [tab, setTab] = useState<"roles" | "accounts" | "audit">("roles");
+  const { s, setRole, account, platformMode } = useStore();
+  const { roles, logs, impersonation } = useRoleAdmin();
+  /** 超管「平台管理」视角：只看租户账号，不展示角色模板 / 审计 */
+  const platformOnly = account?.level === "super" && platformMode;
+  // 账号统一来自 auth.ts（与登录 / 租户绑定同一份数据，避免账号对不上）
+  const [accVer, BUMP] = useState(0);
+  const accounts = useMemo(() => loadAccounts(), [accVer]);
+  // 成员数与「账号管理」的所属角色同口径：只算账号库里的真实账号，一人一角色
+  const aliveIds = useMemo(() => new Set(accounts.map((a) => a.id)), [accounts]);
+  const membersOfRole = (r: AdminRole) => membersOf(roles, r, aliveIds);
+  const tenants = useMemo(() => loadTenants(), []);
+  const customers = useMemo(() => loadCustomers(), []);
+  const tenantName = (id: string) => tenants.find((t) => t.id === id)?.name || id;
+  const customerName = (id?: string) =>
+    customers.find((c) => c.id === id)?.name || id || "—";
+  const levelLabel = (lv?: string) =>
+    lv === "super"
+      ? "平台超管"
+      : lv === "customer"
+        ? "客户管理员"
+        : lv === "tenant"
+          ? "厂区管理员"
+          : "普通用户";
+  // 平台超管只做租户账号管理：默认落在账号页，且不展示角色 / 审计 tab
+  const [tab, setTab] = useState<"roles" | "accounts" | "audit">(
+    platformOnly ? "accounts" : "roles",
+  );
   const [editId, setEditId] = useState("");
   const [memberId, setMemberId] = useState("");
   const [delId, setDelId] = useState("");
@@ -314,8 +476,26 @@ export function RoleAdmin() {
   const roleFilterCount =
     (roleStatus !== "全部" ? 1 : 0) + (roleKw.trim() ? 1 : 0);
 
-  const accountList = accounts.filter(
-    (a) => !accountKw || (a.login + a.name + a.dept).includes(accountKw),
+  // 账号列表范围：平台管理视角=全平台（不含超管）；客户管理员=本客户全部厂区账号；
+  // 厂区管理员=主属本厂的账号（跨厂 / 集团级账号由上级管理，避免误改其授权）
+  const meLevel = account?.level;
+  const scopedAccounts = platformOnly
+    ? accounts.filter((a) => a.level !== "super")
+    : meLevel === "customer"
+      ? accounts.filter(
+          (a) => a.level !== "super" && a.customerId === account?.customerId,
+        )
+      : accounts.filter(
+          (a) =>
+            a.level !== "super" &&
+            a.tenantId === s.tenantId &&
+            (a.level !== "user" ||
+              (a.tenantIds || []).every((id) => id === s.tenantId)),
+        );
+  const accountList = scopedAccounts.filter(
+    (a) =>
+      !accountKw ||
+      (a.username + a.name + (a.dept || "")).includes(accountKw),
   );
   const accountMax = Math.max(1, Math.ceil(accountList.length / accountSize));
   const accountCur = Math.min(accountPage, accountMax);
@@ -387,15 +567,18 @@ export function RoleAdmin() {
 
   return (
     <>
-      <Segmented<"roles" | "accounts" | "audit">
-        items={[
-          { key: "roles", label: `角色列表（${roles.length}）` },
-          { key: "accounts", label: `账号管理（${accounts.length}）` },
-          { key: "audit", label: `审计日志（${logs.length}）` },
-        ]}
-        value={tab}
-        onChange={setTab}
-      />
+      {/* 平台超管只有「账号管理」一个视图，不展示角色模板与审计入口 */}
+      {!platformOnly && (
+        <Segmented<"roles" | "accounts" | "audit">
+          items={[
+            { key: "roles", label: `角色列表（${roles.length}）` },
+            { key: "accounts", label: `账号管理（${scopedAccounts.length}）` },
+            { key: "audit", label: `审计日志（${logs.length}）` },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+      )}
 
       {tab === "roles" && (
         <Panel
@@ -453,7 +636,7 @@ export function RoleAdmin() {
               </>,
               <code>{r.code}</code>,
               <span className="muted">{r.description}</span>,
-              `${r.members.length} 人`,
+              `${membersOfRole(r).length} 人`,
               <Badge tone={r.status === "启用" ? "green" : "amber"}>
                 {r.status}
               </Badge>,
@@ -520,19 +703,25 @@ export function RoleAdmin() {
               "姓名",
               "部门",
               "所属角色",
+              "所属客户",
+              "可访问厂区",
               "状态",
               "最近登录",
               "操作",
             ]}
             rows={accountShown.map((a) => [
-              <code>{a.login}</code>,
+              <code>{a.username}</code>,
               a.name,
-              a.dept,
+              a.dept || "—",
               roleOfAccount(roles, a.id)?.name || "—",
+              customerName(a.customerId),
+              a.tenantIds?.length
+                ? a.tenantIds.map(tenantName).join("、")
+                : "全部",
               <Badge tone={a.status === "启用" ? "green" : "amber"}>
                 {a.status}
               </Badge>,
-              a.lastLogin,
+              a.lastLogin || "—",
               <div className="actions">
                 <Btn small onClick={() => setResetId(a.id)}>
                   重置密码
@@ -616,7 +805,8 @@ export function RoleAdmin() {
       {memberRole && (
         <MemberForm
           role={memberRole}
-          accounts={accounts}
+          accounts={scopedAccounts}
+          members={membersOfRole(memberRole)}
           onClose={() => setMemberId("")}
         />
       )}
@@ -624,9 +814,12 @@ export function RoleAdmin() {
         <AccountForm
           account={accountEdit}
           roles={roles}
+          me={account!}
           onClose={() => {
             setAccountCreating(false);
             setAccountEditId("");
+            // 账号存于 auth.ts（localStorage），保存后需触发列表重载
+            BUMP((v) => v + 1);
           }}
         />
       )}
@@ -645,6 +838,9 @@ export function RoleAdmin() {
           onClose={() => setAccountDelId("")}
           onConfirm={() => {
             removeAccount(accountDel.id);
+            // 账号已删除，同步从各角色的 members 解除关联
+            unlinkAccount(accountDel.id);
+            BUMP((v) => v + 1);
             setAccountDelId("");
           }}
         />

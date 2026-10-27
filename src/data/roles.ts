@@ -87,7 +87,7 @@ export const roles: Role[] = [
   {
     id: "admin",
     name: "管理员",
-    person: "王姐",
+    person: "Admin",
     // 驾驶舱已改为顶栏「驾驶舱大屏」入口，落地页统一为角色工作台
     landing: "workbench",
     centers: ["工作台", "巡检执行", "调度中心", "告警管理", "资源与地图", "后台管理", "机器人管理", "分析与报表", "系统设置"],

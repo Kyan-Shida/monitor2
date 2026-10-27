@@ -4,9 +4,11 @@
  *              「点位与检测项」快照与结果
  * @interaction ObjectDetails.tsx（「任务详情」内置页）、Planning.tsx（任务列表「详情」抽屉）——两处共用同一实现，避免口径漂移
  */
+import { useState } from "react";
 import { useStore } from "../data/store";
 import { mapVer } from "../data/versionLabel";
 import { go } from "../data/navigation";
+import { RetryTaskModal } from "./RetryTaskModal";
 import { Badge, Btn, Panel, Table, Note } from "./UI";
 import { ObjectLink } from "./Business";
 import { RoutePreview } from "./RoutePreview";
@@ -25,6 +27,8 @@ export function TaskDetailPanel({
 }) {
   const { s } = useStore();
   const t = task;
+  /** 超期补派确认弹窗 */
+  const [retry, SETRETRY] = useState(false);
   /**
    * 主操作随任务状态变化，始终只给一个"此刻最该做"的入口
    * 待调度 → 去派单；已分配 / 下发中 / 待执行 / 执行中 / 暂停 → 执行监控；
@@ -120,8 +124,14 @@ export function TaskDetailPanel({
           </span>
         </span>
         <div className="actions os-actions">
+          {/* 超期已留档：主操作换成补派，执行回溯降为次要入口 */}
+          {t.state === "超期" && !t.retriedBy && (
+            <Btn primary onClick={() => SETRETRY(true)}>
+              重新派单
+            </Btn>
+          )}
           <Btn
-            primary
+            primary={t.state !== "超期"}
             onClick={() => jump(primary.page, t.id)}
             title={primary.title}
           >
@@ -160,6 +170,16 @@ export function TaskDetailPanel({
             <dd>
               <ObjectLink type="alarm" id={t.alarmId} />
             </dd>
+            {(t.retryOf || t.retriedBy) && (
+              <>
+                <dt>补派关联</dt>
+                <dd>
+                  {t.retryOf
+                    ? `补派自 ${t.retryOf}`
+                    : `已补派为 ${t.retriedBy}`}
+                </dd>
+              </>
+            )}
           </dl>
         </Panel>
         {/* 任务路线图：按任务快照的点位顺序沿父线绘制（与巡检路线预览共用同一实现） */}
@@ -238,6 +258,9 @@ export function TaskDetailPanel({
           ])}
         />
       </Panel>
+      {retry && (
+        <RetryTaskModal task={t} onClose={() => SETRETRY(false)} />
+      )}
     </>
   );
 }

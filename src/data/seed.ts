@@ -29,7 +29,7 @@ import {
   defaultRequirementOfInstrument,
   defaultCategoryOfTarget,
 } from "./deviceMaster";
-import { captureAction } from "./types";
+import { captureAction, DEMO_AREA_POLYGONS } from "./types";
 import { SAMPLE_MAP_IMAGE } from "./sampleMap";
 import { withAlarmSetting, type AlarmSettingHost } from "./alarmSettings";
 import { TASK_STATUSES } from "./taskStatus";
@@ -334,7 +334,7 @@ const ALARM_PUSH_STAFF: AlarmPushStaff[] = [
     // 按区域绑定：只要是一期罐区的告警
     areas: ["一期罐区"],
     sms: true,
-    updatedBy: "王姐",
+    updatedBy: "Admin",
     updatedAt: "2026-10-14 09:12:30",
   },
   {
@@ -347,7 +347,7 @@ const ALARM_PUSH_STAFF: AlarmPushStaff[] = [
     // 按区域绑定：装置区的设备告警
     areas: ["装置区"],
     sms: true,
-    updatedBy: "王姐",
+    updatedBy: "Admin",
     updatedAt: "2026-10-14 09:12:30",
   },
   {
@@ -360,7 +360,7 @@ const ALARM_PUSH_STAFF: AlarmPushStaff[] = [
     // 按设备绑定：这两台罐体的全部等级告警
     devices: ["V001 原料储罐", "V002 缓冲罐"],
     sms: false,
-    updatedBy: "王姐",
+    updatedBy: "Admin",
     updatedAt: "2026-10-14 09:12:30",
   },
 ];
@@ -618,6 +618,8 @@ const robotPayloads: RobotPayload[] = [
   {
     id: "PL-VIS",
     name: "可见光相机",
+    version: "V3.2",
+    vendor: "海康机器人",
     abilities: [{ kind: "可见光", actions: ["拍照", "录像片段", "分析不安全行为"] }],
     models: ["机器狗", "四轮车", "挂轨"],
     state: "启用",
@@ -625,6 +627,8 @@ const robotPayloads: RobotPayload[] = [
   {
     id: "PL-IR",
     name: "红外热像仪",
+    version: "V2.1",
+    vendor: "大立科技",
     abilities: [{ kind: "红外", actions: ["采集红外热像"] }],
     models: ["机器狗", "四轮车", "挂轨"],
     state: "启用",
@@ -632,6 +636,8 @@ const robotPayloads: RobotPayload[] = [
   {
     id: "PL-GAS",
     name: "泵吸式气体检测",
+    version: "V1.4",
+    vendor: "汉威科技",
     abilities: [{ kind: "气体", actions: ["采集气体"] }],
     models: ["机器狗", "四轮车"],
     state: "启用",
@@ -639,6 +645,8 @@ const robotPayloads: RobotPayload[] = [
   {
     id: "PL-SND",
     name: "声纹采集阵",
+    version: "V1.0",
+    vendor: "科大讯飞",
     abilities: [{ kind: "声音", actions: ["录制声音"] }],
     models: ["机器狗"],
     state: "启用",
@@ -1722,6 +1730,12 @@ export function seed(
         firmware: "DOG-2.4.1",
         sn: "SN-DOG-2411-0007",
         enabled: true,
+        runSince: "2026-08-18T05:37:00",
+        inspectCount: 74,
+        inspectSeconds: 648360,
+        tripMileage: 0,
+        totalMileage: 84.4,
+        lastChargeAt: "2026-10-27 16:15:20",
         updatedAt: "2026-09-18 09:12:00",
       },
       {
@@ -1742,6 +1756,12 @@ export function seed(
         firmware: "AGV-1.9.0",
         sn: "SN-AGV-2508-0132",
         enabled: true,
+        runSince: "2026-09-12T08:00:00",
+        inspectCount: 12,
+        inspectSeconds: 100800,
+        tripMileage: 1.2,
+        totalMileage: 36.8,
+        lastChargeAt: "2026-10-26 20:10:00",
         updatedAt: "2026-10-09 14:30:00",
       },
       {
@@ -1765,6 +1785,12 @@ export function seed(
         firmware: "RAIL-3.0.2",
         sn: "SN-RAIL-2306-0045",
         enabled: true,
+        runSince: "2026-07-30T09:15:00",
+        inspectCount: 31,
+        inspectSeconds: 266400,
+        tripMileage: 0.6,
+        totalMileage: 52.3,
+        lastChargeAt: "2026-10-27 06:40:00",
         updatedAt: "2026-10-21 08:45:00",
       },
     ],
@@ -2803,12 +2829,12 @@ export function seed(
         category: "users",
         name: "张工",
         status: "启用",
-        detail: "生产运行部 · 巡检管理员 · 一期罐区",
+        detail: "生产运行部 · 巡检主管 · 一期罐区",
       },
       {
         id: "ROLE01",
         category: "roles",
-        name: "巡检管理员",
+        name: "巡检主管",
         status: "启用",
         detail: "一期罐区 · 地图发布 / 调度 / 遥控 / 复核 / 关闭告警",
       },
@@ -2985,6 +3011,8 @@ export function seed(
         parentId: "AREA-ROOT",
         owner: "王旭",
         department: "储运部",
+        // 范围轮廓（全厂区底图百分比）：巡检点的区域归属按它推算（见 deviceMaster.areaOfCoord）
+        polygon: DEMO_AREA_POLYGONS["一期罐区"],
         updatedAt: "2026-02-05 09:12:34",
       },
       {
@@ -2994,6 +3022,8 @@ export function seed(
         parentId: "AREA-ROOT",
         owner: "陈磊",
         department: "生产部",
+        // 演示底图上管廊在右侧，故与罐区按 X 80% 分界；正式环境在「区域配置」里按实际片区重画
+        polygon: DEMO_AREA_POLYGONS["装置区"],
         updatedAt: "2026-01-19 16:48:07",
       },
     ],

@@ -121,7 +121,7 @@ function groupTodo<T>(
 
 // 告警分级三档（ALARM_LEVELS）与「告警事件」页同源：一级 / 二级 / 三级
 export function Workbench() {
-  const { s } = useStore();
+  const { s, account } = useStore();
   /** 当前展开明细的待办分类 key；空串表示弹窗未打开 */
   const [openKey, OPEN] = useState("");
   /** 未处理告警弹窗内的标签页：业务预警 / 机器人预警（与「告警记录」同一组口径） */
@@ -451,9 +451,7 @@ export function Workbench() {
         <section className="wb-hero">
           <div className="wb-hero-text">
             <h2>Hi~ {hello}</h2>
-            <p>
-              欢迎回来，{role.person}（{role.name}）
-            </p>
+            <p>欢迎回来，{account?.name || role.person}</p>
             <small>今天是 {dateStr}</small>
           </div>
           <img className="wb-hero-avatar" src={mascot} alt="巡检助手 3D 形象" />

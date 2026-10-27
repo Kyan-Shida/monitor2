@@ -84,15 +84,18 @@ function saveTabs(tabs: PageTab[]) {
  * @param route 当前路由（变化时自动登记 / 更新页签）
  * @param role 当前角色（切换角色后自动清掉无权限页签）
  * @param iconOf 页面 ID → 图标映射，由 App 传入以复用侧边栏同一套图标
+ * @param labelOf 页面 ID → 展示名转换（平台管理视角下「角色 / 权限」显示为「账号管理」）
  */
 export function PageTabs({
   route,
   role,
   iconOf,
+  labelOf,
 }: {
   route: Route;
   role: Role;
   iconOf: Record<string, LucideIcon>;
+  labelOf?: (page: string, name: string) => string;
 }) {
   const [tabs, setTabs] = useState<PageTab[]>(loadTabs);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -168,9 +171,9 @@ export function PageTabs({
       );
       return next.length === prev.length ? prev : next;
     });
-    // 仅在角色变化时执行
+    // 角色或可见页面范围变化时执行（超管在平台管理 / 业务视角间切换时 id 不变、pages 变）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role.id]);
+  }, [role.id, role.pages]);
 
   // 页签变化时持久化，刷新页面后仍保留
   useEffect(() => saveTabs(tabs), [tabs]);
@@ -216,15 +219,17 @@ export function PageTabs({
       <div className="page-tabs-scroll">
         {tabs.map((t) => {
           const Icon = iconOf[t.page];
+          /** 展示名：按视角改写（平台管理视角下角色页显示为账号管理），存储里仍保留菜单原名 */
+          const label = labelOf ? labelOf(t.page, t.name) : t.name;
           return (
             <div
               key={t.key}
               className={"page-tab" + (t.key === activeKey ? " active" : "")}
-              title={t.name}
+              title={label}
               onClick={() => switchTo(t)}
             >
               {Icon && <Icon size={13} className="page-tab-icon" />}
-              <span className="page-tab-name">{t.name}</span>
+              <span className="page-tab-name">{label}</span>
               {t.key !== PINNED && (
                 <button
                   className="page-tab-close"

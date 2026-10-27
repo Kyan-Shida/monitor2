@@ -103,7 +103,7 @@ import { AlarmPush } from "./pages/AlarmPush";
 import { Tenants } from "./pages/Tenants";
 import { Operations } from "./pages/Operations";
 import { Supporting } from "./pages/Supporting";
-import { Btn, Modal, Note, Drawer, Field } from "./components/UI";
+import { Btn, Modal, Note, Drawer, Field, Alert } from "./components/UI";
 import { FeedbackReview } from "./components/FeedbackReview";
 import { PageTabs } from "./components/PageTabs";
 import { AlarmCenter } from "./components/AlarmCenter";
@@ -121,6 +121,7 @@ import { MonitorCockpit } from "./pages/MonitorCockpit";
 import { DispatchCockpit } from "./pages/DispatchCockpit";
 import { CockpitScreen } from "./pages/CockpitScreen";
 import { Workbench } from "./pages/Workbench";
+import { PlatformOverview } from "./pages/PlatformOverview";
 import { Metrics } from "./pages/Metrics";
 import { InspectionReport } from "./pages/InspectionReport";
 /** 一级业务中心图标，顺序与 data/navigation 的 groups 一一对应 */
@@ -246,26 +247,48 @@ export default function App() {
   }
   const {
     message,
+    messageTone,
+    clearMessage,
     reset: resetData,
     s,
     setRole,
     setTenant,
     account,
+    platformMode,
     signOut,
   } = useStore();
   const baseRole = roleOf(s.roleId);
   /**
-   * 实际生效的角色：租户管理员在管理员档位上去掉「租户管理」页（仅超级管理员可见），
+   * 平台超管在「平台管理」视角下只做平台运营：侧边栏仅保留系统设置下的租户管理与角色/权限；
+   * 切到某厂区（platformMode = false）后回到普通管理员视角，可查看该厂区业务内容
+   */
+  const superPlatform = isSuper(account) && platformMode;
+  /**
+   * 平台管理视角的菜单命名：该视角下「角色 / 权限」页只剩账号管理一个 tab，
+   * 菜单 / 面包屑 / 页签统一显示为「账号管理」
+   */
+  const pageLabel = (id: string, name: string) =>
+    superPlatform && id === "roles" ? "账号管理" : name;
+  /**
+   * 实际生效的角色：「租户管理」只在平台管理视角出现（超管切进厂区后也不给）：
    * 侧边栏 / 中心序号 / 权限守卫 / 页签清理共用同一口径
    */
-  const role =
-    isSuper(account) || baseRole.pages !== "*"
-      ? baseRole
-      : {
-          ...baseRole,
-          // 全路由减去「租户管理」：等价于原来的 "*"，但 hidden 页（执行监控 / 机器人详情等）不受影响
-          pages: routeMeta.map((p) => p.id).filter((id) => id !== "tenants"),
-        };
+  const role = superPlatform
+    ? {
+        ...baseRole,
+        landing: "tenants",
+        // 平台管理：速览 / 账号 / 租户 / 日志各一个入口
+        centers: ["工作台", "系统设置"],
+        pages: ["workbench", "roles", "tenants", "audit"],
+      }
+    : {
+        ...baseRole,
+        // 全路由减去「租户管理」：等价于原来的 "*"，但 hidden 页（执行监控 / 机器人详情等）不受影响
+        pages: (baseRole.pages === "*"
+          ? routeMeta.map((p) => p.id)
+          : baseRole.pages
+        ).filter((id) => id !== "tenants"),
+      };
   /** 用户菜单容器：点击菜单外区域自动收起 */
   const userRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -298,7 +321,7 @@ export default function App() {
   useEffect(() => {
     if (!account) return;
     if (!location.hash || location.hash === "#" || location.hash === "#/")
-      go(roleOf(s.roleId).landing);
+      go(isSuper(account) ? "tenants" : roleOf(s.roleId).landing);
     // 仅在登录态变化时执行
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
@@ -358,7 +381,8 @@ export default function App() {
   const allowed = canSee(role, meta.id, meta.group);
   let body;
   // 默认首页为「角色工作台」，驾驶舱为其同级页面，均套用常规外壳（左侧栏 + 工作区）
-  if (page === "workbench") body = <Workbench />;
+  // 工作台：平台管理视角渲染平台侧速览，业务视角仍是角色工作台
+  if (page === "workbench") body = superPlatform ? <PlatformOverview /> : <Workbench />;
   else if (page === "overview") body = <MonitorCockpit />;
   else if (page === "screen") body = <DispatchCockpit />;
   else if (page === "metrics") body = <Metrics />;
@@ -512,7 +536,7 @@ export default function App() {
               ([k]) => k !== "__flat__",
             );
             const searchHit = (p: (typeof pages)[0]) =>
-              p.name.includes(search) || kwHits.includes(p.id);
+              pageLabel(p.id, p.name).includes(search) || kwHits.includes(p.id);
             const anyHit =
               !search ||
               pages.some(searchHit) ||
@@ -565,7 +589,7 @@ export default function App() {
                           onClick={() => go(p.id)}
                         >
                           {LeafIcon && <LeafIcon size={14} className="leaf-icon" />}
-                          {p.name}
+                          {pageLabel(p.id, p.name)}
                         </button>
                       );
                     })}
@@ -608,7 +632,7 @@ export default function App() {
                                   {LeafIcon && (
                                     <LeafIcon size={14} className="leaf-icon" />
                                   )}
-                                  {p.name}
+                                  {pageLabel(p.id, p.name)}
                                 </button>
                               );
                             })}
@@ -659,15 +683,15 @@ export default function App() {
             返回
           </button>
           <div className="breadcrumb">
-            {/* 首页入口：可点击回到角色工作台 */}
+            {/* 首级入口：超管平台管理视角回「租户管理」，业务视角回角色工作台 */}
             <a
-              href={href("workbench")}
+              href={href(superPlatform ? "tenants" : "workbench")}
               onClick={(e) => {
                 e.preventDefault();
-                go("workbench");
+                go(superPlatform ? "tenants" : "workbench");
               }}
             >
-              业务应用平台
+              {superPlatform ? "平台管理" : "业务应用平台"}
             </a>
             <ChevronRight size={12} className="bc-sep" />
             {/* 一级分组：可点击跳到该组首个可见页面 */}
@@ -709,7 +733,7 @@ export default function App() {
                         go(p.id, pid);
                       }}
                     >
-                      {p.name}
+                      {pageLabel(p.id, p.name)}
                     </a>
                   </Fragment>
                 );
@@ -717,7 +741,7 @@ export default function App() {
             })()}
             <ChevronRight size={12} className="bc-sep" />
             {/* 当前页面：高亮不可点 */}
-            <b>{meta.name}</b>
+            <b>{pageLabel(meta.id, meta.name)}</b>
             {/* 详情对象 ID：追加在最后 */}
             {id && (
               <>
@@ -729,20 +753,23 @@ export default function App() {
           <div className="header-right">
             <button role="switch" aria-checked={reviewEnabled} onClick={toggleReview} title="开启后可标注页面、汇总和复制评审意见">页面评审：{reviewEnabled ? "开启" : "关闭"}</button>
             {reviewEnabled && <FeedbackReview pageTitle={meta.name} />}
-            <button
-              className="screen-entry"
-              title="在新标签页打开驾驶舱大屏"
-              onClick={() => window.open(href("bigscreen"), "_blank", "noopener")}
-            >
-              <Presentation size={16} />
-              驾驶舱大屏
-            </button>
+            {/* 驾驶舱大屏是业务入口：平台管理视角不显示，切到厂区业务后再出现 */}
+            {!superPlatform && (
+              <button
+                className="screen-entry"
+                title="在新标签页打开驾驶舱大屏"
+                onClick={() => window.open(href("bigscreen"), "_blank", "noopener")}
+              >
+                <Presentation size={16} />
+                驾驶舱大屏
+              </button>
+            )}
             {/* <span className="mock-indicator">● 演示数据</span> */}
             <button title="重置演示" onClick={() => R(true)}>
               <RotateCcw size={17} />
             </button>
-            {/* 告警入口：点击打开告警弹窗 */}
-            <AlarmCenter />
+            {/* 告警入口：点击打开告警弹窗（业务浮标，平台管理视角不显示） */}
+            {!superPlatform && <AlarmCenter />}
             {/* 通知中心：系统消息 / 任务通知 / 审批提醒 合并下拉 */}
             <NotificationCenter />
             {/* 分组分隔：告警 / 通知 与「租户 · 账号」两类上下文分开 */}
@@ -757,10 +784,7 @@ export default function App() {
                 onClick={() => SETUSER(!userMenu)}
               >
                 <span className="user-avatar">{account.name.charAt(0)}</span>
-                <span className="user-name">
-                  {account.name}
-                  <small>{account.level === "super" ? "超级管理员" : "普通管理员"}</small>
-                </span>
+                <span className="user-name">{account.name}</span>
                 <ChevronDown size={14} />
               </button>
               {userMenu && (
@@ -768,19 +792,12 @@ export default function App() {
                   <div className="user-menu-head">
                     <span className="user-avatar lg">{account.name.charAt(0)}</span>
                     <div className="user-menu-info">
-                      <b>
-                        {account.name} · {account.title}
-                      </b>
-                      <small>
-                        数据范围：
-                        {account.level === "super"
-                          ? `全部租户（${s.tenants?.length || 0} 个）`
-                          : s.tenants?.find((t) => t.id === s.tenantId)?.name || "所属租户"}
-                      </small>
+                      <b>{account.name}</b>
+                      <small>{account.title}</small>
                     </div>
                   </div>
-                  {/* 角色切换仅超级管理员保留（演示便利）；租户管理员身份由账号锁定 */}
-                  {isSuper(account) && (
+                  {/* 角色切换仅超管在业务视角下保留（平台管理模式没有业务角色可切） */}
+                  {isSuper(account) && !platformMode && (
                     <>
                       <div className="user-menu-sep" />
                       {roles.map((r) => (
@@ -844,7 +861,7 @@ export default function App() {
           </div>
         </header>
         {/* 页签导航：仿浏览器多标签，记录访问过的页面，便于多功能页并存与快速切换 */}
-        <PageTabs route={route} role={role} iconOf={pageIcons} />
+        <PageTabs route={route} role={role} iconOf={pageIcons} labelOf={pageLabel} />
         {/* 全站统一缩放（CSS 一处控制：main.main-zoom）：常规页按 82% 排版后铺满内容区；
             驾驶舱大屏按视口自绘，保持不缩放 */}
         <main
@@ -864,11 +881,15 @@ export default function App() {
           )}
         </main>
       </div>
-      {message && (
-        <div role="status" className="toast">
-          {message}
-        </div>
-      )}
+      {/* 反馈两档：拦截类错误用居中弹窗（必须被看见）；成功类用底部轻提示（不打断连续操作） */}
+      {message &&
+        (messageTone === "error" ? (
+          <Alert message={message} onClose={clearMessage} />
+        ) : (
+          <div role="status" className="toast">
+            {message}
+          </div>
+        ))}
       {logoutOpen && (
         <Modal title="退出登录" onClose={() => SETLOGOUT(false)}>
           <Note>退出后需要重新输入账号密码，当前租户数据仍保留在本机。</Note>
@@ -891,9 +912,14 @@ export default function App() {
       {/* ── 个人信息抽屉：只读展示账号字段，参考图 1 ── */}
       {profileOpen && (() => {
         const curRole = roles.find((r) => r.id === role.id);
-        const tenantName = account.level === "super"
-          ? `全部租户（${s.tenants?.length || 0} 个）`
-          : s.tenants?.find((t) => t.id === s.tenantId)?.name || "所属租户";
+        const tenantName =
+          account.level === "super"
+            ? `全部租户（${s.tenants?.length || 0} 个）`
+            : account.level === "customer"
+              ? `${account.title.split(" · ")[0]} 全部厂区（${s.tenants?.filter((t) => t.customerId === account.customerId).length || 0} 个）`
+              : account.level === "tenant"
+                ? s.tenants?.find((t) => t.id === account.tenantId)?.name || "所属厂区"
+                : `已授权厂区（${account.tenantIds?.length || 0} 个）`;
         return (
           <Drawer
             title="个人信息"
@@ -907,10 +933,7 @@ export default function App() {
               <Field label="岗位"><input value={account.title} readOnly /></Field>
               <Field label="所属租户 / 数据范围"><input value={tenantName} readOnly /></Field>
               <Field label="所属角色">
-                <input value={curRole ? `${curRole.person}（${curRole.name}）` : role.name} readOnly />
-              </Field>
-              <Field label="账号级别">
-                <input value={account.level === "super" ? "超级管理员" : "普通管理员"} readOnly />
+                <input value={curRole ? curRole.name : role.name} readOnly />
               </Field>
               <Field label="账号 ID"><input value={account.id} readOnly /></Field>
             </div>

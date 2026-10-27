@@ -222,17 +222,17 @@ function TimelineRow({ l }: { l: import("../data/types").Log }) {
 /**
  * 列表分页条（全站唯一分页组件）
  * @description 左「共 N 条 / N 页」+「每页 N 条」· 右「上一页 / 当前页 / 下一页」（页码固定贴最右）；
- *              切片仍由调用方做（本组件只渲染控件），默认每页 5 条
+ *              切片仍由调用方做（本组件只渲染控件），默认每页 10 条
  * @param onSize 传了才渲染「每页」选择器（父组件的条数随之变化）
  * @param unit 计数单位：列表为「条」，任务维度分组为「个任务」
- * @param sizes 「每页」下拉的候选条数
+ * @param sizes 「每页」下拉的候选条数（全站统一 10 / 20 / 50）
  */
 export function Pager({
   page,
   count,
-  size = 5,
+  size = 10,
   unit = "条",
-  sizes = [5, 10, 20],
+  sizes = [10, 20, 50],
   onChange,
   onSize,
 }: {

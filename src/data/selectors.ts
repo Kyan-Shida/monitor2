@@ -236,29 +236,6 @@ export function schedule(s: State, r: Robot): Window[] {
 }
 
 /**
- * 任务的调度优先级（由所绑巡检目标台账推导）
- * @description 任务自身不再带优先级字段（旧版 `Task.priority` 已随数据模型收口下线），
- *              改由它携带的巡检点所绑**巡检目标台账**推导：任一目标为「紧急 / 高」即取高档，
- *              全部为普通或查不到台账时按「普通」处理
- * @param s 状态
- * @param t 任务
- * @returns 普通 / 高 / 紧急
- */
-export function taskPriority(s: State, t: Task): string {
-  const ids = new Set<string>();
-  t.items.forEach((it) => {
-    if (it.targetId) ids.add(it.targetId);
-    (it.inspectItems || []).forEach((x) => ids.add(x.targetId));
-  });
-  const hit = [...ids]
-    .map((id) => (s.businessTargets || []).find((b) => b.id === id))
-    .filter(Boolean);
-  if (hit.some((b) => b!.priority === "紧急")) return "紧急";
-  if (hit.some((b) => b!.priority === "高")) return "高";
-  return "普通";
-}
-
-/**
  * 机器人的预计可用时间文案
  * @description 离线 / 故障 / 接管 / 维护时不做时间预估；否则按排程窗口末尾推算
  * @param s 状态

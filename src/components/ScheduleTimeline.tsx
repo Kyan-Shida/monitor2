@@ -1,5 +1,5 @@
 import { useStore } from "../data/store";
-import { schedule, timeAt, robotAvailability, taskPriority } from "../data/selectors";
+import { schedule, timeAt, robotAvailability } from "../data/selectors";
 import { ObjectLink } from "./Business";
 import { Badge } from "./UI";
 import type { Task } from "../data/types";
@@ -53,7 +53,7 @@ export function ScheduleTimeline({
               >
                 {windows.map((w) => (
                   <button
-                    title={`${w.label} · ${timeAt(w.start)}—${timeAt(w.end)}${w.task ? " · " + taskPriority(s, w.task) : ""}`}
+                    title={`${w.label} · ${timeAt(w.start)}—${timeAt(w.end)}`}
                     className={`gantt-block ${w.kind} ${w.task?.state === "执行中" ? "running" : ""} ${selected === w.id ? "selected" : ""}`}
                     style={{
                       left: `${(w.start / minutes) * 100}%`,
@@ -78,7 +78,7 @@ export function ScheduleTimeline({
                   >
                     {w.task?.id || w.label}
                     <small>
-                      {(w.task ? taskPriority(s, w.task) : "预留")} · {w.end - w.start}分
+                      {w.task ? `${w.end - w.start}分` : "预留"}
                     </small>
                   </button>
                 ))}

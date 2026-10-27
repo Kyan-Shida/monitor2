@@ -1,5 +1,6 @@
 import type { Plan, PlanKind, Robot, State } from "./types";
 import { captureKindsOfPoint, robotCoversPoint } from "./deviceMaster";
+import { mapSceneBlockedReason } from "./robotMaps";
 export const businessDate = (ms: number) =>
   new Date(ms + 8 * 3600000).toISOString().slice(0, 10);
 /**
@@ -92,8 +93,7 @@ export function bindingReasons(
   r: Robot,
 ): string[] {
   const template = s.templates.find((t) => t.id === templateId);
-  if (!template || template.state !== "启用") return ["路线不存在或已停用"];
-  const points = s.points.filter((p) => template.points.includes(p.id));
+  if (!template || template.state !== "启用") return ["路线不存在或已停用"];  const points = s.points.filter((p) => template.points.includes(p.id));
   return [
     ...(points.some(
       (p) => s.maps.find((m) => m.id === p.mapId)?.region !== r.region,
@@ -105,4 +105,29 @@ export function bindingReasons(
       ? ["检测能力不足"]
       : []),
   ];
+}
+/**
+ * 计划因地图不可用而受阻的原因（空串 = 正常）
+ * @description 链路：计划 → 路线 → 点位 → 地图；任一点位所在图被停用 / 停用中即算受阻，
+ *              与引擎调度、地图管理共用同一套启停口径，避免"页面没提示、后台又不跑"
+ * @param s 全局状态
+ * @param p 计划
+ */
+export function planMapBlockedOf(s: State, p: Plan): string {
+  const template = s.templates.find((t) => t.id === p.templateId);
+  const mapIds = [
+    ...new Set(
+      s.points
+        .filter((x) => template?.points.includes(x.id))
+        .map((x) => x.mapId),
+    ),
+  ];
+  for (const mapId of mapIds) {
+    const reason = mapSceneBlockedReason(
+      s.maps.find((m) => m.id === mapId),
+      "任务下发",
+    );
+    if (reason) return reason;
+  }
+  return "";
 }

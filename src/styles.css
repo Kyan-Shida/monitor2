@@ -479,6 +479,33 @@ h4 {
   font-size: 12px;
   color: #8799aa;
 }
+/* 面板抬头右侧的地图信息：图名 + 机器人已同步版本（落后时补「待同步」），不占正文 */
+.panel-map-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.panel-map-info > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel-map-info > em {
+  flex: none;
+  font-style: normal;
+  padding: 0 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
 /** 表格筛选器：label + select 紧贴排列，参考"租户: [全部▼]"横向排列样式 */
 .inline-filter {
   display: inline-flex;
@@ -547,6 +574,73 @@ h4 {
   background: #eef4fd;
   border-color: #d3e2f6;
   color: #2c66b3;
+}
+/* 任务状态一状态一色：同屏扫一眼就能分清「待调度 / 待执行 / 已分配 / 执行中」 */
+.badge.st-pending {
+  background: #f4f6f9;
+  border-color: #d5dde6;
+  border-style: dashed;
+  color: #78859a;
+}
+.badge.st-todo {
+  background: #fff3e6;
+  border-color: #f4d5b0;
+  color: #a45b12;
+}
+.badge.st-assigned {
+  background: #eaf2fd;
+  border-color: #c9dcf6;
+  color: #2560ad;
+}
+.badge.st-dispatch {
+  background: #e7f6f9;
+  border-color: #bee3eb;
+  color: #0d7285;
+}
+.badge.st-queued {
+  background: #f2edfd;
+  border-color: #dbd0f6;
+  color: #6544b3;
+}
+.badge.st-running {
+  background: #e8f7ee;
+  border-color: #bfe6cf;
+  color: #17824a;
+}
+.badge.st-taken {
+  background: #fdeef5;
+  border-color: #f5c7de;
+  color: #a41e63;
+}
+.badge.st-paused {
+  background: #fdf8e0;
+  border-color: #eee0a8;
+  color: #87690a;
+}
+.badge.st-done {
+  background: #eef2ef;
+  border-color: #cfdad2;
+  color: #4c6a58;
+}
+.badge.st-partial {
+  background: #e9f5f1;
+  border-color: #bcded4;
+  color: #0f6b5c;
+}
+.badge.st-failed {
+  background: #fdeceb;
+  border-color: #f2c5c0;
+  color: #b3261e;
+}
+.badge.st-canceled {
+  background: #f2f4f7;
+  border-color: #dde2e9;
+  color: #7d8898;
+}
+.badge.st-overdue {
+  background: #fbeee5;
+  border-color: #edc8b0;
+  color: #9a3d12;
 }
 /* 表格内的次要信息：编号、版本号等 */
 .cell-muted {
@@ -651,11 +745,28 @@ h4 {
   vertical-align: middle;
 }
 .robot-form .form-table th {
-  width: 190px;
+  width: 140px;
   color: #5f7185;
   font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
+}
+/* 标签—值栅格里的状态文字（正常 / 异常），只在值本身着色，不加底色 */
+.cap-kv dd .kv-ok {
+  color: #2ba471;
+  font-weight: 600;
+}
+.cap-kv dd .kv-bad {
+  color: #d54941;
+  font-weight: 600;
+}
+
+/* 表单操作栏：收在表单底部，右对齐 */
+.robot-form .form-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eef1f5;
 }
 /* 悬停整行浅蓝：长表扫读时定位当前行 */
 .robot-form .form-table tbody tr:hover th,
@@ -1107,19 +1218,14 @@ h4 {
   flex-wrap: wrap;
   gap: 10px;
 }
-.switch-btn {
-  border: 1px solid #e6ecf3;
-  background: #fff;
-  border-radius: 14px;
-  padding: 3px 12px;
-  cursor: pointer;
+/* 辅助功能开关：名称 + 滑块（替代原来的「补光灯 开」胶囊按钮） */
+.aux-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: #24384f;
-}
-.switch-btn.on {
-  background: #2368bd;
-  color: #fff;
-  border-color: #2368bd;
+  white-space: nowrap;
 }
 .qset {
   display: flex;
@@ -1562,6 +1668,18 @@ tbody tr.alert-row {
   background: #fdf0ee;
   box-shadow: inset 3px 0 0 #b75c50;
 }
+/* 未到下发时间的计划占位行：存在、但此刻还动不了，整行压灰 */
+tbody tr.row-pending {
+  background: #fafbfc;
+  color: var(--text-muted);
+}
+tbody tr.row-pending b {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+tbody tr.row-pending:hover {
+  background: #f6f9fc;
+}
 tbody tr.alert-row:hover {
   background: #fbe7e3;
 }
@@ -1774,23 +1892,111 @@ textarea {
 .plan-form .form-grid .field {
   margin-bottom: 12px;
 }
-/* 新增设备弹窗：左参数表单 / 右安装位置地图选点 两栏（窄屏自动堆叠） */
-.device-form-split {
-  display: grid;
-  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
-  gap: 0 26px;
-  align-items: start;
+/* ── 新增设备抽屉 ──────────────────────────────────────────────
+   抽屉挂在 body 上，不在 .workspace main 作用域内，继承不到页面里的表单控件样式
+   （圆角 6 / 高 32 / 焦点环），这里按同一口径补齐，避免同一个系统里两套控件长相 */
+.drawer.drawer-narrow {
+  width: calc(min(560px, 96vw) * var(--ov, 1));
 }
-@media (max-width: 960px) {
-  .device-form-split {
+.drawer-narrow .drawer-body {
+  padding: 14px 16px 16px;
+}
+.drawer-narrow input:not([type="checkbox"]):not([type="radio"]),
+.drawer-narrow select {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d7dfe9;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2d3d;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.drawer-narrow input:not([type="checkbox"]):not([type="radio"]):focus,
+.drawer-narrow select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(31, 103, 181, 0.14);
+}
+.drawer-narrow input::placeholder {
+  color: #9aa9b8;
+}
+/* 字段：标签 12px，标签与控件 4px，字段之间 10px（B 端紧凑，不铺大间距） */
+.drawer-narrow .field {
+  margin-bottom: 10px;
+}
+.drawer-narrow .field > span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #5b6b7c;
+}
+/* 主字段两列并排（编码 / 名称、形态 / 区域），窄屏堆叠 */
+.device-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 12px;
+}
+@media (max-width: 720px) {
+  .device-form-grid {
     grid-template-columns: 1fr;
   }
 }
-/* 安装位置：打点自动代入的厂区坐标（只读读数，与可编辑字段区分） */
-.device-form-map input[readonly] {
-  background: #f5f8fb;
-  color: var(--blue);
+/* 检测项：浅底分组块，一行一个检测项（类型 / 分类 / 名称 / 删除），随设备一次落库 */
+.device-item-editor {
+  margin-top: 4px;
+  padding: 10px 12px 4px;
+  background: #f8fafc;
+  border: 1px solid #e9eef5;
+  border-radius: 8px;
+}
+.device-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.device-item-head > span {
+  font-size: 13px;
   font-weight: 600;
+  color: #334155;
+}
+.device-item-head .btn {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+/* 表头与行共用同一套列宽，保证上下对齐 */
+.device-item-cols,
+.device-item-row {
+  display: grid;
+  grid-template-columns: 84px 112px minmax(0, 1fr) 48px;
+  gap: 8px;
+  align-items: center;
+}
+.device-item-cols {
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #8296a8;
+}
+.device-item-row {
+  margin-bottom: 6px;
+}
+.device-item-row .btn {
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+/* 行内删除收成文字按钮：满框红按钮在一排输入框里太扎眼 */
+.device-item-row .btn.danger {
+  border-color: transparent;
+  background: transparent;
+  color: #b55249;
+}
+.device-item-row .btn.danger:hover:not(:disabled) {
+  background: #fdf1f0;
+  border-color: #f0d6d2;
 }
 /* 设备档案：摘要块 = 标题行（设备名 + 编辑）+ 只读字段网格（标签在上、值在下） */
 .object-head {
@@ -3004,20 +3210,74 @@ hr {
   gap: 10px;
   margin-top: 22px;
 }
+/* 补派确认：原任务 / 新任务 / 截止时间三行对照 */
+.retry-summary {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 7px 10px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.retry-summary dt {
+  color: var(--text-muted);
+}
+.retry-summary dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+/* 居中提示弹窗正文：一句话说清「为什么被拦下来」 */
+.alert-hint {
+  margin: 0;
+  padding: 2px 0 4px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+/* 轻提示：保存成功 / 校验失败 / 租户停用等操作反馈的唯一出口。
+   出现得短（3~4s 后消失），必须「余光也能扫到」：
+   ① 底部正中——left:50% 必须配 translateX(-50%)，否则整体右偏，看着像没对齐的残影；
+   ② 层级要压住全部浮层，否则在抽屉里保存时提示会被抽屉盖掉（弹窗 120 / 抽屉 111 / 浮标 95）； */
 .toast {
   position: fixed;
-  bottom: 25px;
   left: 50%;
-  transform: translateX(-40%);
-  z-index: 80;
-  background: #16324e;
-  color: white;
-  border: 1px solid #43617e;
-  box-shadow: 0 5px 20px #1232;
-  padding: 14px 24px;
-  border-radius: 5px;
-  max-width: 75vw;
-  line-height: 1.7;
+  bottom: 28px;
+  transform: translate(-50%, 0);
+  z-index: 300;
+  max-width: min(560px, 88vw);
+  padding: 11px 20px;
+  background: #14293f;
+  color: #fff;
+  /* 深底 + 亮描边 + 左侧强调条：与浅灰页面形成明确反差 */
+  border: 1px solid #2f4a66;
+  border-left: 3px solid #4a9ce8;
+  border-radius: 6px;
+  box-shadow:
+    0 10px 28px rgba(9, 24, 40, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.2px;
+  text-align: center;
+  /* 纯反馈浮层：不吃下方按钮的点击 */
+  pointer-events: none;
+  animation: toast-in 0.18s ease-out;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
 }
 @media (min-width: 1600px) {
   main {
@@ -4406,6 +4666,9 @@ hr {
 }
 .ui-switch.on{background:#2f7dd1}
 .ui-switch.on i{transform:translateX(18px)}
+/* 停用中：已点停用但还没生效（图上还有在跑的任务），滑块半程 + 琥珀色 */
+.ui-switch.stopping{background:#e0b84c}
+.ui-switch.stopping i{transform:translateX(9px)}
 .ui-switch:disabled{opacity:.5;cursor:not-allowed}
 /* 台账开关单元格：执行任务中锁定态，鼠标悬停可看到原因（title） */
 .switch-cell{display:inline-flex;align-items:center}
@@ -12414,12 +12677,17 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   justify-content: center;
   gap: 6px;
 }
-.login-accounts {
-  display: grid;
-  gap: 6px;
+.login-accounts-hint {
   margin-top: 18px;
   padding-top: 14px;
   border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.login-accounts {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
   /* 每开通一个租户就多一条管理员账号：限高滚动，避免登录卡片被撑出首屏 */
   max-height: 210px;
   overflow-y: auto;
@@ -13544,10 +13812,6 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   border-color: var(--blue);
   color: var(--blue);
   font-weight: 550;
-}
-/* 任务列表视图切换：今日计划 / 任务记录 */
-.task-view-tabs {
-  margin: 0 0 12px;
 }
 .dispatch-filter {
   display: flex;
@@ -15170,10 +15434,32 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   margin-left: auto;
   flex: none;
 }
+/* 机器人卡片第二行：电量 + 地图版本，做成小胶囊，弱化成一串灰字就看不清了 */
 .fleet-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
   margin-top: var(--space-xs);
   font-size: 11px;
   color: var(--text-muted);
+}
+.fcm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.fcm-chip.low {
+  border-color: #f0c8c4;
+  background: #fff4f2;
+  color: var(--danger-text);
+  font-weight: 600;
 }
 .fleet-card-task {
   margin-top: var(--space-sm);
@@ -17610,6 +17896,28 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .bt-edit-page .bt-config-wide table select {
   width: 100%;
 }
+/* 业务逻辑 · 未选巡检目标：整块置灰但保留（不隐藏，避免区块忽隐忽现 + 页面高度跳动） */
+.bt-edit-page .panel.panel-locked .panel-body {
+  opacity: 0.55;
+  pointer-events: none;
+}
+/* 业务逻辑 · 算法模板：与「基础信息」同一套表单口径（标签在上、控件在下，按宽度自动换行） */
+.bt-edit-page .bt-req-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 20px;
+  max-width: 1180px;
+  margin-bottom: 4px;
+}
+/* 算法模板名称带名称 / 编码 / 类型，文案长，独占一行 */
+.bt-edit-page .bt-req-form .field.full {
+  grid-column: 1 / -1;
+}
+/* 派生值（算法 / 采集方式 / 单位 / 判定口径）：浅灰底表示只读，不假装成可编辑 */
+.bt-edit-page .bt-req-form input[readonly] {
+  background: #f5f8fb;
+  color: #47576a;
+}
 /* 级联选择器（区域 › 设备 › 检测目标 / 算法能力类型 › 算法）：触发器 + 多列浮层 */
 .cascader {
   position: relative;
@@ -17776,6 +18084,14 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 空态：告警项默认留空，由用户手动新增，这里说明下一步动作 */
+.ai-empty {
+  margin: 0;
+  padding: 14px 12px;
+  border-top: 1px solid #eef2f7;
+  font-size: 12px;
+  color: #8296a8;
 }
 /* 告警项弹窗：字段少而宽，两列就够（默认的 3 列会把"判断规则"挤变形） */
 .ai-form {
@@ -18176,9 +18492,9 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .pd-col > .panel.pd-fixed{flex:0 0 auto}
 .pd-col > .panel.pd-grow{flex:1 1 auto}
 .pd-col > .panel.pd-grow > .panel-body{min-height:0;overflow:auto}
-/* 基本信息：所属区域 / 巡检点名称 / 巡检点坐标 一行三格（坐标格多一行回显，标签统一顶对齐） */
-/* 基本信息：区域只显示一个名字，给最窄；坐标列要放两个按钮 + 回显，给最宽 */
-.pd-basic{display:grid;grid-template-columns:minmax(120px,.7fr) minmax(0,1fr) minmax(0,1.5fr);gap:10px;align-items:start}
+/* 基本信息：巡检点名称 / 所属区域 / 巡检点坐标 一行三格（标签统一顶对齐）
+   名称是唯一要手填的字段放首列；区域只显示一个名字给最窄；坐标列要放两个按钮 + 回显，给最宽 */
+.pd-basic{display:grid;grid-template-columns:minmax(0,1fr) minmax(110px,.7fr) minmax(0,1.4fr);gap:10px;align-items:start}
 .pd-page .panel-body{padding:12px}
 .pd-page .field > span{font-size:12px}
 .pd-coord-line{margin:8px 0 0;font-size:12px}
@@ -18463,7 +18779,10 @@ main.main-zoom > div:has(> .admin-split) > .admin-split > .panel:has(.pagination
 .pd-page .dpad.small button{width:44px;height:24px}
 .pd-page .cockpit-aux{margin-top:5px}
 .pd-page .cockpit-aux-grid{gap:6px}
-.pd-page .switch-btn{padding:1px 9px;font-size:11.5px}
+.pd-page .aux-switch{gap:4px;font-size:11.5px}
+.pd-page .aux-switch .ui-switch{width:32px;height:17px;padding:2px}
+.pd-page .aux-switch .ui-switch i{width:13px;height:13px}
+.pd-page .aux-switch .ui-switch.on i{transform:translateX(15px)}
 /* 辅助功能：标签与开关排一行，省掉一行标题高 */
 .pd-page .cockpit-aux > .cockpit-section{display:flex;align-items:center;gap:10px}
 .pd-page .cockpit-aux > .cockpit-section > b{margin:0;white-space:nowrap}
@@ -18523,7 +18842,7 @@ main.main-zoom > div:has(> .admin-split) > .admin-split > .panel:has(.pagination
 .pd-page .pd-items,
 .pd-page .pd-detail,
 .pd-page .pd-block{gap:6px}
-/* 只读字段值（所属区域由地图逆推）：与输入框同样的高度与字号，视觉上不塌陷 */
+/* 只读字段值（所属区域由坐标推算）：与输入框同样的高度与字号，视觉上不塌陷 */
 .pd-page .pd-value{margin:0;padding:5px 0;font-size:13px;color:#1d2a37;line-height:20px}
 /* 机器控制面板：标题与操控台之间不留额外空白 */
 .pd-page .panel.pd-flat > .panel-head{min-height:30px;padding:4px 12px}
@@ -18805,6 +19124,40 @@ main.main-zoom
 /* 参数配置中心：编辑抽屉与字典键值对录入 */
 .param-drawer {
   width: calc(min(560px, 96vw) * var(--ov, 1));
+}
+/* 租户编辑：字段少，抽屉收窄到与参数配置一致的 560px，避免正文大留白 */
+.tenant-drawer {
+  width: calc(min(560px, 96vw) * var(--ov, 1));
+}
+/* 账号编辑：字段较多，取中等宽度 */
+.account-drawer {
+  width: calc(min(640px, 96vw) * var(--ov, 1));
+}
+/* 租户所属客户：下拉与「新建客户」同行，新建时内联两输入 */
+.customer-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.customer-pick select {
+  flex: 1;
+  min-width: 0;
+}
+.customer-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.customer-new input {
+  flex: 1;
+  min-width: 0;
+}
+.customer-err {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b3251c;
 }
 /* 编号由系统按类型生成：浅灰底提示只读，不与可编辑字段混淆 */
 .param-drawer input[readonly] {

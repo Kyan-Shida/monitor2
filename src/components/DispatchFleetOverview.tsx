@@ -5,7 +5,7 @@
  * @interaction DispatchDesk.tsx（调度中心两栏布局的中左栏）；数据来自 data/selectors 的 queueFor / robotAvailability / stageOf
  */
 import { useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, BatteryMedium, Map as MapIcon } from "lucide-react";
 import { useStore } from "../data/store";
 import { queueFor, robotAvailability, stageOf } from "../data/selectors";
 import { mapVer } from "../data/versionLabel";
@@ -80,7 +80,17 @@ export function DispatchFleetOverview({
                 <Badge>{r.state}</Badge>
               </div>
               <div className="fleet-card-meta">
-                {r.region} · 电量 {r.battery}% · {mapVer(r.mapVersion)}
+                <span
+                  className={"fcm-chip" + (r.battery <= 30 ? " low" : "")}
+                  title={`电量 ${r.battery}%`}
+                >
+                  <BatteryMedium size={11} />
+                  {r.battery}%
+                </span>
+                <span className="fcm-chip" title="地图版本">
+                  <MapIcon size={11} />
+                  {mapVer(r.mapVersion)}
+                </span>
               </div>
               {hint && (
                 <div className="fleet-card-note">

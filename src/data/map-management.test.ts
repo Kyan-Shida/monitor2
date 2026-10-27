@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { seed } from "./seed";
 import { transition as run } from "./engine";
 import { parse, href, parentOf, menuIdOf, pages } from "./navigation";
+import { runningTasksOf } from "./robotMaps";
+import { planMapBlockedOf } from "./planSchedule";
 import {
   ensureCalibration,
   targetsOf,
@@ -62,7 +64,7 @@ test("轨迹采样点可按地图继续新增，序号按该地图递增", () =>
   assert.equal(last.kind, "转弯点");
 });
 
-test("地图下发支持多选设备批量下发；区域不匹配则整批不下发（不产生半截状态）", () => {
+test("地图下发支持多选设备批量下发（区域已不再是下发门槛）", () => {
   let s = seed();
   const mapId = "MAP-A03";
   /** seed 里已有该图的历史下发记录；断言只看"本次新增" */
@@ -72,21 +74,15 @@ test("地图下发支持多选设备批量下发；区域不匹配则整批不�
     () => run(s, { type: "SYNC_BATCH", mapId, robotIds: [] }),
     /至少选择一台设备/,
   );
-  // R03 属"装置区"，与地图区域不匹配 → 整批失败，且不留任何下发记录
-  assert.throws(
-    () => run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R01", "R03"] }),
-    /区域与地图不匹配/,
-  );
-  assert.equal(s.syncs.filter((x) => x.mapId === mapId).length, base);
-  // 全部匹配：一次登记多条"传输中"
-  s = run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R01", "R02"] });
+  // 地图不按区域归属：R01（一期罐区）与 R03（装置区）可一次下发
+  s = run(s, { type: "SYNC_BATCH", mapId, robotIds: ["R01", "R03"] });
   const batch = s.syncs.filter(
     (x) => x.mapId === mapId && x.state === "传输中",
   );
   assert.equal(batch.length, 2);
   assert.deepEqual(
     batch.map((x) => x.robotId).sort(),
-    ["R01", "R02"],
+    ["R01", "R03"],
   );
   for (const x of batch) {
     assert.equal(x.mapVersion, s.maps[0].version);
@@ -434,4 +430,133 @@ test("标定工作台打的点就是定位点：与标定数据同源，可改�
   assert.equal(up.pointType, "停靠点");
   assert.equal(up.floor, 2);
   assert.equal(up.floorLink, 3);
+});
+
+test("地图启停是统一闸：停用后派任务 / 地图下发 / 计划生成都拦住，启用后恢复", () => {
+  let s = seed();
+  const mapId = "MAP-A03";
+  // 停用：图上还有在跑任务，用「立即」让它一步落停用（温和走的是停用中，另有用例覆盖）
+  s = run(s, {
+    type: "TOGGLE_MAP_STATUS",
+    id: mapId,
+    status: "停用",
+    strategy: "立即",
+    reason: "地图待重建",
+  });
+  assert.equal(s.maps.find((m) => m.id === mapId)!.status, "停用");
+  assert.match(s.logs[0].detail, /地图待重建/);
+
+  // ① 人工派任务：点位都在这张图上
+  assert.throws(
+    () =>
+      run(s, {
+        type: "CREATE_TASK",
+        name: "停用图任务",
+        points: ["P004"],
+        priority: "普通",
+        taskType: "综合巡检任务",
+      }),
+    /已停用/,
+  );
+  // ② 地图下发：不再推给机器人
+  assert.throws(() => run(s, { type: "SYNC", mapId, robotId: "R01" }), /已停用/);
+  // ③ 计划到点生成：TMP01 的点位同样落在这张图上
+  assert.throws(() => run(s, { type: "GENERATE", id: "PL01" }), /已停用/);
+
+  // 启用后同一批动作恢复可用
+  s = run(s, { type: "TOGGLE_MAP_STATUS", id: mapId, reason: "现场已恢复" });
+  assert.equal(s.maps.find((m) => m.id === mapId)!.status, "启用");
+  s = run(s, {
+    type: "CREATE_TASK",
+    name: "恢复后任务",
+    points: ["P004"],
+    priority: "普通",
+    taskType: "综合巡检任务",
+  });
+  assert.ok(s.tasks.some((t) => t.name === "恢复后任务"));
+});
+
+test("停用中：图上有在跑任务时只标记，任务结束自动落停用；立即停用直接中断", () => {
+  const mapId = "MAP-A03";
+  const of = (x: ReturnType<typeof seed>) => x.maps.find((m) => m.id === mapId)!;
+
+  // 温和停用（默认）：执行中的任务不打断，先标「停用中」
+  let s = seed();
+  const running = runningTasksOf(s, mapId);
+  assert.ok(running.length > 0, "种子数据里这张图应有一个在跑任务");
+  s = run(s, {
+    type: "TOGGLE_MAP_STATUS",
+    id: mapId,
+    status: "停用",
+    reason: "地图待重建",
+  });
+  assert.equal(of(s).stopping, true);
+  assert.equal(of(s).status, "启用");
+  assert.match(s.logs[0].detail, /标记停用/);
+
+  // 停用中不再派新任务，文案与「已停用」区分开
+  assert.throws(
+    () =>
+      run(s, {
+        type: "CREATE_TASK",
+        name: "停用中派单",
+        points: ["P004"],
+        priority: "普通",
+        taskType: "综合巡检任务",
+      }),
+    /停用中/,
+  );
+
+  // 停用中再点开关 = 取消停用
+  const cancelled = run(s, { type: "TOGGLE_MAP_STATUS", id: mapId, status: "启用" });
+  assert.equal(of(cancelled).stopping, false);
+  assert.equal(of(cancelled).status, "启用");
+
+  // 图上任务结束后自动落停用终态
+  running.forEach((t) => {
+    s = run(s, { type: "STOP", id: t.id });
+  });
+  assert.equal(of(s).stopping, false);
+  assert.equal(of(s).status, "停用");
+
+  // 立即停用：在跑任务直接中断并写明原因
+  let hard = seed();
+  hard = run(hard, {
+    type: "TOGGLE_MAP_STATUS",
+    id: mapId,
+    status: "停用",
+    strategy: "立即",
+    reason: "紧急停用",
+  });
+  assert.equal(of(hard).status, "停用");
+  assert.equal(of(hard).stopping, false);
+  running.forEach((t) => {
+    const after = hard.tasks.find((x) => x.id === t.id)!;
+    assert.ok(["取消", "部分完成"].includes(after.state));
+    assert.match(after.blockedReason || "", /立即停用/);
+  });
+});
+
+test("计划受阻：依赖地图停用 / 停用中都会给出原因，启用后自动恢复", () => {
+  const mapId = "MAP-A03";
+  const plan = (x: ReturnType<typeof seed>) =>
+    x.plans.find((p) => p.id === "PL01")!;
+
+  // 正常态：PL01 的路线点位都落在 MAP-A03 上，没有受阻原因
+  let s = seed();
+  assert.equal(planMapBlockedOf(s, plan(s)), "");
+
+  // 停用后：计划列表能看到原因（不静默）
+  s = run(s, {
+    type: "TOGGLE_MAP_STATUS",
+    id: mapId,
+    status: "停用",
+    strategy: "立即",
+    reason: "地图待重建",
+  });
+  assert.match(planMapBlockedOf(s, plan(s)), /停用/);
+
+  // 启用后受阻解除；停用期间错过的时刻不会补跑，由人手动补
+  s = run(s, { type: "TOGGLE_MAP_STATUS", id: mapId, status: "启用" });
+  assert.equal(planMapBlockedOf(s, plan(s)), "");
 });

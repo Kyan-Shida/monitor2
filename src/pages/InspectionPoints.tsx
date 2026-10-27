@@ -22,22 +22,14 @@
 import { useState } from "react";
 import { useStore } from "../data/store";
 import { go, usePageSize, useViewState } from "../data/navigation";
-import {
-  Btn,
-  Confirm,
-  Empty,
-  Modal,
-  Note,
-  Panel,
-  Switch,
-  Table,
-} from "../components/UI";
+import { Btn, Empty, Modal, Note, Panel, Table } from "../components/UI";
 import { Pager } from "../components/Business";
 import { PointCalibration } from "../components/PointCalibration";
 import { FilterPanel } from "../components/FilterPanel";
 import {
   actionsOfPoint,
   areaNameOf,
+  areaOfCoord,
   captureKindsOfPoint,
   devicesOfPoint,
 } from "../data/deviceMaster";
@@ -48,8 +40,6 @@ export function InspectionPoints({ id }: { id?: string }) {
   const { s, act } = useStore();
   /** 巡检点导入抽屉：先选数据来源机器人，再拉取 / 上传表格文件（与「地图管理」并列的第二个模块） */
   const [calOpen, SETCAL] = useState(false);
-  /** 启停二次确认：列表状态列的开关点一下先问一次，确认后才落库 */
-  const [togglePoint, ASKTOGGLE] = useState<Point | null>(null);
   /** 筛选面板展开态：展开时才显示 FilterPanel（触发按钮在「巡检点列表」面板头部） */
   const [filterOpen, SETFILTEROPEN] = useState(false);
   /** 筛选草稿：字段与 FilterPanel 的 fields 一一对应（点「查询」才写回生效值） */
@@ -57,23 +47,19 @@ export function InspectionPoints({ id }: { id?: string }) {
     name: "",
     item: "",
     dev: "全部",
-    state: "全部",
   });
   /**
-   * 列表筛选（生效值）：巡检点名称 / 巡检项名称 / 关联设备 / 状态。
+   * 列表筛选（生效值）：巡检点名称 / 巡检项名称 / 关联设备。
    * 视图键用 `ip.filter.*` 新前缀：老的 `ip.q` / `ip.state` 已被本页废弃，
    * 若继续复用，sessionStorage 里的残留值会在没有对应控件的情况下把列表隐式筛空。
    */
   const [nameF, NAMEF] = useViewState("ip.filter.name", ""),
     [itemF, ITEMF] = useViewState("ip.filter.item", ""),
     [devF0, DEVF] = useViewState("ip.filter.dev", "全部"),
-    [stateF0, ST] = useViewState("ip.filter.state", "全部"),
     [pager, PG] = useViewState("ip.page", 1),
     /** 每页条数：全站统一走 usePageSize（默认 5 条） */
     [pageSize, SETPAGESIZE] = usePageSize("ip.size");
 
-  /** 巡检点状态只有两态：已启用 / 停用（原「待验证 / 待重新验证」过渡态已下线，不再作为筛选维度） */
-  const stateNames = ["全部", "已启用", "停用"];
   /** 关联设备候选：设备台账里的设备名去重（本页已无区域树，直接取全量设备名） */
   const devNames = [
     "全部",
@@ -84,28 +70,27 @@ export function InspectionPoints({ id }: { id?: string }) {
    * （如旧版本存过的状态值「待验证」）。无效值匹配不到任何 option 时，下拉只会显示
    * 第一项「全部」，过滤却仍按它执行 → 列表被筛空。这里统一回退「全部」。
    */
-  const stateF = stateNames.includes(stateF0) ? stateF0 : "全部";
   const devF = devNames.includes(devF0) ? devF0 : "全部";
   const nameKw = nameF.trim();
   const itemKw = itemF.trim();
   /**
-   * 巡检点所属区域：按**覆盖设备**的区域归属（与「后台管理 › 设备台账」同一口径 `areaNameOf`）；
-   * 一个点覆盖多个区域时返回多个；无设备主数据时回退该点所在地图的区域，避免历史数据丢区域。
+   * 巡检点所属区域：**由坐标推算**
+   * @description 区域主数据里画过范围轮廓的，坐标落在哪个轮廓里就归哪个区域；
+   *              推算不出（未采集坐标 / 区域未画轮廓）时回落到该点覆盖设备所属区域，
+   *              两者都没有则不显示——区域不由地图决定
    */
   const areasOfPoint = (p: Point): string[] => {
-    const hit = Array.from(
+    const byCoord = areaOfCoord(s, p.world?.x ?? p.x, p.world?.y ?? p.y);
+    if (byCoord) return [byCoord];
+    return Array.from(
       new Set(
         devicesOfPoint(s, p)
           .map((d) => areaNameOf(s, d))
           .filter((x) => x && x !== "未分区"),
       ),
     );
-    if (hit.length) return hit;
-    const m = s.maps.find((x) => x.id === p.mapId);
-    return m?.region ? [m.region] : [];
   };
   const list = s.points.filter((p) => {
-    if (stateF !== "全部" && p.state !== stateF) return false;
     const devs = devicesOfPoint(s, p);
     if (devF !== "全部" && !devs.some((d) => d.name === devF)) return false;
     if (nameKw && !p.name.includes(nameKw)) return false;
@@ -125,14 +110,11 @@ export function InspectionPoints({ id }: { id?: string }) {
   );
   /** 已生效的筛选条件数（「筛选」按钮上的计数） */
   const filterCount =
-    (nameKw ? 1 : 0) +
-    (itemKw ? 1 : 0) +
-    (devF !== "全部" ? 1 : 0) +
-    (stateF !== "全部" ? 1 : 0);
+    (nameKw ? 1 : 0) + (itemKw ? 1 : 0) + (devF !== "全部" ? 1 : 0);
   /** 展开筛选面板：用当前生效值填充草稿（草稿值用未兜底的原始值，避免丢用户填的内容） */
   function toggleFilter() {
     if (!filterOpen)
-      DRAFT({ name: nameF, item: itemF, dev: devF0, state: stateF0 });
+      DRAFT({ name: nameF, item: itemF, dev: devF0 });
     SETFILTEROPEN(!filterOpen);
   }
   /** 查询：草稿写回生效值、回到第 1 页并收起面板 */
@@ -140,18 +122,16 @@ export function InspectionPoints({ id }: { id?: string }) {
     NAMEF(draft.name);
     ITEMF(draft.item);
     DEVF(draft.dev);
-    ST(draft.state);
     PG(1);
     SETFILTEROPEN(false);
   }
   /** 重置：草稿与生效值一起清空，立即生效（不再要求再点一次「查询」） */
   function resetFilter() {
-    const empty = { name: "", item: "", dev: "全部", state: "全部" };
+    const empty = { name: "", item: "", dev: "全部" };
     DRAFT(empty);
     NAMEF(empty.name);
     ITEMF(empty.item);
     DEVF(empty.dev);
-    ST(empty.state);
     PG(1);
   }
 
@@ -161,10 +141,6 @@ export function InspectionPoints({ id }: { id?: string }) {
         <div>
           <span>巡检点</span>
           <strong>{s.points.length}</strong>
-        </div>
-        <div>
-          <span>已启用</span>
-          <strong>{s.points.filter((p) => p.state === "已启用").length}</strong>
         </div>
         <div>
           <span>巡检项</span>
@@ -211,7 +187,6 @@ export function InspectionPoints({ id }: { id?: string }) {
                     placeholder: "巡检项关键字",
                   },
                   { key: "dev", label: "关联设备", options: devNames },
-                  { key: "state", label: "状态", options: stateNames },
                 ]}
                 value={draft}
                 onChange={(next) => DRAFT({ ...draft, ...next })}
@@ -227,7 +202,6 @@ export function InspectionPoints({ id }: { id?: string }) {
                 "区域",
                 "巡检项名称",
                 "覆盖设备",
-                "状态",
                 "操作",
               ]}
               rows={rows.map((p) => {
@@ -241,12 +215,6 @@ export function InspectionPoints({ id }: { id?: string }) {
                   areasOfPoint(p).join(" / ") || "—",
                   specs.map((sp) => sp.name).join(" / ") || "—",
                   devs.map((d) => d.name).join(" / ") || "—",
-                  // 状态 = 开关：与地图 / 路线同一套交互，点一下弹二次确认
-                  <Switch
-                    checked={p.state !== "停用"}
-                    label={`${p.name} 启停状态`}
-                    onChange={() => ASKTOGGLE(p)}
-                  />,
                   <div className="actions">
                     <Btn onClick={() => go("point-edit", p.id)}>编辑巡检点</Btn>
                   </div>,
@@ -281,24 +249,6 @@ export function InspectionPoints({ id }: { id?: string }) {
           {/* 从地图详情带 mapId 进入时，导入抽屉默认选中该地图；列表本身不按地图筛选 */}
           <PointCalibration mapId={id} />
         </Modal>
-      )}
-      {/* 启停二次确认：停用后该点不再参与任务生成，启用前先说明影响 */}
-      {togglePoint && (
-        <Confirm
-          title={togglePoint.state === "停用" ? "启用巡检点" : "停用巡检点"}
-          message={
-            togglePoint.state === "停用"
-              ? `启用「${togglePoint.name}」后，可重新被巡检计划 / 临时任务引用。`
-              : `停用「${togglePoint.name}」后，该点不再被新的任务引用；已生成的历史结果照常保留。`
-          }
-          confirmText={togglePoint.state === "停用" ? "启用" : "停用"}
-          danger={togglePoint.state !== "停用"}
-          onClose={() => ASKTOGGLE(null)}
-          onConfirm={() => {
-            act({ type: "TOGGLE_POINT_STATE", id: togglePoint.id });
-            ASKTOGGLE(null);
-          }}
-        />
       )}
     </>
   );

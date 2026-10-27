@@ -1,10 +1,11 @@
 import { useContext, useState, useEffect, useRef, type ReactNode } from "react";
-import { StoreContext as C } from "./storeContext";
+import { StoreContext as C, type MessageTone } from "./storeContext";
 import { advanceAutomation } from "./automation";
 import { seed } from "./seed";
 import { loadTenants, saveTenants, tenantEnabled } from "./tenants";
 import {
   authenticate,
+  allowedTenantIds,
   clearSession,
   isSuper,
   loadSession,
@@ -32,6 +33,7 @@ import type {
 import {
   ROOT_AREA_ID,
   ROOT_AREA_NAME,
+  DEMO_AREA_POLYGONS,
   ensureAreaCodes,
   fmtDateTime,
 } from "./types";
@@ -82,6 +84,19 @@ function ensureRootArea(list: Area[] | undefined): Area[] {
   });
   return areas;
 }
+/**
+ * 区域范围轮廓补缺（幂等）
+ * @description 巡检点的区域归属按坐标推算（见 deviceMaster.areaOfCoord），
+ *              老缓存里的区域没有 polygon 会让归属全部落空，这里按演示分区补一份；
+ *              用户已经在「区域配置」里画过的保持原样
+ * @param list 区域集合
+ * @returns 轮廓已补全的区域集合
+ */
+function ensureAreaPolygons(list: Area[]): Area[] {
+  return list.map((a) =>
+    a.polygon?.length ? a : { ...a, polygon: DEMO_AREA_POLYGONS[a.name] },
+  );
+}
 const BASE_KEY = "inspection-v14-prototype";
 const DEFAULT_TENANT = "T-DEFAULT";
 /** 当前租户：存独立键，切租户即整份换数据 */
@@ -109,6 +124,52 @@ const SCHEMA = 13;
  * @returns 当前版本状态；无法识别时返回 null，由调用方回落到 seed()
  */
 export function migrate(raw: unknown): State | null {
+  const s = migrateInner(raw);
+  return s ? normalizeTaskIds(s) : null;
+}
+/**
+ * 任务编号规范化
+ * @description 旧规则生成的任务 id 是时间戳+随机串（Tmvqqik3l1ei），跟种子数据（T009）、
+ *              计划编号（PL01）混在一列里长短不一。加载时统一改成 `T` + 三位序号，
+ *              并把结果 / 告警 / 接管会话里对它的引用一并改指，避免对不上号
+ * @param s 迁移后的状态
+ * @returns 编号已规范化的状态（本来就没有旧编号时原样返回）
+ */
+function normalizeTaskIds(s: State): State {
+  const map = new Map<string, string>();
+  let max = 0;
+  s.tasks.forEach((t) => {
+    const m = /^T(\d+)$/.exec(t.id);
+    if (m) max = Math.max(max, Number(m[1]));
+  });
+  s.tasks.forEach((t) => {
+    if (/^T\d+$/.test(t.id)) return;
+    max += 1;
+    map.set(t.id, `T${String(max).padStart(3, "0")}`);
+  });
+  if (!map.size) return s;
+  const fix = (v?: string) => (v ? map.get(v) || v : v);
+  return {
+    ...s,
+    tasks: s.tasks.map((t) => ({
+      ...t,
+      id: fix(t.id)!,
+      retryOf: fix(t.retryOf),
+      retriedBy: fix(t.retriedBy),
+      preemptedTaskId: fix(t.preemptedTaskId),
+    })),
+    ...(s.results && {
+      results: s.results.map((r) => ({ ...r, taskId: fix(r.taskId)! })),
+    }),
+    ...(s.alarms && {
+      alarms: s.alarms.map((a) => ({ ...a, taskId: fix(a.taskId) })),
+    }),
+    ...(s.sessions && {
+      sessions: s.sessions.map((x) => ({ ...x, taskId: fix(x.taskId) })),
+    }),
+  };
+}
+function migrateInner(raw: unknown): State | null {
   if (!raw || typeof raw !== "object") return null;
   const old = raw as Record<string, any>;
   if (old.schema === SCHEMA) {
@@ -561,8 +622,8 @@ function withSeedDefaults(s: State): State {
         : {}),
     })),
     logicalPoints: needDevices ? base.logicalPoints : s.logicalPoints,
-    areas: ensureRootArea(
-      needDevices || areasStale ? base.areas : s.areas,
+    areas: ensureAreaPolygons(
+      ensureRootArea(needDevices || areasStale ? base.areas : s.areas),
     ),
     instruments: needDevices ? base.instruments : s.instruments,
     /**
@@ -730,7 +791,7 @@ function unifyTimes(v: unknown): unknown {
 function activeSession(): AuthAccount | null {
   const acc = loadSession();
   if (!acc) return null;
-  if (acc.level === "tenant") {
+  if ((acc.level === "tenant" || acc.level === "user") && acc.tenantId) {
     const t = loadTenants().find((x) => x.id === acc.tenantId);
     if (!tenantEnabled(t)) {
       clearSession();
@@ -745,13 +806,12 @@ function activeSession(): AuthAccount | null {
  */
 function entryTenantId(acc: AuthAccount): string {
   const tenants = loadTenants();
-  if (acc.level === "tenant") return acc.tenantId;
-  const last = getTenant();
-  return (
-    tenants.find((t) => t.id === last && t.status !== "停用")?.id ||
-    tenants.find((t) => t.status !== "停用")?.id ||
-    DEFAULT_TENANT
-  );
+  // 客户管理员 / 普通用户：落点到有权限且启用的第一个厂区；超管沿用上次或首个启用
+  const allowed = allowedTenantIds(acc, tenants);
+  const enabled = tenants.filter((t) => allowed.includes(t.id) && t.status !== "停用");
+  if (enabled.length) return enabled[0].id;
+  // 无可见启用厂区（如全部停用）时仍给一个落点，避免白屏
+  return allowed[0] || tenants[0]?.id || DEFAULT_TENANT;
 }
 function initial() {
   const acc = activeSession();
@@ -801,8 +861,12 @@ export function dropTenantCache(tid: string) {
 export function Store({ children }: { children: ReactNode }) {
   const [s, set] = useState<State>(initial),
     [message, msg] = useState(""),
+    /** 反馈类型：error = 被校验拦下来的操作，App 用居中弹窗展示 */
+    [messageTone, msgTone] = useState<MessageTone>("ok"),
     /** 登录会话：null = 未登录，App 渲染登录页 */
-    [account, SETACCOUNT] = useState<AuthAccount | null>(activeSession);
+    [account, SETACCOUNT] = useState<AuthAccount | null>(activeSession),
+    /** 超管视角：true = 平台管理（只看租户 / 账号），false = 进入某租户看业务（切厂区后） */
+    [platformMode, SETPLATFORM] = useState(true);
   const latest = useRef(s);
   latest.current = s;
   useEffect(() => {
@@ -852,18 +916,29 @@ export function Store({ children }: { children: ReactNode }) {
       } catch {}
     };
   }, []);
+  /**
+   * 统一反馈出口
+   * @description `error` = 被校验拦下来的操作（如「至少需要一个已标注业务点位」），
+   *              由 App 渲染成**居中弹窗**并等用户确认——底部轻提示一闪而过，用户常常没看见就继续点；
+   *              `ok` = 操作成功 / 上下文切换，仍走底部轻提示，不打断连续操作
+   */
+  function say(text: string, tone: MessageTone = "ok") {
+    msgTone(tone);
+    msg(text);
+  }
   function act(a: Action, onSuccess?: (s: State) => void) {
     try {
       const n = transition(latest.current, a);
       latest.current = n;
       set(n);
       persist(n);
-      msg("操作成功 · " + n.logs[0].object);
+      say("操作成功 · " + n.logs[0].object);
       setTimeout(() => msg(""), 4000);
       onSuccess?.(n);
       return true;
     } catch (e) {
-      msg((e as Error).message);
+      // 拦截类错误：不自动消失，必须由用户点「知道了」关掉
+      say((e as Error).message, "error");
       return false;
     }
   }
@@ -876,7 +951,7 @@ export function Store({ children }: { children: ReactNode }) {
     latest.current = n;
     set(n);
     persist(n);
-    msg(`已切换角色：${roleOf(rid).name}（${roleOf(rid).scope}）`);
+    say(`已切换角色：${roleOf(rid).name}（${roleOf(rid).scope}）`);
     setTimeout(() => msg(""), 3000);
   }
   /**
@@ -887,18 +962,25 @@ export function Store({ children }: { children: ReactNode }) {
    * @param password 密码
    * @returns 登录成功返回 true
    */
-  function signIn(username: string, password: string) {
+  function signIn(username: string, password: string, preferTenantId?: string) {
     const acc = authenticate(username, password);
     if (!acc) {
-      msg("账号或密码不正确");
+      // 登录页有就地错误行（.login-error），这里只标记类型，不弹全屏弹窗
+      say("账号或密码不正确", "error");
       setTimeout(() => msg(""), 3000);
       return false;
     }
     const tenants = loadTenants();
-    const tid = entryTenantId(acc);
+    // 登录页可选厂区：账号有权限且该厂区启用时进入所选厂区，否则按账号权限走默认落点
+    const allowed = allowedTenantIds(acc, tenants);
+    const prefer =
+      preferTenantId && allowed.includes(preferTenantId)
+        ? tenants.find((t) => t.id === preferTenantId)
+        : undefined;
+    const tid = prefer && tenantEnabled(prefer) ? prefer.id : entryTenantId(acc);
     const tenant = tenants.find((t) => t.id === tid);
     if (!tenantEnabled(tenant)) {
-      msg(`租户「${tenant?.name || tid}」已停用，请联系平台管理员`);
+      say(`租户「${tenant?.name || tid}」已停用，请联系平台管理员`, "error");
       setTimeout(() => msg(""), 4000);
       return false;
     }
@@ -917,10 +999,12 @@ export function Store({ children }: { children: ReactNode }) {
     set(n);
     persist(n);
     SETACCOUNT(acc);
-    msg(`欢迎回来，${acc.name} · ${tenant!.name}`);
+    // 超管登录先落在平台管理（租户管理）；其余账号按角色落地
+    SETPLATFORM(true);
+    say(`欢迎回来，${acc.name} · ${tenant!.name}`);
     setTimeout(() => msg(""), 3000);
     try {
-      location.hash = "#/workbench";
+      location.hash = isSuper(acc) ? "#/tenants" : "#/workbench";
     } catch {}
     return true;
   }
@@ -928,6 +1012,7 @@ export function Store({ children }: { children: ReactNode }) {
   function signOut() {
     clearSession();
     SETACCOUNT(null);
+    SETPLATFORM(true);
     msg("");
     try {
       location.hash = "#/login";
@@ -939,18 +1024,20 @@ export function Store({ children }: { children: ReactNode }) {
    * @param tid 租户 ID，见 data/tenants.ts 的 TENANTS
    */
   function setTenant(tid: string) {
-    if (!isSuper(account)) {
-      msg("当前账号仅限所属租户，不能切换租户");
-      setTimeout(() => msg(""), 4000);
+    const tenants = latest.current.tenants || loadTenants();
+    // 超管可切任意厂区；其余只能切到被授权范围（客户管理员=本客户、厂区管理员=本厂、用户=被授权厂区）
+    if (!isSuper(account) && !allowedTenantIds(account, tenants).includes(tid)) {
+      say("当前账号无权访问该厂区", "error");
       return;
     }
-    const tenant = (latest.current.tenants || loadTenants()).find((t) => t.id === tid);
+    const tenant = tenants.find((t) => t.id === tid);
     // 停用校验：停用租户不可进入（切换器已禁用，这里再挡一次，避免直接调用）
     if (!tenantEnabled(tenant)) {
-      msg(`租户「${tenant?.name || tid}」已停用，请先在「系统设置 › 租户管理」启用`);
-      setTimeout(() => msg(""), 4000);
+      say(`租户「${tenant?.name || tid}」已停用，请先在「系统设置 › 租户管理」启用`, "error");
       return;
     }
+    // 超管切到某厂区 = 进入该厂区的业务视角（侧边栏恢复业务菜单）
+    if (isSuper(account)) SETPLATFORM(false);
     try {
       localStorage.setItem("inspection-tenant", tid);
     } catch {}
@@ -963,10 +1050,18 @@ export function Store({ children }: { children: ReactNode }) {
     latest.current = n;
     set(n);
     persist(n);
-    msg(`已切换租户：${n.tenants?.find((t) => t.id === tid)?.name || tid}`);
+    say(`已切换租户：${n.tenants?.find((t) => t.id === tid)?.name || tid}`);
     setTimeout(() => msg(""), 3000);
     try {
-      location.hash = "";
+      // 超管切厂区后直接落到业务工作台（平台管理入口在顶部切换器里可切回）
+      location.hash = isSuper(account) ? "#/workbench" : "";
+    } catch {}
+  }
+  /** 超管退出业务视角，回到平台管理（租户 / 账号） */
+  function backToPlatform() {
+    SETPLATFORM(true);
+    try {
+      location.hash = "#/tenants";
     } catch {}
   }
   return (
@@ -975,9 +1070,13 @@ export function Store({ children }: { children: ReactNode }) {
         s,
         act,
         message,
+        messageTone,
+        clearMessage: () => msg(""),
         setRole,
         setTenant,
         account,
+        platformMode,
+        backToPlatform,
         signIn,
         signOut,
         reset: () => {
@@ -985,7 +1084,7 @@ export function Store({ children }: { children: ReactNode }) {
           latest.current = n;
           set(n);
           persist(n);
-          msg("演示数据已重置");
+          say("演示数据已重置");
         },
       }}
     >

@@ -12,10 +12,10 @@
  * @interaction store.tsx（signIn / signOut）、pages/Login.tsx、pages/Tenants.tsx（开通租户时建号）、
  *              components/TenantSwitcher.tsx、App.tsx
  */
-import { TENANTS } from "./tenants";
+import type { Tenant } from "./types";
 
-/** 账号级别：超级管理员（平台运营方，跨租户） / 普通管理员（客户厂区，单租户） */
-export type AccountLevel = "super" | "tenant";
+/** 账号级别：平台超管（我们公司）/ 客户管理员（集团级，管多厂区）/ 厂区管理员（单厂区）/ 普通用户（按授权厂区） */
+export type AccountLevel = "super" | "customer" | "tenant" | "user";
 
 export interface AuthAccount {
   id: string;
@@ -27,49 +27,95 @@ export interface AuthAccount {
   name: string;
   /** 岗位名称，顶栏用户菜单展示 */
   title: string;
-  /** 所属租户：超级管理员留空 = 不限定 */
-  tenantId: string;
+  /** 所属客户（集团）：平台超管留空 = 不限定 */
+  customerId?: string;
+  /** 主属租户：普通用户 / 厂区管理员落到的厂区；客户管理员 / 超管留空 */
+  tenantId?: string;
+  /**
+   * 可访问的厂区白名单：
+   * · 超管为空 = 全部；客户管理员 = 该客户下全部厂区；
+   * · 厂区管理员 = [本厂区]；普通用户 = 由管理员勾选的若干厂区
+   */
+  tenantIds: string[];
+  /** 登录后默认进入的厂区（切换器默认选中） */
+  homeTenantId?: string;
   level: AccountLevel;
   /** 登录后套用的权限档位（roles.ts 的 id） */
   roleId: "admin" | "user";
+  /** 所属部门（合并自原账号管理页的人员信息） */
+  dept?: string;
+  /** 账号状态：启用 / 停用 */
+  status: "启用" | "停用";
+  /** 最近登录时间 */
+  lastLogin?: string;
 }
 
-/** 内置演示账号：无存储时的兜底清单（1 个平台超管 + 2 个客户厂区管理员） */
+/** 账号库演示数据（合并原登录账号与账号管理页人员，统一一份）：覆盖四档角色与「申花集团多厂区」场景 */
 export const ACCOUNTS: AuthAccount[] = [
   {
-    id: "A-SUPER",
-    username: "superadmin",
-    password: "Super@2026",
-    name: "王姐",
-    title: "平台超级管理员",
-    tenantId: "",
-    level: "super",
-    roleId: "admin",
+    id: "U-000", username: "superadmin", password: "Super@2026", name: "Admin",
+    title: "平台超级管理员", level: "super", roleId: "admin",
+    tenantIds: [], status: "启用", dept: "平台运营",
   },
   {
-    id: "A-HD",
-    username: "hd.admin",
-    password: "Hd@2026",
-    name: "李工",
-    title: "华东炼化 · 普通管理员",
-    tenantId: TENANTS[0].id,
-    level: "tenant",
-    roleId: "admin",
+    id: "U-001", username: "hd.admin", password: "Hd@2026", name: "李工",
+    title: "华东炼化 · 厂区管理员", customerId: "C-DEFAULT", tenantId: "T-DEFAULT",
+    tenantIds: ["T-DEFAULT"], level: "tenant", roleId: "admin", status: "启用", dept: "设备部",
   },
   {
-    id: "A-XB",
-    username: "xb.admin",
-    password: "Xb@2026",
-    name: "赵敏",
-    title: "西部管道 · 普通管理员",
-    tenantId: TENANTS[1].id,
-    level: "tenant",
-    roleId: "admin",
+    id: "U-002", username: "xb.admin", password: "Xb@2026", name: "赵敏",
+    title: "西部管道 · 厂区管理员", customerId: "C-XB", tenantId: "T-XB",
+    tenantIds: ["T-XB"], level: "tenant", roleId: "admin", status: "启用", dept: "生产部",
+  },
+  {
+    id: "U-003", username: "sh.admin", password: "Sh@2026", name: "张总",
+    title: "申花集团 · 客户管理员", customerId: "C-SHENHUA",
+    tenantIds: ["T-SH-1", "T-SH-2", "T-SH-3"], level: "customer", roleId: "admin",
+    status: "启用", dept: "集团信息部",
+  },
+  {
+    id: "U-004", username: "sh1.admin", password: "Sh1@2026", name: "申一",
+    title: "申花一厂 · 厂区管理员", customerId: "C-SHENHUA", tenantId: "T-SH-1",
+    tenantIds: ["T-SH-1"], level: "tenant", roleId: "admin", status: "启用", dept: "一厂设备部",
+  },
+  {
+    id: "U-005", username: "sh2.admin", password: "Sh2@2026", name: "申二",
+    title: "申花二厂 · 厂区管理员", customerId: "C-SHENHUA", tenantId: "T-SH-2",
+    tenantIds: ["T-SH-2"], level: "tenant", roleId: "admin", status: "启用", dept: "二厂设备部",
+  },
+  {
+    id: "U-006", username: "sh3.admin", password: "Sh3@2026", name: "申三",
+    title: "申花三厂 · 厂区管理员", customerId: "C-SHENHUA", tenantId: "T-SH-3",
+    tenantIds: ["T-SH-3"], level: "tenant", roleId: "admin", status: "启用", dept: "三厂设备部",
+  },
+  {
+    id: "U-007", username: "sh.user", password: "ShU@2026", name: "孙工",
+    title: "申花集团 · 巡检员", customerId: "C-SHENHUA",
+    tenantIds: ["T-SH-1", "T-SH-3"], level: "user", roleId: "user",
+    status: "启用", dept: "一厂巡检班",
+  },
+  {
+    id: "U-008", username: "zhou.lao", password: "Init@2026", name: "老周",
+    title: "华东炼化 · 巡检员", customerId: "C-DEFAULT", tenantId: "T-DEFAULT",
+    tenantIds: ["T-DEFAULT"], level: "user", roleId: "user", status: "启用", dept: "设备部",
+  },
+  {
+    id: "U-009", username: "li.gong", password: "Init@2026", name: "李工",
+    title: "华东炼化 · 运维", customerId: "C-DEFAULT", tenantId: "T-DEFAULT",
+    tenantIds: ["T-DEFAULT"], level: "user", roleId: "user", status: "启用", dept: "生产一部",
+  },
+  {
+    id: "U-010", username: "zhao.min", password: "Init@2026", name: "赵敏",
+    title: "西部管道 · 安环", customerId: "C-XB", tenantId: "T-XB",
+    tenantIds: ["T-XB"], level: "user", roleId: "user", status: "启用", dept: "安环部",
   },
 ];
 
 /** 账号库的独立存储键（平台级，不随租户切换） */
 const ACCOUNT_KEY = "inspection-accounts";
+
+/** 内置账号的姓名校正：产品改名后，老缓存里的旧姓名按 id 同步（仅内置演示账号） */
+const BUILTIN_NAME: Record<string, string> = { "U-000": "Admin" };
 
 /**
  * 读取账号库
@@ -79,7 +125,24 @@ const ACCOUNT_KEY = "inspection-accounts";
 export function loadAccounts(): AuthAccount[] {
   try {
     const raw = JSON.parse(localStorage.getItem(ACCOUNT_KEY) || "null");
-    if (Array.isArray(raw) && raw.length) return raw as AuthAccount[];
+    if (Array.isArray(raw) && raw.length) {
+      // 老缓存（单租户 + 无部门 / 状态字段）字段补全：tenantIds 缺则按 tenantId 兜底
+      const list = (raw as AuthAccount[]).map((a) => ({
+        ...a,
+        name: BUILTIN_NAME[a.id] ?? a.name,
+        tenantIds: a.tenantIds ?? (a.tenantId ? [a.tenantId] : []),
+        status: a.status ?? "启用",
+      }));
+      // 补齐内置演示账号：老缓存只有早期几条时，新加的申花等演示账号也能出现
+      const ids = new Set(list.map((a) => a.id));
+      const missing = ACCOUNTS.filter((a) => !ids.has(a.id));
+      if (missing.length) {
+        const merged = [...list, ...missing.map((a) => ({ ...a }))];
+        saveAccounts(merged);
+        return merged;
+      }
+      return list;
+    }
   } catch {
     /* 存储不可用：用内置账号 */
   }
@@ -102,11 +165,27 @@ export const PASSWORD_HINT = "至少 8 位，需同时包含字母与数字";
 /** 登录名规则：字母开头，3–20 位字母 / 数字 / . _ - */
 export const USERNAME_RULE = /^[A-Za-z][A-Za-z0-9._-]{2,19}$/;
 
-/** 建号输入：开通租户时填写的管理员信息 */
+/** 建号 / 改号输入：开通租户时填写的管理员信息；编辑账号时后段字段可省略（不传 = 不改动） */
 export interface AccountInput {
   username: string;
   password: string;
   name: string;
+  /** 所属客户（集团） */
+  customerId?: string;
+  /** 主属厂区 */
+  tenantId?: string;
+  /** 可访问的厂区白名单 */
+  tenantIds?: string[];
+  /** 账号级别 */
+  level?: AccountLevel;
+  /** 权限档位 */
+  roleId?: "admin" | "user";
+  /** 部门 */
+  dept?: string;
+  /** 状态 */
+  status?: "启用" | "停用";
+  /** 岗位文案（租户改名后同步） */
+  title?: string;
 }
 
 /** 建号校验结果：按字段给出原因，键名与表单字段对应 */
@@ -160,19 +239,19 @@ export function checkAccount(
  * @param input 管理员登录账号 / 初始密码 / 姓名
  * @returns 绑定该租户、具备管理员档位的登录账号
  */
-export function makeTenantAdmin(
-  tenant: { id: string; name: string },
-  input: AccountInput,
-): AuthAccount {
+export function makeTenantAdmin(tenant: Tenant, input: AccountInput): AuthAccount {
   return {
     id: `A-${tenant.id}`,
     username: input.username.trim(),
     password: input.password,
     name: input.name.trim(),
-    title: `${tenant.name} · 普通管理员`,
+    title: `${tenant.name} · 厂区管理员`,
+    customerId: tenant.customerId,
     tenantId: tenant.id,
+    tenantIds: [tenant.id],
     level: "tenant",
     roleId: "admin",
+    status: "启用",
   };
 }
 
@@ -212,8 +291,33 @@ export function updateAccount(
     name: input.name.trim(),
     password: input.password || old.password,
     ...(title ? { title } : {}),
+    ...(input.customerId !== undefined ? { customerId: input.customerId } : {}),
+    ...(input.tenantId !== undefined ? { tenantId: input.tenantId } : {}),
+    ...(input.tenantIds !== undefined ? { tenantIds: input.tenantIds } : {}),
+    ...(input.level !== undefined ? { level: input.level } : {}),
+    ...(input.roleId !== undefined ? { roleId: input.roleId } : {}),
+    ...(input.dept !== undefined ? { dept: input.dept } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
   };
   saveAccounts(list.map((a) => (a.id === id ? next : a)));
+  return true;
+}
+
+/** 删除单个账号（账号管理页删除用） */
+export function removeAccount(id: string): boolean {
+  const list = loadAccounts();
+  const keep = list.filter((a) => a.id !== id);
+  if (keep.length === list.length) return false;
+  saveAccounts(keep);
+  return true;
+}
+
+/** 重置账号密码（不返回原密码） */
+export function resetPassword(id: string, password: string): boolean {
+  const list = loadAccounts();
+  const old = list.find((a) => a.id === id);
+  if (!old) return false;
+  saveAccounts(list.map((a) => (a.id === id ? { ...a, password } : a)));
   return true;
 }
 
@@ -238,6 +342,35 @@ export function removeTenantAccounts(tenantId: string): number {
 
 /** 是否超级管理员（平台运营方：可切租户、可见租户管理页） */
 export const isSuper = (a?: AuthAccount | null) => a?.level === "super";
+
+/** 平台超管之外的「可管理租户」角色：客户管理员也能进租户管理页（只看本客户） */
+export const canManageTenants = (a?: AuthAccount | null) =>
+  a?.level === "super" || a?.level === "customer";
+
+/** 返回账号可访问的厂区 id 列表（按角色档位推导） */
+export function allowedTenantIds(a: AuthAccount | null, tenants: Tenant[]): string[] {
+  if (!a) return [];
+  if (a.level === "super") return tenants.map((t) => t.id);
+  if (a.level === "customer")
+    return tenants.filter((t) => t.customerId === a.customerId).map((t) => t.id);
+  if (a.level === "tenant") return a.tenantId ? [a.tenantId] : [];
+  return a.tenantIds || [];
+}
+
+/** 账号能否访问某厂区 */
+export const canAccessTenant = (
+  a: AuthAccount | null,
+  tenantId: string,
+  tenants: Tenant[],
+) => allowedTenantIds(a, tenants).includes(tenantId);
+
+/** 某客户名下的客户管理员账号 */
+export const customerAdminOf = (list: AuthAccount[], customerId: string) =>
+  list.find((a) => a.level === "customer" && a.customerId === customerId);
+
+/** 某厂区的厂区管理员账号清单 */
+export const tenantAdminsOf = (list: AuthAccount[], tenantId: string) =>
+  list.filter((a) => a.level === "tenant" && a.tenantId === tenantId);
 
 /**
  * 校验账号密码

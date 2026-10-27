@@ -37,7 +37,6 @@ import {
   settingOf,
   targetNameOf,
   upsertAlarmItem,
-  withMainAlarmItem,
 } from "../data/alarmSettings";
 import {
   areaNameOf,
@@ -116,6 +115,8 @@ export function BusinessTargets({
   const [open, OPEN] = useState(false);
   /** 保存前的「配置结果」预览弹窗：结果不在页面上常驻展示，点保存才弹出做二次确认 */
   const [preview, CLOSE] = useState(false);
+  /** 预览弹窗确认后的去向：close=回列表；add=留在本页继续新增（「保存并新增」） */
+  const [previewAdd, PREVIEWADD] = useState(false);
   /** 筛选面板展开态 + 草稿条件（点「查询」才写回生效值） */
   const [filterOpen, SETFILTEROPEN] = useState(false);
   /** 筛选草稿：字段与 FilterPanel 的 fields 一一对应（点「查询」才写回生效值） */
@@ -267,7 +268,9 @@ export function BusinessTargets({
         requirementId: rid,
         algorithm: req?.algorithm || "",
         criteria: req?.description || "",
-        alarmItems: withMainAlarmItem(old.alarmItems, main),
+        // 告警项由用户点「+ 告警等级配置」手动新增：空表不代建，
+        // 已有条目时只把第一条的口径跟着巡检要求刷新（主项 = 台账判定口径）
+        alarmItems: old.alarmItems.length ? [main, ...old.alarmItems.slice(1)] : [],
         needPhoto: req?.needPhoto ?? true,
         needVideo: req?.needVideo ?? false,
         needReview: req?.needReview ?? false,
@@ -275,6 +278,12 @@ export function BusinessTargets({
       };
     });
   }
+  /**
+   * 可否提交：巡检目标（巡检要求 + 算法）与**至少一条告警项**缺一不可
+   * @description 告警项改为手动新增后，空表即没有判定口径，台账不能建
+   */
+  const canSubmit =
+    !!form.requirementId && !!form.algorithm.trim() && !!form.alarmItems.length;
   /** 主告警项（第一条）：与台账判定口径同源——判断类型 / 阈值 / 单位 / 等级 / 声光报警都取它 */
   const mainItem = form.alarmItems[0];
   /** 主项的判定口径：台账 `judge / unit / min / max / expected` 在页面上的唯一来源 */
@@ -323,15 +332,33 @@ export function BusinessTargets({
       (r.targetKinds?.includes("区域") || r.targetKinds?.includes("环境")),
   );
   /**
-   * 新建一条告警项的默认值（弹窗打开时的初值）
-   * @description 分类按目标类型带出（环境类 = 环境预警）、异常名称按台账名预填
+   * 新建一条告警项的默认值（点「+ 告警等级配置」时的初值）
+   * @description 告警项不再随巡检要求自动生成，改为用户手动新增；
+   *              但初值仍按当前巡检要求带出判定口径（判断方式 / 阈值 / 单位），
+   *              用户进去只要确认或微调，不用从 0 开始填
    */
   function makeAlarmItem() {
-    return newAlarmItem(
-      itemKindOfTarget(form),
-      "二级",
-      `${form.name.trim() || instrumentOf(pick)?.name || form.anchor || "检测目标"} · 异常`,
-    );
+    const req = requirements.find((r) => r.id === form.requirementId);
+    const ins = instrumentOf(pick);
+    /** 量程：要求自带的优先（如区域气体 ppm 0–50），否则按单位默认 */
+    const range =
+      req?.judge === "数值范围"
+        ? req.min !== undefined && req.max !== undefined
+          ? { min: req.min, max: req.max }
+          : defaultRangeOfUnit(req.unit || ins?.unit) || { min: 0, max: 1 }
+        : undefined;
+    return {
+      ...newAlarmItem(
+        itemKindOfTarget(form),
+        "二级",
+        `${form.name.trim() || ins?.name || form.anchor || "检测目标"} · 异常`,
+      ),
+      judge: req?.judge || "数值范围",
+      value: req?.judge === "数值范围" ? undefined : req?.expected || "",
+      from: range?.min ?? 0,
+      to: range?.max ?? 1,
+      unit: req?.unit || ins?.unit || "",
+    };
   }
   /** 弹窗保存告警项：第一条（主项）即台账判定口径，不再单独维护 judge / min / max */
   function saveAlarmItem(index: number | null, item: AlarmItem) {
@@ -372,7 +399,7 @@ export function BusinessTargets({
       requirementId: "",
       algorithm: "",
       criteria: "",
-      // 告警项：选定巡检要求后由 applyRequirement 带出主项（至少一条）
+      // 告警项：默认为空，由用户点「+ 告警等级配置」手动新增
       alarmItems: [],
       alarmTrigger: ALARM_TRIGGER,
       alarmNotify: ["设备岗"],
@@ -428,8 +455,12 @@ export function BusinessTargets({
     // 仅挂载时初始化：之后按用户的编辑动作走
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  /** 保存：新增走 ADD，编辑走 UPDATE */
-  function save() {
+  /**
+   * 保存：新增走 ADD，编辑走 UPDATE
+   * @param keepAdding 保存并新增：落库后把表单复位成新建态，留在本页继续录下一条
+   * @returns 是否成功（失败时「保存前预览」弹窗保持打开，好让用户看到提示）
+   */
+  function save(keepAdding = false) {
     const prev = editId ? targets.find((t) => t.id === editId) : undefined;
     /** 主告警项 = 台账的判定口径（「告警管理 › 告警设置」里的第一条）：两处共用同一份数据 */
     const main = form.alarmItems[0];
@@ -485,8 +516,11 @@ export function BusinessTargets({
     const ok = editId
       ? act({ type: "UPDATE_BUSINESS_TARGET", id: editId, ...payload })
       : act({ type: "ADD_BUSINESS_TARGET", instrumentId: pick, ...payload });
-    // 内置页保存后沿目录返回来源列表（从巡检项页跳来的会原路返回）
-    if (ok) back();
+    if (ok) {
+      // 保存并新增：留在本页并复位成新建态；否则沿目录返回来源列表
+      if (keepAdding) openAdd();
+      else back();
+    }
     // 返回值给「保存前预览」弹窗用：失败时保持弹窗，好让用户看到提示
     return ok;
   }
@@ -710,7 +744,7 @@ export function BusinessTargets({
                 {/* 删除选中：点一次进入多选，勾完点此处批量删除（通用组件） */}
                 {del.bar}
                 <Btn primary onClick={() => go("business-target-edit", "new")}>
-                  ＋ 添加巡检目标台账
+                  新增
                 </Btn>
               </div>
             }
@@ -803,9 +837,21 @@ export function BusinessTargets({
             <div className="actions">
               <Btn onClick={() => back()}>取消</Btn>
               <Btn
+                disabled={!canSubmit}
+                onClick={() => {
+                  PREVIEWADD(true);
+                  CLOSE(true);
+                }}
+              >
+                保存并新增
+              </Btn>
+              <Btn
                 primary
-                disabled={!form.requirementId || !form.algorithm.trim()}
-                onClick={() => CLOSE(true)}
+                disabled={!canSubmit}
+                onClick={() => {
+                  PREVIEWADD(false);
+                  CLOSE(true);
+                }}
               >
                 {editId ? "保存修改" : "创建巡检目标台账"}
               </Btn>
@@ -875,8 +921,14 @@ export function BusinessTargets({
             </div>
           </Panel>
 
-          {hasTarget && (
-            <Panel title="业务逻辑">
+          {/*
+            业务逻辑常驻展示：未选巡检目标时整块置灰不可操作，
+            而不是整块隐藏——区块忽隐忽现会让页面高度跳、也看不出这里要配什么
+          */}
+          <Panel
+            title="业务逻辑"
+            className={hasTarget ? "" : "panel-locked"}
+          >
               <div className="bt-config-wide">
               {/* 配业务逻辑：算法模板（算法与判定口径随模板带出）/ 告警设置，两个 Tab */}
               <div className="segmented" style={{ marginBottom: 14 }}>
@@ -895,37 +947,53 @@ export function BusinessTargets({
               </div>
               {cfgTab === "require" && (
                 <>
-                  <Table
-                    heads={["算法模板", "算法", "采集方式", "单位", "判定口径"]}
-                    rows={[
-                      [
-                        <select
-                          value={form.requirementId}
-                          onChange={(e) => applyRequirement(e.target.value, picked)}
-                        >
-                          {reqOptions.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {r.name}（{r.code} · {r.kind}
-                              {r.targetKinds?.length
-                                ? ` · 适用 ${r.targetKinds.join(" / ")}`
-                                : ""}
-                              ）
-                            </option>
-                          ))}
-                        </select>,
-                        form.algorithm || "—",
-                        effCapture || "—",
-                        mainUnit || instrumentOf(pick)?.unit || "—",
-                        judgeText({
+                  {/* 算法模板：字段用表单排布（标签在上、控件在下），只留「算法模板」可改，其余为派生值 */}
+                  <div className="bt-req-form">
+                    <Field label="算法模板" required className="full">
+                      <select
+                        value={form.requirementId}
+                        onChange={(e) => {
+                          const rid = e.target.value;
+                          // 占位项（未选巡检目标）不触发带出，避免把已填的口径清空
+                          if (rid) applyRequirement(rid, picked);
+                        }}
+                      >
+                        {!form.requirementId && (
+                          <option value="">请先选择巡检目标</option>
+                        )}
+                        {reqOptions.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}（{r.code} · {r.kind}
+                            {r.targetKinds?.length
+                              ? ` · 适用 ${r.targetKinds.join(" / ")}`
+                              : ""}
+                            ）
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="算法">
+                      <input value={form.algorithm || "—"} readOnly />
+                    </Field>
+                    <Field label="采集方式">
+                      <input value={effCapture || "—"} readOnly />
+                    </Field>
+                    <Field label="单位">
+                      <input value={mainUnit || instrumentOf(pick)?.unit || "—"} readOnly />
+                    </Field>
+                    <Field label="判定口径">
+                      <input
+                        readOnly
+                        value={judgeText({
                           judge: mainJudge,
                           min: mainItem?.from,
                           max: mainItem?.to,
                           unit: mainUnit,
                           expected: mainItem?.value,
-                        }),
-                      ],
-                    ]}
-                  />
+                        })}
+                      />
+                    </Field>
+                  </div>
                   {effReq?.description && (
                     <p className="muted">{effReq.description}</p>
                   )}
@@ -955,8 +1023,7 @@ export function BusinessTargets({
                 </>
               )}
               </div>
-            </Panel>
-          )}
+          </Panel>
 
           {/*
             保存前预览（二次确认）：配置结果不在页面上常驻展示，
@@ -973,11 +1040,11 @@ export function BusinessTargets({
                   <Btn
                     primary
                     onClick={() => {
-                      // 保存成功会自行离开本页；失败则保持弹窗，用户能看到提示后返回修改
-                      if (save()) CLOSE(false);
+                      // 保存成功会离开 / 复位本页；失败则保持弹窗，用户能看到提示后返回修改
+                      if (save(previewAdd)) CLOSE(false);
                     }}
                   >
-                    确认保存
+                    {previewAdd ? "保存并新增" : "确认保存"}
                   </Btn>
                 </>
               }

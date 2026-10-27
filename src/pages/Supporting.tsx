@@ -420,7 +420,7 @@ export function Supporting({ page }: { page: string }) {
           />
           {page === "roles" && (
             <Note>
-              权限配置为原型演示数据。当前演示账号为巡检管理员，具备地图发布、任务调度、遥控和告警关闭权限。
+              权限配置为原型演示数据。当前演示账号为巡检主管，具备地图发布、任务调度、遥控和告警关闭权限。
             </Note>
           )}
           {page === "services" && (

@@ -35,7 +35,10 @@ import type {
   JudgeType,
 } from "../data/types";
 import { defaultRangeOfUnit } from "../data/alarmRules";
-import { defaultRequirementOfInstrument } from "../data/deviceMaster";
+import {
+  areaOfCoord,
+  defaultRequirementOfInstrument,
+} from "../data/deviceMaster";
 import { targetsOf } from "../data/mapCalibration";
 
 /**
@@ -142,6 +145,8 @@ export function PointEdit({
   const [confirmItem, SETCONFIRMITEM] = useState(false);
   /** 保存巡检点（整点）的二次确认：校验名称必填 / 不重名后弹窗 */
   const [confirmPoint, SETCONFIRMPOINT] = useState(false);
+  /** 确认保存后的去向：false=回列表；true=留在本页继续新增（「保存并新增」） */
+  const [saveAdd, SAVEADD] = useState(false);
   /** 拖动排序时的行下标（用于高亮） */
   const [drag, DRAG] = useState<number | null>(null);
   /** 同步一份行下标：拖拽事件里即时读取，规避 state 更新滞后导致的换位不灵敏 */
@@ -170,11 +175,12 @@ export function PointEdit({
   const worldOf = bound?.world || editing?.world;
 
   /**
-   * 所属区域：**只读，不给选**
-   * @description 新增时由当前地图逆推（区域归属由地图决定，手动改会与地图不一致）；
-   *              编辑时沿用该点来源地图的区域，同一条数据只会有一个区域口径
+   * 所属区域：**按坐标推算，不给选**
+   * @description 采集到坐标之后才知道归属：区域主数据里画过范围轮廓的，
+   *              坐标落在哪个轮廓里就归哪个区域（轮廓与点位同为全厂区底图百分比口径）；
+   *              还没采集坐标 / 没落在任何轮廓内 → 未分区。区域不由地图决定
    */
-  const areaNameOfMap = s.maps.find((x) => x.id === mapId)?.region || "其他区域";
+  const regionOfPoint = areaOfCoord(s, shown?.x, shown?.y) || "未分区";
   /** 现场采集入口：进页即弹「准备」弹窗定机器人与地图，确认后才进页面 */
   const needSetup = !!field && !ready;
   const labelOfBt = (bid: string) => businessTargetLabelOf(s, bid);
@@ -305,20 +311,27 @@ export function PointEdit({
     if (!items.length) return "请至少添加并保存一个巡检项";
     return "";
   }
-  /** 保存入口：校验通过后弹二次确认（列出名称 / 区域 / 坐标 / 巡检项数） */
-  function askSavePoint() {
+  /**
+   * 保存入口：校验通过后弹二次确认（列出名称 / 区域 / 坐标 / 巡检项数）
+   * @param keepAdding 保存并新增：确认后把表单复位成新建态，留在本页继续标注下一个点
+   */
+  function askSavePoint(keepAdding = false) {
     const msg = pointErrorOf();
     if (msg) return ERR(msg);
     ERR("");
+    SAVEADD(keepAdding);
     SETCONFIRMPOINT(true);
   }
-  /** 保存巡检点：坐标 + 身份 + 全部巡检项一次性提交 */
-  function savePoint() {
+  /** 落库：坐标 + 身份 + 全部巡检项一次性提交（「保存」与「保存并新增」共用同一路径） */
+  function commitPoint(): boolean {
     const msg = pointErrorOf();
-    if (msg) return ERR(msg);
+    if (msg) {
+      ERR(msg);
+      return false;
+    }
     SETCONFIRMPOINT(false);
     ERR("");
-    const ok = act({
+    return act({
       type: "SAVE_POINT",
       pointId: editing?.id,
       mapId,
@@ -329,10 +342,27 @@ export function PointEdit({
       calibrateRobot: editing?.calibrateRobot || (field ? r?.id : undefined),
       pose: editing?.pose || (shown ? { x: shown.x, y: shown.y, yaw: 0 } : undefined),
     });
-    if (ok) {
-      clearPointDraft(id);
-      go("annotation");
-    }
+  }
+  /** 保存巡检点：落库后回巡检点列表 */
+  function savePoint() {
+    if (!commitPoint()) return;
+    clearPointDraft(id);
+    go("annotation");
+  }
+  /**
+   * 保存并新增：落库后把本页复位成新建态，继续标注下一个巡检点
+   * @description 地图 / 机器人沿用当前选择（连续标注通常在同一张图上），
+   *              名称 / 坐标 / 巡检项清空，避免把上一个点的内容带进下一个点
+   */
+  function saveAndNew() {
+    if (!commitPoint()) return;
+    clearPointDraft(id);
+    NAME("");
+    TGT("");
+    ITEMS([]);
+    DRAFT(null);
+    PICKED(null);
+    POSE_SAVED(false);
   }
   /** 取消：清掉本次会话草稿（名称 / 地图 / 坐标 / 巡检项一项都不落库），回巡检点列表 */
   function cancelPage() {
@@ -427,7 +457,13 @@ export function PointEdit({
           {/* 取消：本次改动一律不落库（含已填的巡检项），直接回列表 */}
           <Btn onClick={cancelPage}>取消</Btn>
           {editing && <Btn onClick={() => ASKDEL(true)}>删除</Btn>}
-          <Btn primary disabled={!!draft} onClick={askSavePoint}>
+          {/* 保存并新增只在新增态给：编辑态的落库走 UPDATE，复位后会继续改同一条 */}
+          {!editing && (
+            <Btn disabled={!!draft} onClick={() => askSavePoint(true)}>
+              保存并新增
+            </Btn>
+          )}
+          <Btn primary disabled={!!draft} onClick={() => askSavePoint()}>
             保存
           </Btn>
         </div>
@@ -455,23 +491,23 @@ export function PointEdit({
 
       <div className="pd-split">
         <div className="pd-col">
-          {/* ① 基本信息：所属区域 · 巡检点名称 · 巡检点坐标 同一行 */}
+          {/* ① 基本信息：巡检点名称 · 所属区域 · 巡检点坐标 同一行 */}
           <Panel
             title="基本信息"
             className="pd-fixed"
             extra={<Badge>{editing ? editing.id : "新建"}</Badge>}
           >
             <div className="pd-basic">
-              <Field label="所属区域">
-                {/* 由地图逆推 / 沿用新增时的设定：只读展示，避免与地图区域打架 */}
-                <p className="pd-value">{areaNameOfMap}</p>
-              </Field>
               <Field label="巡检点名称" required>
                 <input
                   value={name}
                   placeholder="例如 V001 出口压力表"
                   onChange={(e) => NAME(e.target.value)}
                 />
+              </Field>
+              <Field label="所属区域">
+                {/* 按坐标推算：只读展示，跟随采集到的点位，不给人手改的机会 */}
+                <p className="pd-value">{regionOfPoint}</p>
               </Field>
               <Field label="巡检点坐标" required>
                 {/* 现场采集入口：自动读取机器人当前坐标；编辑入口：置灰，只回显历史采集坐标 */}
@@ -600,6 +636,7 @@ export function PointEdit({
       {askPose && (
         <Modal
           title="请先保存巡检点坐标"
+          slim
           onClose={() => ASKPOSE(false)}
           footer={
             <Btn primary onClick={() => ASKPOSE(false)}>
@@ -615,6 +652,7 @@ export function PointEdit({
       {askEdit && (
         <Modal
           title="重新编辑巡检项"
+          slim
           onClose={() => ASKEDIT(null)}
           footer={
             <>
@@ -643,6 +681,7 @@ export function PointEdit({
       {askDel && (
         <Modal
           title={`删除巡检点「${editing?.name || ""}」`}
+          slim
           onClose={() => ASKDEL(false)}
           footer={
             <>
@@ -661,7 +700,7 @@ export function PointEdit({
       {confirmItem && draft && (
         <Modal
           title={`保存巡检项「${draft.name || "未命名"}」`}
-          wide
+          slim
           onClose={() => SETCONFIRMITEM(false)}
           footer={
             <>
@@ -683,12 +722,13 @@ export function PointEdit({
       {confirmPoint && (
         <Modal
           title={`保存巡检点「${name.trim()}」`}
+          slim
           onClose={() => SETCONFIRMPOINT(false)}
           footer={
             <>
               <Btn onClick={() => SETCONFIRMPOINT(false)}>返回修改</Btn>
-              <Btn primary onClick={savePoint}>
-                确认保存
+              <Btn primary onClick={saveAdd ? saveAndNew : savePoint}>
+                {saveAdd ? "保存并新增" : "确认保存"}
               </Btn>
             </>
           }
@@ -697,7 +737,7 @@ export function PointEdit({
             <b>巡检点名称</b>
             <span>{name.trim()}</span>
             <b>所属区域</b>
-            <span>{areaNameOfMap}</span>
+            <span>{regionOfPoint}</span>
             <b>巡检点坐标</b>
             <span>{coordText || "—"}</span>
             <b>巡检项</b>
@@ -712,7 +752,6 @@ export function PointEdit({
       {btOpen && (
         <Modal
           title="快速新建巡检目标台账"
-          wide
           onClose={() => BTO(false)}
           footer={
             <>

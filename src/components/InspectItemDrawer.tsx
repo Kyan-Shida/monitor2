@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import { Maximize2, Thermometer, Video } from "lucide-react";
-import { Badge, Btn, Drawer, Field, Modal, Note } from "./UI";
+import { Badge, Btn, Drawer, Field, Modal, Note, Switch as Toggle } from "./UI";
 import { Cascader, type CascaderOption } from "./Cascader";
 import { useStore } from "../data/store";
 import { areaNameOf } from "../data/deviceMaster";
@@ -584,7 +584,7 @@ function QuerySet({
   );
 }
 
-/** 开关型辅助按钮（补光灯 / 报警灯 / 雨刷 / 防冻 / 透雾） */
+/** 开关型辅助功能（补光灯 / 报警灯 / 雨刷 / 防冻 / 透雾）：名称 + 滑块开关 */
 function Switch({
   label,
   on,
@@ -595,13 +595,10 @@ function Switch({
   onChange: (on: boolean) => void;
 }) {
   return (
-    <button
-      type="button"
-      className={on ? "switch-btn on" : "switch-btn"}
-      onClick={() => onChange(!on)}
-    >
-      {label} {on ? "开" : "关"}
-    </button>
+    <span className="aux-switch">
+      <span>{label}</span>
+      <Toggle checked={on} onChange={onChange} label={label} />
+    </span>
   );
 }
 

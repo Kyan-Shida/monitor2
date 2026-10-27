@@ -26,6 +26,10 @@ type PayloadForm = {
   mode: "add" | "edit";
   id: string;
   name: string;
+  /** 上装型号版本（硬件 / 固件版本） */
+  version: string;
+  /** 上装厂家 */
+  vendor: string;
   /** 采集能力组：一个上装可覆盖多种采集方式，每组各自声明支持动作 */
   abilities: RobotPayloadAbility[];
   models: DeviceType[];
@@ -99,6 +103,8 @@ export function RobotPayloads() {
                 mode: "add",
                 id: "",
                 name: "",
+                version: "",
+                vendor: "",
                 abilities: [{ kind: "可见光", actions: actionsOfKind("可见光") }],
                 models: [...deviceTypes],
               })
@@ -137,6 +143,8 @@ export function RobotPayloads() {
                     mode: "edit",
                     id: p.id,
                     name: p.name,
+                    version: p.version || "",
+                    vendor: p.vendor || "",
                     abilities: p.abilities.map((ab) => ({
                       kind: ab.kind,
                       actions: [...ab.actions],
@@ -205,6 +213,8 @@ export function RobotPayloads() {
                         : "ADD_ROBOT_PAYLOAD",
                     id: form.id.trim(),
                     name: form.name.trim(),
+                    version: form.version.trim(),
+                    vendor: form.vendor.trim(),
                     abilities: form.abilities,
                     models: form.models,
                   });
@@ -229,6 +239,20 @@ export function RobotPayloads() {
               value={form.name}
               placeholder="例如 三维激光雷达"
               onChange={(e) => FORM({ ...form, name: e.target.value })}
+            />
+          </Field>
+          <Field label="型号版本">
+            <input
+              value={form.version}
+              placeholder="例如 V2.1"
+              onChange={(e) => FORM({ ...form, version: e.target.value })}
+            />
+          </Field>
+          <Field label="厂家">
+            <input
+              value={form.vendor}
+              placeholder="例如 海康机器人"
+              onChange={(e) => FORM({ ...form, vendor: e.target.value })}
             />
           </Field>
           <Field label="采集能力（可配置多种采集方式）">

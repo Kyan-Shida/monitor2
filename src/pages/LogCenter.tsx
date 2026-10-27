@@ -1,6 +1,7 @@
 /**
  * @file LogCenter.tsx
- * @description 日志中心：系统操作日志 / 任务运行日志 / 机器人操作日志（顶部页签切换）
+ * @description 日志中心：系统操作日志 / 任务运行日志 / 机器人操作日志 / 接口日志（顶部页签切换）；
+ *              平台管理视角下只看平台侧留痕，仅保留系统操作日志
  * @interaction 由 pages/Supporting.tsx 在 page === "audit" 时渲染；表格见 components/LogTable.tsx
  */
 import { useState } from "react";
@@ -10,6 +11,7 @@ import { LogTable, type LogColumn } from "../components/LogTable";
 import { Segmented } from "../components/Segmented";
 import { downloadXlsx } from "../data/excel";
 import { usePageSize } from "../data/navigation";
+import { useStore } from "../data/store";
 import { InterfaceLog } from "./InterfaceLog";
 import {
   ROBOT_LOGS,
@@ -374,14 +376,19 @@ function RobotLogPage() {
 }
 
 export function LogCenter() {
+  const { account, platformMode } = useStore();
+  /** 平台管理视角只看平台侧的操作留痕：任务 / 机器人 / 接口属租户业务日志，不在此暴露 */
+  const platformOnly = account?.level === "super" && platformMode;
   const [tab, setTab] = useState<TabKey>("sys");
   return (
     <>
-      <Segmented<TabKey> items={TABS} value={tab} onChange={setTab} />
-      {tab === "sys" && <SysLogPage />}
-      {tab === "task" && <TaskLogPage />}
-      {tab === "robot" && <RobotLogPage />}
-      {tab === "interface" && <InterfaceLog />}
+      {!platformOnly && (
+        <Segmented<TabKey> items={TABS} value={tab} onChange={setTab} />
+      )}
+      {(platformOnly || tab === "sys") && <SysLogPage />}
+      {!platformOnly && tab === "task" && <TaskLogPage />}
+      {!platformOnly && tab === "robot" && <RobotLogPage />}
+      {!platformOnly && tab === "interface" && <InterfaceLog />}
     </>
   );
 }
