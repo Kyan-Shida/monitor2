@@ -1,11 +1,11 @@
 /**
  * @file RobotPayloads.tsx
  * @description 后台管理 › 机器人上装能力：维护机器人可挂载的采集载荷主数据
- *              （上装编码 / 名称 / 采集能力（可多组：采集方式 + 支持动作）/ 适用机型 / 启用停用）。
+ *              （上装编码 / 名称 / 采集能力（可多组：采集方式 + 支持动作）/ 适用机型；无启停）。
  *              一个上装可**再定义多种采集方式**，机器人能力、任务指令集与派单校验都按
  *              「上装 → 采集能力组 → 采集方式 → 原子动作」反查，这里是上游口径。
  * @interaction 路由 `payloads`（后台管理 › 机器人上装能力）；引擎动作：
- *              ADD_ROBOT_PAYLOAD / UPDATE_ROBOT_PAYLOAD / SET_ROBOT_PAYLOAD_STATE / DELETE_ROBOT_PAYLOAD
+ *              ADD_ROBOT_PAYLOAD / UPDATE_ROBOT_PAYLOAD / DELETE_ROBOT_PAYLOAD
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
@@ -120,7 +120,6 @@ export function RobotPayloads() {
             "上装名称",
             "采集能力（采集方式 / 支持动作）",
             "适用机型",
-            "状态",
             "操作",
           ]}
           rows={pageRows.map((p) => [
@@ -135,7 +134,6 @@ export function RobotPayloads() {
               ))}
             </div>,
             p.models.length ? p.models.join(" / ") : "机型无关",
-            <Badge>{p.state}</Badge>,
             <div className="actions">
               <Btn
                 onClick={() =>
@@ -154,17 +152,6 @@ export function RobotPayloads() {
                 }
               >
                 编辑
-              </Btn>
-              <Btn
-                onClick={() =>
-                  act({
-                    type: "SET_ROBOT_PAYLOAD_STATE",
-                    id: p.id,
-                    state: p.state === "启用" ? "停用" : "启用",
-                  })
-                }
-              >
-                {p.state === "启用" ? "停用" : "启用"}
               </Btn>
               <Btn
                 danger

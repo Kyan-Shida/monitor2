@@ -39,7 +39,7 @@ import { FilterPanel } from "../components/FilterPanel";
 import { MapOnboarding } from "../components/MapOnboarding";
 import { MapSurveyPanel } from "../components/MapSurveyPanel";
 import { MapDispatch } from "../components/MapDispatch";
-import { DeleteConfirm } from "../components/ListDelete";
+import { useListDelete } from "../components/ListDelete";
 import { SAMPLE_MAP_FILE, SAMPLE_MAP_IMAGE } from "../data/sampleMap";
 import { MAP_IMAGE_MAX_SIZE, mapNo, fmtDateTime } from "../data/types";
 import { mapLifecycleOf, runningTasksOf } from "../data/robotMaps";
@@ -94,9 +94,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   } | null>(null);
   /** 重命名保存前的二次确认 */
   const [askRename, ASKRENAME] = useState(false);
-  /** 待删除的数据包 / 地图（二次确认） */
-  const [delPacket, DELPKT] = useState<MapPacket | null>(null);
-  const [delMap, DELM] = useState<MapAsset | null>(null);
   /** 绑定机器抽屉：非空表示打开，列出使用该地图的机器人及其版本 */
   const [bindMap, SETBIND] = useState<MapAsset | null>(null);
   /** 启停二次确认：待切换的地图（确认后才落库） */
@@ -362,7 +359,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   // 同步状态是派生值：未同步 = 当前版本还没下发给所有旧版本机器（新图从未下发也算）；已同步 = 已下发到位
   const states = ["全部", "未同步", "已同步"];
   /**
-   * 停用影响面：绑定机器人数 / 依赖计划数 / 在跑任务数
+   * 停用影响面：绑定机器人数 / 依赖计划数 / 在跑任务数 / 地图上巡检项目数
    * @description 确认框里先摊开再让人点——「停用会伤到什么」不该等点完才知道
    */
   function impactOf(mapId: string) {
@@ -373,7 +370,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
       ),
     ).length;
     const running = runningTasksOf(s, mapId).length;
-    return { bound, plans, running };
+    const points = s.points.filter((x) => x.mapId === mapId).length;
+    return { bound, plans, running, points };
   }
 
   const kw = query.trim();
@@ -386,6 +384,32 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   const pages = Math.max(1, Math.ceil(list.length / pageSize));
   const cur = Math.min(pager || 1, pages);
   const rows = list.slice((cur - 1) * pageSize, cur * pageSize);
+  /** 列表删除（通用组件）：工具栏「删除」→ 进入多选 → 批量删除地图与数据包（按类型分发） */
+  const pageIds = [
+    ...packets.map((k) => k.id),
+    ...rows.map((x) => x.id),
+  ];
+  const del = useListDelete({
+    onDelete: (ids) => {
+      const mapIds = ids.filter((id) => s.maps.some((m) => m.id === id));
+      const pktIds = ids.filter((id) => packets.some((p) => p.id === id));
+      let ok = true;
+      for (const id of mapIds)
+        if (!act({ type: "DELETE_MAP", id })) ok = false;
+      for (const id of pktIds)
+        if (!act({ type: "DELETE_MAP_PACKET", id })) ok = false;
+      return ok;
+    },
+    batch: {
+      pageIds,
+      title: (n) => `删除 ${n} 项`,
+      nameOf: (id) =>
+        s.maps.find((m) => m.id === id)?.name ||
+        packets.find((p) => p.id === id)?.name ||
+        id,
+    },
+  });
+  const multi = del.sel !== null;
 
   return (
     <>
@@ -402,6 +426,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
               {filterOpen ? "收起筛选" : "筛选"}
               {filterCount ? `（${filterCount}）` : ""}
             </Btn>
+            {/* 删除入口：点一次进入多选，勾选后回到此按钮批量删除（通用组件） */}
+            {del.bar}
             <Btn
               onClick={() => {
                 SRID("");
@@ -454,7 +480,9 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
           </Empty>
         ) : (
           <Table
+            className={del.tableClass}
             heads={[
+              ...(multi ? [del.head] : []),
               "地图编号",
               "地图名称",
               "来源",
@@ -468,6 +496,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
             rows={[
               // 地图数据包（还不是地图）：同一张表里用「数据包」状态区分，编辑命名后才落为正式地图
               ...packets.map((k) => [
+                // 多选：工具栏点「删除」后首列出现勾选框
+                ...(multi ? [del.cell(k.id, k.name)] : []),
                 // 数据包还不是正式地图：没有编号 / 启停 / 绑定机器，占位展示
                 <span className="muted">—</span>,
                 <b className="map-packet-name">{k.name}</b>,
@@ -523,17 +553,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                           <RefreshCw size={14} />
                           构建地图
                         </button>
-                        <button
-                          role="menuitem"
-                          className="map-more-item danger"
-                          onClick={() => {
-                            closeMore();
-                            DELPKT(k);
-                          }}
-                        >
-                          <Trash2 size={14} />
-                          删除
-                        </button>
                       </div>,
                       document.body,
                     )}
@@ -544,6 +563,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                 const bound = s.robots.filter((r) => r.mapId === x.id);
                 const outdated = bound.filter((r) => r.mapVersion < x.version);
                 return [
+                  // 多选：工具栏点「删除」后首列出现勾选框
+                  ...(multi ? [del.cell(x.id, x.name)] : []),
                   // 地图编号：统一 MAP-XXX 格式，只读展示（与详情页「地图编号」同源）
                   mapNo(x.id),
                   <b>{x.name}</b>,
@@ -638,17 +659,6 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                             >
                               <RefreshCw size={14} />
                               更新地图
-                            </button>
-                            <button
-                              role="menuitem"
-                              className="map-more-item danger"
-                              onClick={() => {
-                                closeMore();
-                                DELM(x);
-                              }}
-                            >
-                              <Trash2 size={14} />
-                              删除地图
                             </button>
                           </div>,
                           document.body,
@@ -844,35 +854,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
         </Modal>
       )}
 
-      {/* 删除地图：二次确认（通用组件；图下仍有巡检点时由引擎拦截） */}
-      <DeleteConfirm
-        state={
-          delMap
-            ? {
-                title: `删除地图「${delMap.name}」`,
-                text: "删除后该地图及其标定数据、下发记录一并移除；图下仍有巡检点时不可删除。",
-                run: () => act({ type: "DELETE_MAP", id: delMap.id }),
-              }
-            : null
-        }
-        onClose={() => DELM(null)}
-      />
-
-      {/* 删除数据包（尚未成为地图）：二次确认（通用组件） */}
-      <DeleteConfirm
-        state={
-          delPacket
-            ? {
-                title: `删除数据包「${delPacket.name}」`,
-                text: "该数据包尚未成为地图，删除后不可恢复。",
-                run: () => {
-                  act({ type: "DELETE_MAP_PACKET", id: delPacket.id });
-                },
-              }
-            : null
-        }
-        onClose={() => DELPKT(null)}
-      />
+      {/* 批量删除地图 / 数据包：工具栏「删除」触发，二次确认（通用组件；图下仍有巡检点时引擎拦截） */}
+      {del.modal}
 
       {/* 绑定机器：点列表「N 台」打开，列出使用该地图的机器人及其版本 */}
       {bindMap &&
@@ -954,6 +937,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                     <dd>{face.plans} 条</dd>
                     <dt>在跑任务</dt>
                     <dd>{face.running} 个</dd>
+                    <dt>巡检项目</dt>
+                    <dd>{face.points} 个</dd>
                   </dl>
                   {face.running > 0 && (
                     <Field label="在跑任务处理">
@@ -991,7 +976,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                     `依赖它的 ${face.plans} 条计划不会自动补跑。`}
                 </p>
               )}
-              <Field label="操作原因" required>
+              <Field label={off ? "停用原因" : "操作原因"} required>
                 <input
                   value={toggleReason}
                   placeholder="例如 地图待重建 / 现场环境变更"

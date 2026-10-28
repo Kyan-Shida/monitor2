@@ -227,10 +227,9 @@ export const metrics: MetricDef[] = [
     roles: "*",
     calc: (s) => {
       // J′ 口径收敛：分母由「设备清单里声明要巡检的检测目标」决定，
-      // 关闭「是否巡检」的目标不进分母；已停用设备的清单不计入。
+      // 关闭「是否巡检」的目标不进分母。
       // 这样"清单要求了但还没落位"才会体现为覆盖缺口（原来只统计点位自身启用率，看不出缺口）。
       const targets = (s.devices || [])
-        .filter((d) => d.state !== "停用")
         .flatMap((d) =>
           d.items
             .filter((it) => it.inspect)

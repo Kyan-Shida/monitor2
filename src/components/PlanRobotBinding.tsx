@@ -1,9 +1,9 @@
 /**
  * @file PlanRobotBinding.tsx
- * @description 计划绑定执行机器人：一个级联选择器字段（服务区域 › 机器人），**必填**；
+ * @description 计划绑定执行机器人：一个级联选择器字段（机型 › 机器人），**必填**；
  *              没有「暂不绑定」选项（任务计划必须绑定机器人；临时任务不经过本字段），
  *              选到不可绑定的机器人时不落这次选择，改用弹窗说明原因
- * @interaction Planning.tsx（新建 / 编辑计划弹窗、计划编辑内置页）；区域与检测能力口径来自 data/planSchedule
+ * @interaction Planning.tsx（新建 / 编辑计划弹窗、计划编辑内置页）；机型与检测能力口径来自 data/planSchedule
  */
 import { useState } from "react";
 import { useStore } from "../data/store";
@@ -27,21 +27,9 @@ export function PlanRobotBinding({
     robot: Robot;
     why: string[];
   } | null>(null);
-  const template = s.templates.find((t) => t.id === templateId);
-  /** 路线点位涉及的服务区域：用于把「区域不匹配」写成具体是哪个区域 */
-  const needRegions = [
-    ...new Set(
-      s.points
-        .filter((p) => template?.points.includes(p.id))
-        .map((p) => s.maps.find((m) => m.id === p.mapId)?.region)
-        .filter((x): x is string => Boolean(x)),
-    ),
-  ];
   /** 抽象原因展开成可读文案（与旧卡片上的提示同一口径，缺什么写什么） */
   const explain = (robot: Robot, reasons: string[]) =>
     reasons.map((x) => {
-      if (x === "服务区域不匹配")
-        return `服务区域不匹配（路线服务区域 ${needRegions.join(" / ") || "未指定"}）`;
       if (x === "检测能力不足") {
         const missing = requiredKinds(s, templateId).filter(
           (k) => !robot.capabilities.includes(k),
@@ -50,13 +38,13 @@ export function PlanRobotBinding({
       }
       return x;
     });
-  /** 一级为各服务区域，二级为该区域下的机器人（不再提供「暂不绑定」：计划必须绑定机器人） */
-  const options: CascaderOption[] = [...new Set(s.robots.map((r) => r.region))].map(
-    (region) => ({
-      value: `region:${region}`,
-      label: region,
+  /** 一级为各机型，二级为该机型下的机器人（不再提供「暂不绑定」：计划必须绑定机器人） */
+  const options: CascaderOption[] = [...new Set(s.robots.map((r) => r.deviceType))].map(
+    (dt) => ({
+      value: `dt:${dt}`,
+      label: dt,
       children: s.robots
-        .filter((r) => r.region === region)
+        .filter((r) => r.deviceType === dt)
         .map((r) => ({ value: r.id, label: `${r.id} · ${r.name}` })),
     }),
   );

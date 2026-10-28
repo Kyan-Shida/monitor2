@@ -37,9 +37,9 @@ export interface Point {
   kind: string;
   requirement: string;
   /**
-   * 巡检点状态：只有两态 —— 已启用（验证通过、可下发）/ 停用（未启用或验证未通过）
-   * @description 原「待标注 / 待验证 / 待重新验证」属过渡态，已收敛：保存 / 标注 / 验证失败 /
-   *              变更确认一律落「停用」，人工「启用」或自主验证通过后转「已启用」
+   * 巡检点状态：已启用（可被路线 / 任务引用）/ 停用（尚未验证通过）
+   * @description 现场采集与地图导入的点位直接落「已启用」；只有标注工作台打点的点位
+   *              初始为「停用」，自主验证通过后转「已启用」
    */
   state: "已启用" | "停用";
   /** 地图内相对坐标（百分比，仅用于底图展示投影，非权威定位） */
@@ -478,7 +478,7 @@ export interface RobotPayloadAbility {
  *              上装 → N 组「采集方式（可见光 / 红外 / 气体 / 声音）→ 原子动作」→ 巡检项 / 任务指令集，
  *              因此这里是「机器人能力 → 可执行任务 → 派单校验」链路的唯一上游口径。
  *              与上装分组常量 `payloadGroups` 的区别：后者只是动作模板的归组展示（写死 4 类，不可维护），
- *              本实体是后台可维护的清单（一个上装可再定义多种采集方式 + 支持动作 / 适用机型 / 启停）。
+ *              本实体是后台可维护的清单（一个上装可再定义多种采集方式 + 支持动作 / 适用机型）。
  */
 export interface RobotPayload {
   /** 上装编码（唯一身份，仅字母 / 数字 / 下划线 / 中划线） */
@@ -492,7 +492,6 @@ export interface RobotPayload {
   abilities: RobotPayloadAbility[];
   /** 适用机型：空数组 = 机型无关（通用上装） */
   models: DeviceType[];
-  state: "启用" | "停用";
 }
 
 /**
@@ -507,8 +506,6 @@ export interface RobotAbilityParam {
   name: string;
   /** 适用机型（留空 = 不限） */
   models?: DeviceType[];
-  /** 启停（缺省 = 启用）：停用后不再作为巡检项能力项的可选项 */
-  state?: "启用" | "停用";
 }
 export interface RobotAbilityKind {
   id: string;
@@ -627,7 +624,8 @@ export interface AlgoConfig {
   adapt: AlgoKind[];
   /** 平台侧同步的更新时间（展示用） */
   updatedAt: string;
-  state: "启用" | "停用";
+  /** 启停凭据：仅厂区「已勾选算法清单」使用，平台算法库不带此字段 */
+  state?: "启用" | "停用";
 }
 
 /**
@@ -637,21 +635,21 @@ export interface AlgoConfig {
  *              库条目由平台侧同步维护，页面只读。
  */
 export const ALGO_LIBRARY: AlgoConfig[] = [
-  { id: "ALG-01", name: "表计读数识别 v1.2", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-01-27 22:42:05", state: "启用" },
-  { id: "ALG-02", name: "红外热像温升分析 v1.3", deploy: "本体", adapt: ["红外测温"], updatedAt: "2026-01-22 09:15:31", state: "启用" },
-  { id: "ALG-03", name: "红外热像区域测温", deploy: "本体", adapt: ["红外测温"], updatedAt: "2026-01-18 14:03:12", state: "启用" },
-  { id: "ALG-04", name: "气体浓度判读 v1.1", deploy: "云端", adapt: ["气体检测"], updatedAt: "2026-01-15 10:21:48", state: "启用" },
-  { id: "ALG-05", name: "阀位 / 开关状态判别 v1.4", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-01-12 16:58:20", state: "启用" },
-  { id: "ALG-06", name: "液滴 / 油渍分割 v2", deploy: "云端", adapt: ["缺陷识别"], updatedAt: "2026-01-09 11:07:33", state: "启用" },
-  { id: "ALG-07", name: "外观缺陷检测 v1.0", deploy: "云端", adapt: ["缺陷识别"], updatedAt: "2026-01-06 08:44:02", state: "启用" },
-  { id: "ALG-08", name: "设备异响识别 v0.9", deploy: "本体", adapt: ["声纹识别"], updatedAt: "2025-12-28 19:12:57", state: "启用" },
-  { id: "ALG-09", name: "多模态融合识别", deploy: "云端", adapt: [], updatedAt: "2025-12-25 13:30:11", state: "启用" },
-  { id: "ALG-10", name: "局部放电识别 v1.0", deploy: "本体", adapt: ["声纹识别"], updatedAt: "2026-02-02 09:12:40", state: "启用" },
-  { id: "ALG-11", name: "液位读数识别 v1.2", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-02-01 15:36:22", state: "启用" },
-  { id: "ALG-12", name: "渗漏 / 跑冒滴漏识别 v1.1", deploy: "本体", adapt: ["缺陷识别"], updatedAt: "2026-01-30 10:05:18", state: "启用" },
-  { id: "ALG-13", name: "红外温差趋势分析 v1.1", deploy: "云端", adapt: ["红外测温"], updatedAt: "2026-01-29 17:41:09", state: "启用" },
-  { id: "ALG-14", name: "人员聚集识别 v1.0", deploy: "本体", adapt: ["行为识别"], updatedAt: "2026-01-26 08:22:45", state: "启用" },
-  { id: "ALG-15", name: "甲烷遥测反演 v0.8", deploy: "云端", adapt: ["气体检测"], updatedAt: "2026-01-24 20:14:03", state: "启用" },
+  { id: "ALG-01", name: "表计读数识别 v1.2", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-01-27 22:42:05" },
+  { id: "ALG-02", name: "红外热像温升分析 v1.3", deploy: "本体", adapt: ["红外测温"], updatedAt: "2026-01-22 09:15:31" },
+  { id: "ALG-03", name: "红外热像区域测温", deploy: "本体", adapt: ["红外测温"], updatedAt: "2026-01-18 14:03:12" },
+  { id: "ALG-04", name: "气体浓度判读 v1.1", deploy: "云端", adapt: ["气体检测"], updatedAt: "2026-01-15 10:21:48" },
+  { id: "ALG-05", name: "阀位 / 开关状态判别 v1.4", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-01-12 16:58:20" },
+  { id: "ALG-06", name: "液滴 / 油渍分割 v2", deploy: "云端", adapt: ["缺陷识别"], updatedAt: "2026-01-09 11:07:33" },
+  { id: "ALG-07", name: "外观缺陷检测 v1.0", deploy: "云端", adapt: ["缺陷识别"], updatedAt: "2026-01-06 08:44:02" },
+  { id: "ALG-08", name: "设备异响识别 v0.9", deploy: "本体", adapt: ["声纹识别"], updatedAt: "2025-12-28 19:12:57" },
+  { id: "ALG-09", name: "多模态融合识别", deploy: "云端", adapt: [], updatedAt: "2025-12-25 13:30:11" },
+  { id: "ALG-10", name: "局部放电识别 v1.0", deploy: "本体", adapt: ["声纹识别"], updatedAt: "2026-02-02 09:12:40" },
+  { id: "ALG-11", name: "液位读数识别 v1.2", deploy: "云端", adapt: ["读数识别"], updatedAt: "2026-02-01 15:36:22" },
+  { id: "ALG-12", name: "渗漏 / 跑冒滴漏识别 v1.1", deploy: "本体", adapt: ["缺陷识别"], updatedAt: "2026-01-30 10:05:18" },
+  { id: "ALG-13", name: "红外温差趋势分析 v1.1", deploy: "云端", adapt: ["红外测温"], updatedAt: "2026-01-29 17:41:09" },
+  { id: "ALG-14", name: "人员聚集识别 v1.0", deploy: "本体", adapt: ["行为识别"], updatedAt: "2026-01-26 08:22:45" },
+  { id: "ALG-15", name: "甲烷遥测反演 v0.8", deploy: "云端", adapt: ["气体检测"], updatedAt: "2026-01-24 20:14:03" },
 ];
 
 /** 点位级机器人动作编排（阶段⑥：解决"到得了之后怎么看"） */
@@ -966,8 +964,6 @@ export interface Requirement {
   expected?: string;
   /** 部署位置：云端 / 本体（沿用算法库口径） */
   deploy: AlgoDeploy;
-  /** 状态：停用后不再出现在巡检目标台账的算法模板候选里 */
-  state: "启用" | "停用";
   /** 默认采集与复核要求 */
   needPhoto?: boolean;
   needVideo?: boolean;
@@ -1213,11 +1209,6 @@ export interface DeviceAsset {
   items: InspectItem[];
   photo?: string;
   remark?: string;
-  /**
-   * 设备启停：停用后，含该设备点位的任务创建 / 派单被拦截。
-   * @description 替代旧口径 `extras.category === "equipment"`（种子里从无该类数据，该校验一直空转）
-   */
-  state?: "在用" | "停用";
   /** 所属厂区（清单里的厂区列）：指标按厂区裁剪时用；缺省时不参与裁剪 */
   region?: string;
   /** 最近更新时间（建档 / 编辑 / 清单导入时刷新，用于台账「更新时间」列） */
@@ -1457,6 +1448,8 @@ export interface Task {
   done: string[];
   skipped: string[];
   failure?: string;
+  /** 终止原因：终止不可逆，必填留痕；取消 / 撤回不填 */
+  stopReason?: string;
   retries: number;
   dispatchId?: string;
   created: string;
@@ -1726,7 +1719,6 @@ export interface Extra {
   id: string;
   name: string;
   category: string;
-  status: string;
   detail: string;
   /** 参数类型（参数配置中心）：业务参数走单值，数据字典走键值对 */
   type?: "业务参数" | "数据字典";

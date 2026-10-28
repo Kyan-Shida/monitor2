@@ -3,7 +3,7 @@
  * @description 系统设置 › 参数配置中心：
  *   Tab1 事件告警参数 —— 全局监控阈值（带版本）+ 调试校验（模拟事件，样式与生产配置隔离）；
  *   Tab2 字典与业务参数 —— 列表化管理，新增 / 编辑走右侧抽屉，数据字典用键值对录入。
- * @interaction 路由 `settings`；引擎 action：SAVE_SYSTEM_RULES / EXTRA_SAVE / EXTRA_TOGGLE
+ * @interaction 路由 `settings`；引擎 action：SAVE_SYSTEM_RULES / EXTRA_SAVE
  */
 import { useState } from "react";
 import { createPortal } from "react-dom";
@@ -17,7 +17,6 @@ import {
   Field,
   Modal,
   Panel,
-  Switch,
   Table,
 } from "../components/UI";
 import { Pager } from "../components/Business";
@@ -144,7 +143,7 @@ function nextCode(items: Extra[], type: Extra["type"]) {
 }
 
 function DictParams() {
-  const { s, act } = useStore();
+  const { s } = useStore();
   const [kw, KW] = useViewState("param.dict.kw", "");
   const [type, TYPE] = useViewState("param.dict.type", "全部类型");
   const [page, PAGE] = useViewState("param.dict.page", 1);
@@ -191,10 +190,10 @@ function DictParams() {
         }
       >
         <p className="muted">
-          参数保存后立即生效；停用后调度与校验不再引用。数据字典用于下拉选项，业务参数用于阈值与数量配置。
+          参数保存后立即生效。数据字典用于下拉选项，业务参数用于阈值与数量配置。
         </p>
         <Table
-          heads={["编号", "名称", "类型", "配置值 / 业务范围", "状态", "操作"]}
+          heads={["编号", "名称", "类型", "配置值 / 业务范围", "操作"]}
           rows={shown.map((x) => [
             x.id,
             x.name,
@@ -202,13 +201,9 @@ function DictParams() {
               {x.type || "业务参数"}
             </Badge>,
             x.detail,
-            <Badge>{x.status}</Badge>,
             <div className="actions">
               <Btn small onClick={() => E(x.id)}>
                 编辑
-              </Btn>
-              <Btn small onClick={() => act({ type: "EXTRA_TOGGLE", id: x.id })}>
-                {x.status === "启用" ? "停用" : "启用"}
               </Btn>
             </div>,
           ])}
@@ -261,7 +256,6 @@ function ParamDrawer({
   const [values, VALUES] = useState(
     item?.values?.length ? item.values : [{ key: "", value: "" }],
   );
-  const [status, STATUS] = useState(item?.status ?? "启用");
   const [ask, ASK] = useState(false);
 
   /* 编号不让人填：编辑沿用原编号，新增按当前类型自动生成（切类型即跟着变） */
@@ -281,7 +275,6 @@ function ParamDrawer({
       name: name.trim(),
       paramType: type,
       category: "settings",
-      status,
       detail,
       values: dict ? values : [],
     });
@@ -382,17 +375,6 @@ function ParamDrawer({
               />
             </Field>
           )}
-
-          <Field label="状态">
-            <div className="switch-row">
-              <Switch
-                checked={status === "启用"}
-                label="启用状态"
-                onChange={(on) => STATUS(on ? "启用" : "停用")}
-              />
-              {status}
-            </div>
-          </Field>
         </div>
 
         <div className="drawer-foot">

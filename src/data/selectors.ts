@@ -57,7 +57,6 @@ export const logNames: Record<string, string> = {
   SET_MAP_LAYERS: "地图图层更新",
   IMPORT_DEVICES: "设备清单导入",
   SET_INSPECT_FLAG: "是否巡检开关",
-  SET_DEVICE_STATE: "设备启停",
   ADD_BUSINESS_TARGET: "新增巡检目标台账",
   UPDATE_BUSINESS_TARGET: "巡检目标台账更新",
   DELETE_BUSINESS_TARGETS: "删除巡检目标台账",
@@ -420,13 +419,6 @@ export function checks(s: State, t: Task, r: Robot) {
           (x) => x.robotId === r.id && !["已释放", "已超时"].includes(x.state),
         ),
       detail: r.state === "人工接管" ? "MANUAL · 独占中" : r.state,
-    },
-    {
-      name: "点位可用",
-      pass: t.items.every(
-        (p) => s.points.find((q) => q.id === p.id)?.state === "已启用",
-      ),
-      detail: "业务启用 / 自主验证",
     },
     {
       name: "当前任务冲突",

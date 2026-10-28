@@ -26,6 +26,7 @@ import { Btn, Empty, Modal, Note, Panel, Table } from "../components/UI";
 import { Pager } from "../components/Business";
 import { PointCalibration } from "../components/PointCalibration";
 import { FilterPanel } from "../components/FilterPanel";
+import { useListDelete } from "../components/ListDelete";
 import {
   actionsOfPoint,
   areaNameOf,
@@ -104,6 +105,21 @@ export function InspectionPoints({ id }: { id?: string }) {
   const pages = Math.max(1, Math.ceil(list.length / pageSize));
   const cur = Math.min(pager || 1, pages);
   const rows = list.slice((cur - 1) * pageSize, cur * pageSize);
+  /** 列表删除（通用组件）：工具栏「删除」→ 进入多选 → 批量删除巡检点（被路线引用时引擎拦截） */
+  const pageIds = rows.map((p) => p.id);
+  const del = useListDelete({
+    onDelete: (ids) => {
+      let ok = true;
+      for (const id of ids) if (!act({ type: "DELETE_POINT", id })) ok = false;
+      return ok;
+    },
+    batch: {
+      pageIds,
+      title: (n) => `删除 ${n} 个巡检点`,
+      nameOf: (id) => s.points.find((p) => p.id === id)?.name || id,
+    },
+  });
+  const multi = del.sel !== null;
   const specCount = s.points.reduce(
     (n, p) => n + (p.inspectItems?.length || 0),
     0,
@@ -166,6 +182,8 @@ export function InspectionPoints({ id }: { id?: string }) {
                   {filterOpen ? "收起筛选" : "筛选"}
                   {filterCount ? `（${filterCount}）` : ""}
                 </Btn>
+                {/* 删除入口：点一次进入多选，勾选后回到此按钮批量删除（通用组件） */}
+                {del.bar}
                 <Btn primary onClick={() => go("point-onsite")}>
                   现场采集新增
                 </Btn>
@@ -195,7 +213,9 @@ export function InspectionPoints({ id }: { id?: string }) {
               />
             )}
             <Table
+              className={del.tableClass}
               heads={[
+                ...(multi ? [del.head] : []),
                 "巡检点编码",
                 "巡检点名称",
                 "统一坐标（米）",
@@ -209,6 +229,8 @@ export function InspectionPoints({ id }: { id?: string }) {
                 const devs = devicesOfPoint(s, p);
                 const w = p.world;
                 return [
+                  // 多选：工具栏点「删除」后首列出现勾选框（被路线引用时引擎拦截）
+                  ...(multi ? [del.cell(p.id, p.name)] : []),
                   p.id,
                   p.name,
                   w ? `X ${w.x} · Y ${w.y} · Z ${w.z}` : "未写入统一坐标",
@@ -250,6 +272,9 @@ export function InspectionPoints({ id }: { id?: string }) {
           <PointCalibration mapId={id} />
         </Modal>
       )}
+
+      {/* 批量删除巡检点：工具栏「删除」触发，二次确认（通用组件；被路线引用时引擎拦截） */}
+      {del.modal}
     </>
   );
 }

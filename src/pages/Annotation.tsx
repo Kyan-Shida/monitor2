@@ -75,8 +75,8 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
   /** 巡检点来自**独立标定数据**（与地图分开放），地图本身不含任何点位 */
   const targets = targetsOf(s, m.id);
   const first = s.points.find((p) => p.targetId === targets[0]?.id);
-  /** 可标注的设备：必须在用（设备主数据是"巡检什么"的唯一来源） */
-  const usable = (s.devices || []).filter((d) => d.state !== "停用");
+  /** 可标注的设备：设备主数据是"巡检什么"的唯一来源 */
+  const usable = s.devices || [];
   const [target, T] = useState(targets[0]?.id || ""),
     [name, N] = useState(first?.name || ""),
     [device, D] = useState(""),
@@ -252,7 +252,7 @@ export function Annotation({ id, embedded = false }: { id?: string; embedded?: b
             <>
               <p>
                 {candidate.kind} · {candidate.id}
-                {p && <> <Badge>{p.state}</Badge></>}
+                {p && <> <Badge>{p.validated ? "已验证" : "未验证"}</Badge></>}
               </p>
 
               <div className="ana-h">① 身份</div>

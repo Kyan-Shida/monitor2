@@ -24,6 +24,7 @@ import {
   Panel,
   Switch,
   Table,
+  Confirm,
 } from "../components/UI";
 import { FilterPanel } from "../components/FilterPanel";
 import { Pager } from "../components/Business";
@@ -67,6 +68,8 @@ export function AlarmPush() {
   /** 筛选面板展开态：条件默认收起，点「筛选」才显示 */
   const [filterOpen, SETFILTEROPEN] = useState(false);
   const [edit, E] = useState<AlarmPushStaff | null>(null);
+  /** 待启停的推送人员：开关切换先二次确认，确认后才落库 */
+  const [toggleStaff, SETTOGGLE] = useState<AlarmPushStaff | null>(null);
   /** 绑定范围可选项：区域（主数据 ∪ 设备归属）/ 设备（设备台账） */
   const areaOptions = areaScopeOptionsOf(s);
   const deviceOptions = deviceScopeOptionsOf(s);
@@ -177,12 +180,7 @@ export function AlarmPush() {
             checked={p.enabled !== false}
             disabled={s.roleId !== "admin"}
             label={`${p.name} 推送启停`}
-            onChange={() =>
-              act({
-                type: "SAVE_ALARM_PUSH",
-                staff: { ...p, enabled: p.enabled === false },
-              })
-            }
+            onChange={() => SETTOGGLE(p)}
           />,
           p.updatedBy || "—",
           <span className="muted">{p.updatedAt || "—"}</span>,
@@ -198,6 +196,27 @@ export function AlarmPush() {
           PN(1);
         }}
       />
+      {/* 推送人员启停：二次确认后落库；停用只影响推送，名单与配置保留 */}
+      {toggleStaff && (
+        <Confirm
+          title={toggleStaff.enabled === false ? "启用告警推送" : "停用告警推送"}
+          confirmText={toggleStaff.enabled === false ? "启用" : "停用"}
+          danger={toggleStaff.enabled !== false}
+          message={
+            toggleStaff.enabled === false
+              ? `启用「${toggleStaff.name}」后，将按已配置的等级与范围重新接收告警推送。`
+              : `停用「${toggleStaff.name}」后，该人员不再收到告警推送；名单与推送配置保留，之后可随时重新启用。`
+          }
+          onClose={() => SETTOGGLE(null)}
+          onConfirm={() => {
+            act({
+              type: "SAVE_ALARM_PUSH",
+              staff: { ...toggleStaff, enabled: toggleStaff.enabled === false },
+            });
+            SETTOGGLE(null);
+          }}
+        />
+      )}
       {/* 批量删除的二次确认（与其它列表共用同一套交互） */}
       {del.modal}
       {edit && (

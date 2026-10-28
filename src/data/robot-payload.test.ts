@@ -2,9 +2,9 @@
  * @file robot-payload.test.ts
  * @description 机器人上装能力（后台管理）引擎动作回归：编码唯一、一个上装可定义多种采集方式、
  *              每组动作必须与该组采集方式一致、同采集方式不可重复、机型必须存在，
- *              以及新增 / 停用 / 删除的落库效果。
+ *              以及新增 / 删除的落库效果。
  * @interaction 被测对象：engine.ts 的 ADD_ROBOT_PAYLOAD / UPDATE_ROBOT_PAYLOAD /
- *              SET_ROBOT_PAYLOAD_STATE / DELETE_ROBOT_PAYLOAD
+ *              DELETE_ROBOT_PAYLOAD
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -103,7 +103,6 @@ test("上装能力：新增（含多采集方式）→ 编辑 → 停用 → 删
     models: ["机器狗"],
   });
   const added = s.robotPayloads!.find((p) => p.id === "PL-LIDAR")!;
-  assert.equal(added.state, "启用");
   assert.deepEqual(added.models, ["机器狗"]);
   // 多采集方式被完整落库
   assert.deepEqual(added.abilities, [
@@ -123,9 +122,6 @@ test("上装能力：新增（含多采集方式）→ 编辑 → 停用 → 删
   assert.deepEqual(updated.abilities, [
     { kind: "可见光", actions: ["拍照", "录像片段"] },
   ]);
-
-  s = run(s, { type: "SET_ROBOT_PAYLOAD_STATE", id: "PL-LIDAR", state: "停用" });
-  assert.equal(s.robotPayloads!.find((p) => p.id === "PL-LIDAR")!.state, "停用");
 
   s = run(s, { type: "DELETE_ROBOT_PAYLOAD", id: "PL-LIDAR" });
   assert.equal(s.robotPayloads!.some((p) => p.id === "PL-LIDAR"), false);

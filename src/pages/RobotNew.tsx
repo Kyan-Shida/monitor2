@@ -39,9 +39,7 @@ export function RobotNew() {
    */
   const enabledKinds = [
     ...new Set(
-      (s.robotPayloads || [])
-        .filter((p) => p.state === "启用")
-        .flatMap((p) => p.abilities.map((ab) => ab.kind)),
+      (s.robotPayloads || []).flatMap((p) => p.abilities.map((ab) => ab.kind)),
     ),
   ];
   const capOptions = enabledKinds.length ? enabledKinds : captureKinds;

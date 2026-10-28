@@ -97,7 +97,7 @@ export function AlarmConfiguration({
             "巡检点 / 检测项 / 规则",
             "触发条件",
             "等级",
-            "版本 / 状态",
+            "状态",
             "操作",
           ]}
           rows={rules.map((r) => [

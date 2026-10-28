@@ -43,11 +43,9 @@ const KIND_ORDER: CaptureKind[] = ["可见光", "红外", "气体", "声音"];
  * @returns 能力项列表（上装覆盖到的采集方式 + 导航 / 电池 / 通信）
  */
 export function capabilityMatrix(s: State, r: Robot): CapabilityItem[] {
-  // 关联后台上装主数据：启用 + 适用该机型（机型无关的上装恒适用）的上装清单
+  // 关联后台上装主数据：适用该机型（机型无关的上装恒适用）的上装清单
   const payloads = (s.robotPayloads || []).filter(
-    (p) =>
-      p.state === "启用" &&
-      (!p.models.length || p.models.includes(r.deviceType)),
+    (p) => !p.models.length || p.models.includes(r.deviceType),
   );
   // 采集类能力行 = 上装覆盖到的采集方式；上装主数据为空时退回全部采集方式，避免只剩系统组件行
   const fromMaster = new Set<CaptureKind>(

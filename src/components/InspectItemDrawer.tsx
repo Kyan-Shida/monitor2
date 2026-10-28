@@ -247,11 +247,8 @@ export function InspectItemDrawer({
   const abilities = draft.abilities || [];
   /**
    * 能力参数候选：取自「后台管理 › 机器人能力」两级清单里的**能力参数**
-   * @description 已停用的参数不再进候选（启停开关的实际落点）；已配置的老巡检项照旧走下面的回显分支
    */
-  const abilityParams = (s.robotAbilities || []).flatMap((k) =>
-    k.params.filter((p) => p.state !== "停用"),
-  );
+  const abilityParams = (s.robotAbilities || []).flatMap((k) => k.params);
   /** 能力参数 → 能力类型（表格第二列只读带出） */
   const kindOfAbility = (param: string) =>
     (s.robotAbilities || []).find((k) =>
@@ -436,16 +433,12 @@ export function InspectItemDrawer({
             value={editingAb.param}
             onChange={(e) => setAbilityParam(abIndex, e.target.value)}
           >
-            {/* 停用的参数不再可选；但当前已选中的那条要留着，否则下拉回显不上、一保存就冲掉 */}
+            {/* 能力参数按能力类型分组列出（页面已无启停，全部可选） */}
             {(
               (s.robotAbilities || []).find(
                 (k) => k.name === kindOfAbility(editingAb.param),
               )?.params || []
-            )
-              .filter(
-                (p) => p.state !== "停用" || p.name === editingAb.param,
-              )
-              .map((p) => (
+            ).map((p) => (
                 <option key={p.id} value={p.name}>
                   {p.name}
                 </option>

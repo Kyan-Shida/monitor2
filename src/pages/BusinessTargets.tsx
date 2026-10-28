@@ -310,15 +310,13 @@ export function BusinessTargets({
   /** 采集方式：仪表类用仪表自己的；环境 / 区域类没有仪表，由巡检要求给出 */
   const effCapture = instrumentOf(pick)?.capture || effReq?.capture;
   /**
-   * 「算法模板」候选：只列启用中的模板，并按目标类型过滤（来源主数据 `Requirement.targetKinds`）
+   * 「算法模板」候选：按目标类型过滤（来源主数据 `Requirement.targetKinds`）
    * @description 仪表类目标不出现"看区域气体浓度"；区域 / 环境类目标不出现"看仪表读数"。
-   *              当前已选值不在候选里时（老数据 / 已停用）仍保留一行，避免打开即丢值
+   *              当前已选值不在候选里时（老数据）仍保留一行，避免打开即丢值
    */
   const reqOptions = (() => {
-    const list = requirements.filter(
-      (r) =>
-        r.state !== "停用" &&
-        (r.targetKinds || ["仪表", "环境", "区域"]).includes(form.targetKind),
+    const list = requirements.filter((r) =>
+      (r.targetKinds || ["仪表", "环境", "区域"]).includes(form.targetKind),
     );
     const cur = requirements.find(
       (r) => r.id === form.requirementId && !list.some((x) => x.id === r.id),
@@ -327,9 +325,7 @@ export function BusinessTargets({
   })();
   /** 区域 / 环境类目标可选的算法模板（第 1 段「区域 / 环境目标」分组按它生成候选） */
   const envReqOptions = requirements.filter(
-    (r) =>
-      r.state !== "停用" &&
-      (r.targetKinds?.includes("区域") || r.targetKinds?.includes("环境")),
+    (r) => r.targetKinds?.includes("区域") || r.targetKinds?.includes("环境"),
   );
   /**
    * 新建一条告警项的默认值（点「+ 告警等级配置」时的初值）

@@ -19,10 +19,7 @@ export function DeviceSummary({ dev }: { dev: DeviceAsset }) {
   return (
     <>
       <div className="object-head">
-        <h2>
-          {dev.name}
-          {dev.state === "停用" && <Badge>已停用</Badge>}
-        </h2>
+        <h2>{dev.name}</h2>
         <Btn onClick={() => EDITING(true)}>编辑</Btn>
       </div>
       <dl className="object-facts">

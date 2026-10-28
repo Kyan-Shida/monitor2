@@ -57,7 +57,7 @@ test("一个停靠位覆盖多种采集方式时，动作列表保留全部（�
   });
   const p = s.points.find((x) => x.name === "V003 表盘 + 罐壁")!;
   // 本用例只验证动作推导：跳过"试验发布 → 同步 → 自主验证"（该链路由端到端用例覆盖），
-  // 直接把新点位与地图恢复到可用于建任务的状态
+  // 直接把点位与地图恢复到可用于建任务的状态（标注打点的点位默认「停用」，此处等价于验证通过）
   p.state = "已启用";
   // 注意：ANNOTATE 已把地图打回「未同步」（结构化克隆后需重新取引用）
   s.maps.find((x) => x.id === "MAP-A03")!.syncState = "已同步";
@@ -113,8 +113,7 @@ test("巡检项配置的机器操作内容决定任务指令集；变更只影�
     name: before.name,
     inspectItems: [{ ...spec, actions: ["拍照", "采集红外热像"] }],
   });
-  // 保存巡检点会把点位打回停用、地图打回未同步：本用例只验证指令集来源，故先复位
-  s.points.find((p) => p.id === "P004")!.state = "已启用";
+  // 保存巡检点会把地图打回未同步：本用例只验证指令集来源，故先复位
   s.maps.find((m) => m.id === "MAP-A03")!.syncState = "已同步";
   s = run(s, {
     type: "CREATE_TASK",
@@ -217,7 +216,10 @@ test("端到端验收（K′4）：上传底图 → 图上标注（多选检测�
   assert.equal(mapOf().syncState, "已同步");
   s = syncTo(s, MAP, "R02");
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02" });
-  assert.equal(s.points.find((x) => x.id === p.id)!.state, "已启用");
+  assert.ok(
+    s.points.find((x) => x.id === p.id)!.validated,
+    "自主验证结果应记录在点位上",
+  );
   // ⑤ 生成任务：动作来自采集方式，视角来自点位编排
   s = run(s, {
     type: "CREATE_TASK",

@@ -13,6 +13,7 @@ import {
   Table,
   Modal,
   Field,
+  Confirm,
 } from "../components/UI";
 import { ObjectLink, Kpis, EventTimeline } from "../components/Business";
 import { MapCanvas } from "../components/MapCanvas";
@@ -232,7 +233,10 @@ function LiveTaskMonitor({ id }: { id: string }) {
     p = t.items[t.index];
   const [abnormal, A] = useState(false),
     [quickOpen, setQuickOpen] = useState(false),
-    [submittedTask, setSubmittedTask] = useState("");
+    [submittedTask, setSubmittedTask] = useState(""),
+    /** 终止任务：不可逆，二次确认并必填原因 */
+    [stopOpen, setStopOpen] = useState(false),
+    [stopReason, STOPREASON] = useState("");
   const results = s.results.filter((x) => x.taskId === t.id);
   const valid = results.filter(
     (x) => !["无效", "失败", "待复核"].includes(x.status),
@@ -417,8 +421,8 @@ function LiveTaskMonitor({ id }: { id: string }) {
         </Btn>
         <Btn
           danger
-          disabled={!["执行中", "暂停"].includes(t.state)}
-          onClick={() => act({ type: "STOP", id: t.id })}
+          disabled={!["执行中", "暂停", "已被接管"].includes(t.state)}
+          onClick={() => setStopOpen(true)}
         >
           终止任务
         </Btn>
@@ -504,6 +508,33 @@ function LiveTaskMonitor({ id }: { id: string }) {
             setQuickOpen(false);
           }}
         />
+      )}
+      {/* 终止任务：不可逆，必须填原因留痕 */}
+      {stopOpen && (
+        <Confirm
+          title="终止任务"
+          confirmText="确认"
+          danger
+          confirmDisabled={!stopReason.trim()}
+          onClose={() => {
+            setStopOpen(false);
+            STOPREASON("");
+          }}
+          onConfirm={() => {
+            act({ type: "STOP", id: t.id, reason: stopReason });
+            setStopOpen(false);
+            STOPREASON("");
+          }}
+        >
+          <p>{`确认终止任务「${t.name}」？终止后不自动恢复，请填写终止原因。`}</p>
+          <Field label="终止原因" required>
+            <input
+              value={stopReason}
+              onChange={(e) => STOPREASON(e.target.value)}
+              placeholder="如：机器人故障，需人工介入"
+            />
+          </Field>
+        </Confirm>
       )}
     </>
   );

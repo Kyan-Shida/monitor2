@@ -193,7 +193,7 @@ export function Scheduling({ page, id }: { page: string; id?: string }) {
           任务抢占
         </Btn>
       )}
-      {["已分配", "下发中", "待执行"].includes(t.state) && (
+      {["已分配", "待执行"].includes(t.state) && (
         <Btn onClick={() => act({ type: "WITHDRAW", id: t.id, confirmed: true })}>
           移除出列
         </Btn>

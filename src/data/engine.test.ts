@@ -141,7 +141,7 @@ test("map import → annotation → sync → validation → publication", () => 
   assert.match(s.points.find(x => x.id === p.id)!.validationFailure!, /目标身份未确认/);
   s = run(s, { type: "VALIDATE", id: p.id, robotId: "R02" });
   assert.equal(s.points.find(x => x.id === p.id)!.validationFailure, undefined);
-  assert.equal(s.points.find(x => x.id === p.id)!.state, "已启用");
+  assert.ok(s.points.find(x => x.id === p.id)!.validated, "验证通过应留验证记录");
 });
 test("更新地图：重新上传 SLAM 底图 → 版本+1、回退未同步", () => {
   let s = seed();

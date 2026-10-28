@@ -3,7 +3,7 @@
  * @description 后台管理 › 算法模板：平台维护「看什么 / 怎么采 / 拿什么算 / 什么算异常」的唯一入口。
  *              由原「算法模板管理」+「巡检要求管理」两页合并而来（保留原文件名与路由 id，少动引用）。
  *              一条算法模板 = 编码 + 名称 + 说明 + 算法能力类型 + 默认采集方式 + 适用目标类型
- *                + 算法 + 判定方式（单位 / 期望状态）+ 状态。
+ *                + 算法 + 判定方式（单位 / 期望状态）。
  *              存储里仍保留 `deploy`（默认云端），但本页不做展示与维护（按产品要求本期不做部署位置）。
  * @interaction 路由 `requirements`（后台管理）；引擎动作 SAVE_REQUIREMENT；引用方「巡检目标台账」
  */
@@ -16,7 +16,6 @@ import {
   Btn,
   Drawer,
   Field,
-  Switch,
   Panel,
   Table,
 } from "../components/UI";
@@ -47,7 +46,7 @@ const JUDGE_TYPES: JudgeType[] = ["数值范围", "期望状态", "有无目标"
  */
 const ALGO_OPTIONS: CascaderOption[] = (() => {
   const byKind = new Map<string, CascaderOption[]>();
-  ALGO_LIBRARY.filter((a) => a.state !== "停用").forEach((a) => {
+  ALGO_LIBRARY.forEach((a) => {
     (a.adapt.length ? a.adapt : ["其他"]).forEach((k) => {
       const list = byKind.get(k) || [];
       list.push({ value: a.name, label: `${a.name}（${a.deploy}）` });
@@ -95,7 +94,6 @@ const emptyRequirement = (): Requirement => ({
   max: 1,
   expected: "",
   deploy: "云端",
-  state: "启用",
   needPhoto: true,
   needVideo: false,
   needReview: false,
@@ -118,14 +116,12 @@ export function Requirements() {
   };
   const [kw, KW] = useViewState("requirements.kw", "");
   const [kindF, KF] = useViewState("requirements.kind", "全部");
-  const [stateF, SF] = useViewState("requirements.state", "全部");
   /** 筛选面板展开态：条件默认收起，点「筛选」才显示 */
   const [filterOpen, SETFILTEROPEN] = useState(false);
   /** 筛选草稿：点「查询」才写回生效值 */
   const [draft, SETDRAFT] = useState<Record<string, string>>({
     kw,
     kind: kindF,
-    state: stateF,
   });
   const [pn, PN] = useViewState("requirements.page", 1);
   // 每页条数：与全站列表口径一致（默认 5 条，可切 10 / 20）
@@ -134,7 +130,6 @@ export function Requirements() {
   const filtered = requirements.filter(
     (r) =>
       (kindF === "全部" || r.kind === kindF) &&
-      (stateF === "全部" || r.state === stateF) &&
       (!keyword ||
         r.code.includes(keyword) ||
         r.name.includes(keyword) ||
@@ -150,39 +145,6 @@ export function Requirements() {
    */
   const refCountOf = (id: string) =>
     targets.filter((t) => t.requirementId === id).length;
-  /** 启用 / 停用：停用后不再出现在巡检目标台账的算法模板候选里 */
-  const toggleState = (r: Requirement) =>
-    act({
-      type: "SAVE_REQUIREMENT",
-      requirement: { ...r, state: r.state === "启用" ? "停用" : "启用" },
-    });
-  /**
-   * 启停二次确认：列表状态列的唯一入口（与地图列表同款开关 + 确认弹窗）
-   * @description 停用会从台账候选里消失，且可能已有台账引用，改之前把影响面说清楚
-   */
-  const askToggle = (r: Requirement) => {
-    const off = r.state === "启用";
-    const refs = refCountOf(r.id);
-    setConfirm({
-      title: off ? "停用算法模板" : "启用算法模板",
-      okText: off ? "确认停用" : "确认启用",
-      text: off ? (
-        <>
-          停用后「<b>{r.name}</b>」不再出现在巡检目标台账的算法模板候选里。
-          {refs ? `已有 ${refs} 处台账引用它，这些台账照旧运行，不受影响。` : ""}
-        </>
-      ) : (
-        <>
-          启用后「<b>{r.name}</b>」重新出现在巡检目标台账的算法模板候选里。
-        </>
-      ),
-      run: () => toggleState(r),
-    });
-  };
-  /**
-   * 算法候选：库内按能力类型分组；**仅在填了库外算法时**才补「库外 / 手填」叶子，
-   * 避免新增表单（算法为空）一打开就显示「库外 / 手填 / （空）」这种假路径
-   */
   /**
    * 保存前的前端校验（与引擎同口径）
    * @description 不通过就**不弹确认框**，把原因直接标在字段上；
@@ -251,21 +213,18 @@ export function Requirements() {
                 label: "算法能力类型",
                 options: ["全部", ...requirementKinds],
               },
-              { key: "state", label: "状态", options: ["全部", "启用", "停用"] },
             ]}
             value={draft}
             onChange={SETDRAFT}
             onSearch={() => {
               KW(draft.kw ?? "");
               KF(draft.kind ?? "全部");
-              SF(draft.state ?? "全部");
               PN(1);
             }}
             onReset={() => {
-              SETDRAFT({ kw: "", kind: "全部", state: "全部" });
+              SETDRAFT({ kw: "", kind: "全部" });
               KW("");
               KF("全部");
-              SF("全部");
               PN(1);
             }}
           />
@@ -277,7 +236,6 @@ export function Requirements() {
             "算法能力类型",
             "算法名称",
             "关联台账",
-            "状态",
             "更新时间",
             "操作",
           ]}
@@ -289,13 +247,6 @@ export function Requirements() {
             <Badge tone={refCountOf(r.id) ? "blue" : undefined}>
               {refCountOf(r.id)} 处
             </Badge>,
-            // 状态 = 开关：一眼看出是否启用，点一下弹二次确认
-            <Switch
-              checked={r.state === "启用"}
-              disabled={s.roleId !== "admin"}
-              label={`${r.name} 启用状态`}
-              onChange={() => askToggle(r)}
-            />,
             <span className="muted">{fmtDateTime(r.updatedAt)}</span>,
             <div className="actions">
               <Btn
@@ -524,25 +475,10 @@ export function Requirements() {
             </Field>
           )}
 
-          <h4>4、状态</h4>
-          <div className="form-grid">
-            <Field label="状态">
-              <div className="switch-row">
-                <Switch
-                  checked={req.state === "启用"}
-                  label="启用状态"
-                  onChange={(next) =>
-                    SETREQ({ ...req, state: next ? "启用" : "停用" })
-                  }
-                />
-                {req.state}
-              </div>
-            </Field>
-          </div>
         </Drawer>
       )}
 
-      {/* 列表启停 / 表单保存的二次确认（同一个弹窗，按钮文案随动作变） */}
+      {/* 保存的二次确认 */}
       <DeleteConfirm state={confirm} onClose={() => setConfirm(null)} />
     </>
   );

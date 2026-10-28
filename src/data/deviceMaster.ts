@@ -81,16 +81,6 @@ export const inspectItemOfPoint = (
   deviceOfPoint(s, p)?.items.find((it) => it.target === p.object);
 
 /**
- * 点位所属设备是否已停用
- * @description 未登记主数据的旧点位视为"在用"，避免历史数据被整体误拦
- * @param s 状态
- * @param p 物理点位
- * @returns 已停用返回 true
- */
-export const isDeviceStopped = (s: State, p: Point) =>
-  deviceOfPoint(s, p)?.state === "停用";
-
-/**
  * 点位是否参与巡检（「是否巡检」开关）
  * @description 未登记主数据、或该设备下找不到对应巡检项时，按"参与"处理
  * @param s 状态
@@ -334,8 +324,7 @@ export function deviceStats(s: State) {
   const ds = s.devices || [];
   return {
     total: ds.length,
-    inUse: ds.filter((d) => d.state !== "停用").length,
-    stopped: ds.filter((d) => d.state === "停用").length,
+    inUse: ds.length,
     itemTotal: ds.reduce((n, d) => n + d.items.length, 0),
     itemOff: ds.reduce(
       (n, d) => n + d.items.filter((it) => !it.inspect).length,

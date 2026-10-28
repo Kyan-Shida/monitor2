@@ -9,7 +9,7 @@ import { useStore } from "../data/store";
 import { mapVer } from "../data/versionLabel";
 import { go } from "../data/navigation";
 import { RetryTaskModal } from "./RetryTaskModal";
-import { Badge, Btn, Panel, Table, Note } from "./UI";
+import { Badge, Btn, Panel, Table, Note, Confirm, Field } from "./UI";
 import { ObjectLink } from "./Business";
 import { RoutePreview } from "./RoutePreview";
 import { stageOf, fmtTime, queueFor } from "../data/selectors";
@@ -25,10 +25,13 @@ export function TaskDetailPanel({
   /** 发生页面跳转后的回调：抽屉用它关闭自己，内置页不需要 */
   onAfterNav?: () => void;
 }) {
-  const { s } = useStore();
+  const { s, act } = useStore();
   const t = task;
   /** 超期补派确认弹窗 */
   const [retry, SETRETRY] = useState(false);
+  /** 状态相关操作（取消 / 撤回 / 终止）：二次确认后落库，终止须填原因 */
+  const [ask, ASK] = useState<"取消" | "撤回" | "终止" | null>(null);
+  const [stopReason, STOPREASON] = useState("");
   /**
    * 主操作随任务状态变化，始终只给一个"此刻最该做"的入口
    * 待调度 → 去派单；已分配 / 下发中 / 待执行 / 执行中 / 暂停 → 执行监控；
@@ -124,10 +127,32 @@ export function TaskDetailPanel({
           </span>
         </span>
         <div className="actions os-actions">
+          {/* 状态相关操作集中在这里：列表行内只留高频入口，其余都进详情 */}
+          {t.state === "待调度" && (
+            <Btn danger onClick={() => ASK("取消")}>
+              取消
+            </Btn>
+          )}
+          {["已分配", "待执行"].includes(t.state) && (
+            <Btn danger onClick={() => ASK("撤回")}>
+              撤回
+            </Btn>
+          )}
+          {t.state === "执行中" && (
+            <Btn onClick={() => act({ type: "PAUSE", id: t.id })}>暂停</Btn>
+          )}
+          {t.state === "暂停" && (
+            <Btn onClick={() => act({ type: "START", id: t.id })}>恢复</Btn>
+          )}
+          {["执行中", "暂停", "已被接管"].includes(t.state) && (
+            <Btn danger onClick={() => ASK("终止")}>
+              终止
+            </Btn>
+          )}
           {/* 超期已留档：主操作换成补派，执行回溯降为次要入口 */}
           {t.state === "超期" && !t.retriedBy && (
             <Btn primary onClick={() => SETRETRY(true)}>
-              重新派单
+              新建补派任务
             </Btn>
           )}
           <Btn
@@ -258,6 +283,45 @@ export function TaskDetailPanel({
           ])}
         />
       </Panel>
+      {ask && (
+        <Confirm
+          title={
+            ask === "取消" ? "取消任务" : ask === "撤回" ? "撤回任务" : "终止任务"
+          }
+          confirmText="确认"
+          danger
+          confirmDisabled={ask === "终止" && !stopReason.trim()}
+          onClose={() => {
+            ASK(null);
+            STOPREASON("");
+          }}
+          onConfirm={() => {
+            if (ask === "取消") act({ type: "CANCEL", id: t.id });
+            else if (ask === "撤回")
+              act({ type: "WITHDRAW", id: t.id, confirmed: true });
+            else act({ type: "STOP", id: t.id, reason: stopReason });
+            ASK(null);
+            STOPREASON("");
+          }}
+        >
+          <p>
+            {ask === "取消"
+              ? `确认取消任务「${t.name}」？取消后不可自动恢复。`
+              : ask === "撤回"
+                ? `确认撤回任务「${t.name}」？将收回已下发指令并解绑机器人，任务回到待调度，可重新派单。`
+                : `确认终止任务「${t.name}」？终止后不自动恢复，请填写终止原因。`}
+          </p>
+          {ask === "终止" && (
+            <Field label="终止原因" required>
+              <input
+                value={stopReason}
+                onChange={(e) => STOPREASON(e.target.value)}
+                placeholder="如：机器人故障，需人工介入"
+              />
+            </Field>
+          )}
+        </Confirm>
+      )}
       {retry && (
         <RetryTaskModal task={t} onClose={() => SETRETRY(false)} />
       )}

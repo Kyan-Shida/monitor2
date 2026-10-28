@@ -49,9 +49,9 @@ test("计划绑定的所需能力也收敛为采集方式，且与调度校验�
 test("覆盖率按设备清单口径：清单要求但未落位的检测目标构成缺口（J′2）", () => {
   let s = seed();
   // 清单口径：6 台在用设备共 12 个「是否巡检=开」的检测目标，其中 V001「罐顶呼吸阀」尚未落位
-  const listed = (s.devices || [])
-    .filter((d) => d.state !== "停用")
-    .flatMap((d) => d.items.filter((it) => it.inspect));
+  const listed = (s.devices || []).flatMap((d) =>
+    d.items.filter((it) => it.inspect),
+  );
   assert.equal(listed.length, 12);
   assert.equal(metricValue(s, "coverage"), 91.7);
   // 厂区筛选后分母与分子同范围（设备清单也按厂区裁剪）：
@@ -65,14 +65,6 @@ test("覆盖率按设备清单口径：清单要求但未落位的检测目标�
     deviceId: "DEV-V001",
     itemId: "II-V001-B",
     inspect: false,
-  });
-  assert.equal(metricValue(s, "coverage"), 100);
-  // 停用设备的选择性不计入分母（11 − 3 = 8 个目标，仍有 8 个已落位）
-  s = run(s, {
-    type: "SET_DEVICE_STATE",
-    deviceId: "DEV-V004",
-    state: "停用",
-    confirmed: true,
   });
   assert.equal(metricValue(s, "coverage"), 100);
   // 兼容回退：无设备清单时回到"点位启用率"

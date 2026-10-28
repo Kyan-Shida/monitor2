@@ -395,12 +395,11 @@ export function Supporting({ page }: { page: string }) {
           }
         >
           <Table
-            heads={["编号", "名称", "配置 / 业务范围", "状态", "操作"]}
+            heads={["编号", "名称", "配置 / 业务范围", "操作"]}
             rows={extras.map((x) => [
               x.id,
               x.name,
               x.detail,
-              <Badge>{x.status}</Badge>,
               <div className="actions">
                 <Btn
                   onClick={() => {
@@ -411,9 +410,6 @@ export function Supporting({ page }: { page: string }) {
                   }}
                 >
                   编辑
-                </Btn>
-                <Btn onClick={() => act({ type: "EXTRA_TOGGLE", id: x.id })}>
-                  {x.status === "启用" ? "停用" : "启用"}
                 </Btn>
               </div>,
             ])}

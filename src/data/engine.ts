@@ -81,7 +81,6 @@ import { mapSceneBlockedReason, runningTasksOf } from "./robotMaps";
 import { profileOf, deviceTypes } from "./deviceProfile";
 import {
   deviceOf,
-  isDeviceStopped,
   isInspected,
   defaultInspectItemName,
   defaultTargetKindOfTarget,
@@ -468,12 +467,8 @@ export function constraints(
     )
       ? ["人工控制会话占用"]
       : []),
-    // 设备停用拦截：口径来自设备主数据。
-    // （旧实现读 extras.category === "equipment"，但种子里从无该类数据，该校验一直空转）
-    ...(t.items.some((p) => isDeviceStopped(s, p)) ? ["所属设备已停用"] : []),
-    ...(t.items.some(
-      (p) => s.points.find((q) => q.id === p.id)?.state !== "已启用",
-    )
+    // 巡检点状态：设备台账与机器人上装无启停；点位「停用」只来自标注工作台待验证
+    ...(t.items.some((p) => s.points.find((q) => q.id === p.id)?.state !== "已启用")
       ? ["点位未启用"]
       : []),
     ...(r.mapVersion !== t.mapVersion ? ["地图版本待同步"] : []),
@@ -606,7 +601,6 @@ export function transition(state: State, a: Action): State {
       items.length && items.every((p) => p.state === "已启用"),
       "请选择已启用的点位",
     );
-    must(!items.some((p) => isDeviceStopped(s, p)), "任务包含已停用设备");
     // 「是否巡检」过滤：设备主数据里关闭的检测项不进任务指令集（阶段③ 开关的落地处）
     items = items.filter((p) => isInspected(s, p));
     must(
@@ -958,7 +952,6 @@ export function transition(state: State, a: Action): State {
         description: (req.description || "").trim(),
         algorithm: (req.algorithm || "").trim(),
         deploy: req.deploy || "云端",
-        state: req.state || "启用",
         unit: req.judge === "数值范围" ? (req.unit || "").trim() : req.unit,
         expected:
           req.judge === "期望状态"
@@ -1360,7 +1353,6 @@ export function transition(state: State, a: Action): State {
           items: (r.items || []) as InspectItem[],
           photo: cur?.photo,
           remark: r.remark,
-          state: cur?.state === "停用" ? "停用" : "在用",
           // 导入即刷新「更新时间」（台账列表展示）
           updatedAt: now(),
         };
@@ -1476,26 +1468,6 @@ export function transition(state: State, a: Action): State {
       detail = `${d!.name} 检测项「${removed.target}」已删除`;
       break;
     }
-    case "SET_DEVICE_STATE": {
-      const d = deviceOf(s, a.deviceId);
-      must(d, "设备不存在");
-      const next: "在用" | "停用" = a.state === "停用" ? "停用" : "在用";
-      if (next === "停用") {
-        const pts = s.points.filter((p) => p.device === d!.name);
-        must(
-          a.confirmed === true,
-          `停用「${d!.name}」将拦截其 ${pts.length} 个点位的任务下发，请二次确认`,
-        );
-        // 只拦截后续新建 / 派单；已在执行或已排队的任务不自动回收，交调度页人工处置
-      }
-      d!.state = next;
-      object = d!.id;
-      detail =
-        next === "停用"
-          ? "设备已停用（含该设备点位的任务将被拦截）"
-          : "设备已恢复启用";
-      break;
-    }
     // ── 巡检目标台账：仪表 + 算法模板 + 算法 + 阈值 + 判断标准 ──
     case "ADD_BUSINESS_TARGET": {
       /**
@@ -1511,7 +1483,7 @@ export function transition(state: State, a: Action): State {
         must(ins, "仪表不存在，请先在设备主数据中维护检测目标");
         must(
           ins!.state !== "停用",
-          `仪表「${ins!.name}」所属设备已停用，暂不能新增巡检目标台账`,
+          `仪表「${ins!.name}」已停用，暂不能新增巡检目标台账`,
         );
       } else if (targetKind === "区域")
         // 环境 / 区域类不再手填「业务目标」：goal 由引擎按锚点 + 算法模板自动生成
@@ -1692,7 +1664,7 @@ export function transition(state: State, a: Action): State {
       specs.forEach((sp, i) => {
         must(String(sp.name || "").trim(), `第 ${i + 1} 个巡检项缺少名称`);
         const ins = insOf(sp.targetId);
-        must(ins.state !== "停用", `巡检项「${sp.name}」的仪表所属设备已停用`);
+        must(ins.state !== "停用", `巡检项「${sp.name}」的仪表已停用`);
         must(
           (sp.actions || []).length,
           `巡检项「${sp.name}」请至少选择一个原子动作`,
@@ -1754,8 +1726,8 @@ export function transition(state: State, a: Action): State {
         kind: firstIns.capture,
         requirement:
           btOf(normalized[0].targetId)?.criteria || normalized[0].name,
-        // 状态只有两态：保存即打回「停用」，待人工启用或自主验证通过后转「已启用」
-        state: "停用",
+        // 现场采集 / 巡检点管理新增：坐标与巡检项一次配齐，直接可用
+        state: "已启用",
         x: target!.x,
         y: target!.y,
         // DATA-01：统一坐标系权威定位（保留原值，首次创建时按地图相对坐标初始化，后续由标定更新）
@@ -1791,15 +1763,6 @@ export function transition(state: State, a: Action): State {
         `该巡检点已被巡检路线「${used[0]?.name || ""}」引用，请先解除引用再删除`,
       );
       s.points = s.points.filter((q) => q.id !== a.id);
-      break;
-    }
-    /** 切换巡检点启用 / 停用（快速操作，不影响地图与标定数据） */
-    case "TOGGLE_POINT_STATE": {
-      const p = s.points.find((q) => q.id === a.id);
-      must(p, "巡检点不存在");
-      const next = p.state === "停用" ? "已启用" : "停用";
-      p.state = next;
-      detail = `巡检点 ${p.id} · ${p.name} 已${next}`;
       break;
     }
     /**
@@ -1916,7 +1879,6 @@ export function transition(state: State, a: Action): State {
       // v3：设备与检测对象只能来自设备主数据（标注页可「＋快速新建」即时落库），不再手工输入设备名
       const dev = deviceOf(s, a.device);
       must(dev, "所选设备不在设备主数据中，请选择设备或先快速新建");
-      must(dev!.state !== "停用", `设备「${dev!.name}」已停用，不能标注点位`);
       // 「看什么」多选：一次停靠可覆盖多个检测对象（一个停靠位覆盖多设备/多目标的落地处）
       const objects: string[] = (
         a.objects?.length ? a.objects : [a.object]
@@ -1960,7 +1922,7 @@ export function transition(state: State, a: Action): State {
         targetId: target!.id,
         x: target!.x,
         y: target!.y,
-        // 状态只有两态：标注即打回「停用」，待人工启用或自主验证通过后转「已启用」
+        // 标注工作台打点：需自主验证通过后才转「已启用」
         state: "停用",
         // 「怎么看」与标注同一入口保存（不再另开"动作编排"页面）
         actionPlan: a.actionPlan || old?.actionPlan,
@@ -2209,8 +2171,8 @@ export function transition(state: State, a: Action): State {
         `验证机器人不具备该点位的采集方式（需要 ${need.join(" / ")}）`,
       );
       if (a.fail) {
-        p.state = "停用";
         p.validated = undefined;
+        p.state = "停用";
         p.validationFailure = `${r.id} / 地图第 ${m.version} 版：目标身份未确认（模拟失败），请修正标注后重新验证`;
         break;
       }
@@ -2234,8 +2196,6 @@ export function transition(state: State, a: Action): State {
       const c = s.changes.find((c) => c.id === a.id)!;
       must(c.state === "待确认", "仅待确认变化可受理");
       c.state = "维护中";
-      const p = s.points.find((p) => p.id === c.pointId);
-      if (p) p.state = "停用";
       break;
     }
     case "CHANGE_REVISION": {
@@ -2334,6 +2294,11 @@ export function transition(state: State, a: Action): State {
         );
       }
       t.state = t.state === "启用" ? "停用" : "启用";
+      object = t.id;
+      detail =
+        t.state === "停用"
+          ? `巡检路线「${t.name}」已停用，不再用于生成新任务`
+          : `巡检路线「${t.name}」已启用`;
       break;
     }
     case "VERIFY_ROUTE": {
@@ -2711,8 +2676,8 @@ export function transition(state: State, a: Action): State {
     case "WITHDRAW": {
       const t = task();
       must(
-        ["已分配", "下发中", "待执行"].includes(t.state),
-        "执行中任务不能直接撤回",
+        ["已分配", "待执行"].includes(t.state),
+        "下发中的任务请等机器人回执后再撤回；执行中的任务请用「终止」",
       );
       must(a.confirmed, "必须确认机器人未执行且已撤回");
       t.state = "待调度";
@@ -2724,8 +2689,8 @@ export function transition(state: State, a: Action): State {
       const t = task(),
         r = robot();
       must(
-        ["已分配", "下发中", "待执行"].includes(t.state),
-        "执行中任务不能直接改派",
+        ["已分配", "待执行"].includes(t.state),
+        "下发中的任务请等机器人回执后再改派；执行中的任务请用「终止」",
       );
       must(a.confirmed, "须先确认撤回");
       const reasons = constraints(s, t, r).filter(
@@ -2800,12 +2765,21 @@ export function transition(state: State, a: Action): State {
       robot(t.robotId).state = "暂停";
       break;
     }
+    case "CANCEL": {
+      // 取消：只作用于还没绑机器人的任务，直接落终态，不产生任何机器人指令
+      const t = task();
+      must(t.state === "待调度", "只有待调度任务可以取消；已绑机器人请用「撤回」");
+      t.state = "取消";
+      break;
+    }
     case "STOP": {
+      // 终止：只作用于执行阶段（执行中 / 暂停 / 已被接管），已产生的点位与告警保留不回撤
       const t = task();
       must(
-        !["完成", "失败", "部分完成", "取消"].includes(t.state),
-        "任务已结束",
+        ["执行中", "暂停", "已被接管"].includes(t.state),
+        "只有执行中 / 暂停 / 已被接管的任务可以终止；未执行请用取消或撤回",
       );
+      t.stopReason = String(a.reason || "").trim() || undefined;
       t.state = t.done.length ? "部分完成" : "取消";
       if (t.robotId) {
         const r = robot(t.robotId);
@@ -3234,7 +3208,6 @@ export function transition(state: State, a: Action): State {
         id: old?.id || wantId || id("CFG"),
         category: a.category,
         name: a.name,
-        status: a.status || "启用",
         detail:
           type === "数据字典"
             ? values.map((v) => v.value || v.key).join(", ") || "—"
@@ -3245,11 +3218,6 @@ export function transition(state: State, a: Action): State {
       s.extras = old
         ? s.extras.map((y) => (y.id === old.id ? x : y))
         : [x, ...s.extras];
-      break;
-    }
-    case "EXTRA_TOGGLE": {
-      const x = s.extras.find((x) => x.id === a.id)!;
-      x.status = x.status === "启用" ? "停用" : "启用";
       break;
     }
     case "EMERGENCY_STOP": {
@@ -3599,7 +3567,6 @@ export function transition(state: State, a: Action): State {
         coord: String(a.coord || "").trim() || undefined,
         coordSys: String(a.coordSys || "").trim() || undefined,
         items,
-        state: "在用",
         // 建档时间 = 「更新时间」的起点（台账列表展示，编辑 / 导入 / 检测项变动时刷新）
         updatedAt: now(),
       };
@@ -3736,7 +3703,6 @@ export function transition(state: State, a: Action): State {
         version: String(a.version || "").trim() || undefined,
         vendor: String(a.vendor || "").trim() || undefined,
         ...payloadFields(a),
-        state: "启用",
       });
       object = pid;
       detail = `已新增上装「${name}」`;
@@ -3756,25 +3722,6 @@ export function transition(state: State, a: Action): State {
       });
       object = hit!.id;
       detail = `已更新上装「${name}」`;
-      break;
-    }
-    case "SET_ROBOT_PAYLOAD_STATE": {
-      const list = (s.robotPayloads ??= []);
-      const hit = list.find((p) => p.id === a.id);
-      must(hit, "未找到该上装");
-      hit!.state = a.state === "停用" ? "停用" : "启用";
-      object = hit!.id;
-      detail = `上装「${hit!.name}」已${hit!.state === "停用" ? "停用" : "启用"}`;
-      break;
-    }
-    // 机器人能力：参数级启停（停用后不再作为巡检项「能力项」的可选项，已配置的巡检项不受影响）
-    case "SET_ABILITY_STATE": {
-      const kinds = (s.robotAbilities ??= []);
-      const hit = kinds.flatMap((k) => k.params).find((p) => p.id === a.id);
-      must(hit, "未找到该能力参数");
-      hit!.state = a.state === "停用" ? "停用" : "启用";
-      object = hit!.id;
-      detail = `能力参数「${hit!.name}」已${hit!.state === "停用" ? "停用" : "启用"}`;
       break;
     }
     // ── 算法（后台管理 › 算法）：厂区**不手写算法**，只从平台算法库勾选启用 ──

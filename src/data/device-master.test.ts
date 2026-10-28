@@ -126,38 +126,11 @@ test("设备清单导入即生效并推进设备清单版本", () => {
     ],
   });
   const imported = s.devices!.find((d) => d.id === "V008")!;
-  assert.equal(imported.state, "在用");
+  assert.equal(imported.name, "V008 新增储罐");
   // 导入即生效：设备清单版本推进，供机器人同步比对（阶段⑧）
   assert.equal(s.maps[0].deviceListVersion, before + 1);
-  // 台账统计：在用 = 设备总数 − 停用
-  assert.equal(deviceStats(s).inUse, s.devices!.length - 1);
-  assert.equal(deviceStats(s).stopped, 1); // V009（种子已停用）
-});
-
-test("设备停用后拦截任务创建与派单（原 extras.equipment 空转校验改为读设备主数据）", () => {
-  let s = seed();
-  assert.ok(!constraints(s, s.tasks[0], s.robots[0]).includes("所属设备已停用"));
-  // 停用属高风险操作，需二次确认
-  assert.throws(
-    () => run(s, { type: "SET_DEVICE_STATE", deviceId: "DEV-V001", state: "停用" }),
-    /二次确认/,
-  );
-  s = run(s, {
-    type: "SET_DEVICE_STATE",
-    deviceId: "DEV-V001",
-    state: "停用",
-    confirmed: true,
-  });
-  assert.equal(s.devices!.find((d) => d.id === "DEV-V001")!.state, "停用");
-  assert.ok(constraints(s, s.tasks[0], s.robots[0]).includes("所属设备已停用"));
-  assert.throws(() => run(s, quick(["P001"])), /已停用设备/);
-  // 未受影响设备的点位仍可下发（P003 属 V002 缓冲罐，与停用的 V001 无关）
-  assert.ok(run(s, quick(["P003"])).tasks.length > s.tasks.length);
-  // P007 属装置区（装置区地图 MAP-B01）：机器人当前地图不覆盖该点位，跨图派单被拦
-  assert.throws(() => run(s, quick(["P007"])), /未覆盖任务全部巡检点/);
-  // 恢复启用后拦截解除
-  s = run(s, { type: "SET_DEVICE_STATE", deviceId: "DEV-V001", state: "在用" });
-  assert.ok(!constraints(s, s.tasks[0], s.robots[0]).includes("所属设备已停用"));
+  // 台账统计：全部设备均为在用
+  assert.equal(deviceStats(s).inUse, s.devices!.length);
 });
 
 test("关闭「是否巡检」的检测目标不进任务指令集", () => {
@@ -208,7 +181,7 @@ test("标注页「＋快速新建」的设备直接生效，建完即可标注�
     ],
   });
   const d = s.devices!.find((x) => x.id === "V010")!;
-  assert.equal(d.state, "在用");
+  assert.equal(d.name, "V010 现场补录储罐");
   // 人工新增即生效：设备清单版本同样推进
   assert.equal(s.maps[0].deviceListVersion, (before || 1) + 1);
   // 建完即可直接用于标注：检测项与单位按检测目标自动推导
@@ -265,7 +238,7 @@ test("一次停靠可覆盖多个检测目标：逻辑点由系统派生且不�
     s.logicalPoints!.filter((x) => x.physicalPointId === p.id).length,
     1,
   );
-  // 不在主数据中的设备、已停用的设备都不能标注
+  // 不在主数据中的设备不能标注（设备台账无启停概念，不再校验停用状态）
   assert.throws(
     () =>
       run(s, {
@@ -278,19 +251,6 @@ test("一次停靠可覆盖多个检测目标：逻辑点由系统派生且不�
         requirement: "x",
       }),
     /不在设备主数据中/,
-  );
-  assert.throws(
-    () =>
-      run(s, {
-        type: "ANNOTATE",
-        mapId: m.id,
-        targetId,
-        name: "停用设备点",
-        device: "DEV-V009",
-        objects: ["出口压力表"],
-        requirement: "x",
-      }),
-    /已停用/,
   );
 });
 

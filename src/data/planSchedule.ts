@@ -93,14 +93,12 @@ export function bindingReasons(
   r: Robot,
 ): string[] {
   const template = s.templates.find((t) => t.id === templateId);
-  if (!template || template.state !== "启用") return ["路线不存在或已停用"];  const points = s.points.filter((p) => template.points.includes(p.id));
+  if (!template || template.state !== "启用") return ["路线不存在或已停用"];
+  const points = s.points.filter((p) => template.points.includes(p.id));
   return [
-    ...(points.some(
-      (p) => s.maps.find((m) => m.id === p.mapId)?.region !== r.region,
-    )
-      ? ["服务区域不匹配"]
-      : []),
-    // 采集方式口径：与引擎 constraints / 调度校验清单同源
+    // 采集方式口径：与引擎 constraints / 调度校验清单同源。
+    // 派单只认「巡检点→地图→机器人」三者链路（地图覆盖与版本一致性由引擎 constraints 把关），不再引入区域维度，
+    // 故本函数只补「检测能力不足」一项，区域匹配交由约束链路统一处理。
     ...(points.some((p) => !robotCoversPoint(s, p, r))
       ? ["检测能力不足"]
       : []),

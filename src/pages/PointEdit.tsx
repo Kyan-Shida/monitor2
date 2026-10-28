@@ -139,8 +139,6 @@ export function PointEdit({
   const [askEdit, ASKEDIT] = useState<InspectSpec | null>(null);
   /** 坐标未保存却点了「添加巡检项」的提示 */
   const [askPose, ASKPOSE] = useState(false);
-  /** 删除巡检点的二次确认 */
-  const [askDel, ASKDEL] = useState(false);
   /** 保存巡检项的二次确认（弹窗里回显本项参数记录，核对无误再落库） */
   const [confirmItem, SETCONFIRMITEM] = useState(false);
   /** 保存巡检点（整点）的二次确认：校验名称必填 / 不重名后弹窗 */
@@ -369,15 +367,6 @@ export function PointEdit({
     clearPointDraft(id);
     go("annotation");
   }
-  /** 删除巡检点：二次确认后落库并回列表（被路线引用时引擎会拦下并提示） */
-  function delPoint() {
-    ASKDEL(false);
-    const ok = act({ type: "DELETE_POINT", id: editing?.id });
-    if (ok) {
-      clearPointDraft(id);
-      go("annotation");
-    }
-  }
   /** 打开快速新建业务目标：默认取已选巡检项的仪表 */
   function openBt() {
     const insId = insOf(draft?.targetId || "")?.id || s.instruments?.[0]?.id || "";
@@ -456,7 +445,7 @@ export function PointEdit({
         <div className="actions">
           {/* 取消：本次改动一律不落库（含已填的巡检项），直接回列表 */}
           <Btn onClick={cancelPage}>取消</Btn>
-          {editing && <Btn onClick={() => ASKDEL(true)}>删除</Btn>}
+          {/* 删除已统一收口到「巡检点管理」列表页工具栏（多选批量），此处不再出现 */}
           {/* 保存并新增只在新增态给：编辑态的落库走 UPDATE，复位后会继续改同一条 */}
           {!editing && (
             <Btn disabled={!!draft} onClick={() => askSavePoint(true)}>
@@ -674,25 +663,6 @@ export function PointEdit({
             继续编辑「{askEdit.name}」将清零该项已保存的操控参数（云台 / 镜头 / 记录值），
             需要重新操控记录。确认继续？
           </p>
-        </Modal>
-      )}
-
-      {/* 删除巡检点：二次确认 */}
-      {askDel && (
-        <Modal
-          title={`删除巡检点「${editing?.name || ""}」`}
-          slim
-          onClose={() => ASKDEL(false)}
-          footer={
-            <>
-              <Btn onClick={() => ASKDEL(false)}>取消</Btn>
-              <Btn danger onClick={delPoint}>
-                删除
-              </Btn>
-            </>
-          }
-        >
-          <p>删除后该巡检点及其巡检项一并移除，占用的定位ID自动释放；已被巡检路线引用时不能删除。</p>
         </Modal>
       )}
 

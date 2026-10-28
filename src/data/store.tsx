@@ -29,6 +29,7 @@ import type {
   RobotPayloadAbility,
   BusinessTarget,
   Area,
+  Point,
 } from "./types";
 import {
   ROOT_AREA_ID,
@@ -303,12 +304,10 @@ function withSeedDefaults(s: State): State {
     (d) => !d.updatedAt || (d.items || []).some((it) => !it.category),
   );
   /**
-   * 巡检点状态收敛（只有 已启用 / 停用）：老缓存里的「待标注 / 待验证 / 待重新验证」
-   * 属已下线的过渡态，统一归为「停用」
+   * 巡检点状态字段：老缓存里缺 state 的补「已启用」
+   * @description 现场采集 / 地图导入的点位默认可用；只有标注工作台打点的点位才是「停用」
    */
-  const needPointState = !!s.points?.some(
-    (p) => p.state !== "已启用" && p.state !== "停用",
-  );
+  const needPointState = !!s.points?.some((p) => !p.state);
   /**
    * 装置区归属修正（老缓存的历史错标）：装置区的点位与设备曾被记为「一期罐区」，
    * 会让跨区派单不再被拦截、覆盖率分母混入装置区目标。
@@ -383,8 +382,8 @@ function withSeedDefaults(s: State): State {
   const needReqMaster =
     !s.requirements?.length ||
     !s.requirements?.some((r) => r.id === "REQ-GAS-AREA") ||
-    // 合并为「算法模板」后新增了编码 / 部署位置 / 状态：老缓存缺任一项也要迁移
-    !s.requirements?.every((r) => r.code && r.deploy && r.state);
+    // 合并为「算法模板」后新增了编码 / 部署位置：老缓存缺任一项也要迁移
+    !s.requirements?.every((r) => r.code && r.deploy);
   const needAlgoMaster = !s.algoConfigs?.some((a) => a.id === "ALG-10");
   // 告警类别（告警管理 › 告警类别）：老缓存没有该集合时从 seed 回填，否则告警设置的可选类型与筛选为空
   const needAlarmClasses = !s.alarmClasses?.length;
@@ -509,10 +508,8 @@ function withSeedDefaults(s: State): State {
             ...(needWorld && !p.world
               ? { world: { x: p.x, y: p.y, z: 0 } }
               : {}),
-            // 状态收敛：非两态的过渡态一律归「停用」（只改状态，不动其他字段）
-            ...(needPointState && p.state !== "已启用" && p.state !== "停用"
-              ? { state: "停用" as const }
-              : {}),
+            // 老缓存缺状态：现场采集 / 导入的点位默认可用
+            ...(needPointState && !p.state ? { state: "已启用" as const } : {}),
             // 装置区归属修正：装置区的点改挂装置区地图
             ...(needZoneFix && /^装置区/.test(p.device)
               ? { mapId: "MAP-B01" }
@@ -646,7 +643,6 @@ function withSeedDefaults(s: State): State {
       ...r,
       code: r.code || nextReqCode(),
       deploy: r.deploy || "云端",
-      state: r.state || "启用",
     })),
     businessTargets: (
       needDevices
@@ -932,7 +928,14 @@ export function Store({ children }: { children: ReactNode }) {
       latest.current = n;
       set(n);
       persist(n);
-      say("操作成功 · " + n.logs[0].object);
+      // 影响面优先：引擎把「这次操作伤到什么」写进 detail，确认后一句话交代清楚；
+      // 没有实质描述的仍回落到对象编号，避免提示里出现 Mock 字样
+      const log = n.logs[0];
+      say(
+        log?.detail && !log.detail.includes("操作成功（Mock）")
+          ? log.detail
+          : "操作成功 · " + (log?.object ?? ""),
+      );
       setTimeout(() => msg(""), 4000);
       onSuccess?.(n);
       return true;

@@ -58,6 +58,8 @@ export function Operations({
   const [filterOpen, SETFILTEROPEN] = useState(false);
   /** 待停用的机器人：开关拨到停用时先落在这，二次确认后再真正停用 */
   const [stopRobot, ASKSTOP] = useState<Robot | null>(null);
+  /** 待重新启用的机器人：启用同样走二次确认，与全站启停口径一致 */
+  const [enableRobot, ASKENABLE] = useState<Robot | null>(null);
   /** 已生效的筛选条件数（「筛选」按钮上的计数） */
   const filterCount = (q.trim() ? 1 : 0) + (status !== "全部" ? 1 : 0);
   /** 展开 / 收起筛选面板：展开时用当前生效值刷新草稿 */
@@ -187,15 +189,7 @@ export function Operations({
                     <Switch
                       checked={on && !stopping}
                       label={`${r.id} 启用状态`}
-                      onChange={(next) =>
-                        next
-                          ? act({
-                              type: "TOGGLE_ROBOT",
-                              id: r.id,
-                              enabled: true,
-                            })
-                          : ASKSTOP(r)
-                      }
+                      onChange={(next) => (next ? ASKENABLE(r) : ASKSTOP(r))}
                     />
                   </span>
                 );
@@ -220,11 +214,7 @@ export function Operations({
         {/* 停用二次确认：执行中不硬停，改为「停用中」，等队列任务跑完才落终态 */}
         {stopRobot && (
           <Confirm
-            title={
-              EXECUTING_STATES.includes(stopRobot.state)
-                ? "标记停用"
-                : "停用机器人"
-            }
+            title="停用机器人"
             message={
               EXECUTING_STATES.includes(stopRobot.state)
                 ? `「${stopRobot.name}」当前${stopRobot.state}。确认后进入「停用中」：不再接新任务，等当前队列任务执行结束后才真正停用；期间可随时关闭开关取消。`
@@ -236,6 +226,18 @@ export function Operations({
             onConfirm={() => {
               act({ type: "TOGGLE_ROBOT", id: stopRobot.id, enabled: false });
               ASKSTOP(null);
+            }}
+          />
+        )}
+        {enableRobot && (
+          <Confirm
+            title="启用机器人"
+            message={`确认启用机器人「${enableRobot.name}」？停用期间被卡住的队列任务将接着执行。`}
+            confirmText="启用"
+            onClose={() => ASKENABLE(null)}
+            onConfirm={() => {
+              act({ type: "TOGGLE_ROBOT", id: enableRobot.id, enabled: true });
+              ASKENABLE(null);
             }}
           />
         )}
@@ -807,10 +809,9 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
   const cap = useTablePager("robot.ability.cap");
   const payload = useTablePager("robot.ability.payload");
   const profile = profileOf(r.deviceType);
-  /** 适用该机型且已启用的上装主数据 */
+  /** 适用该机型的上装主数据 */
   const payloads = (s.robotPayloads || []).filter(
-    (p) =>
-      p.state === "启用" && (!p.models.length || p.models.includes(r.deviceType)),
+    (p) => !p.models.length || p.models.includes(r.deviceType),
   );
   /** 机型与硬件编辑：草稿字段 + 编辑中标记 + 保存二次确认 */
   const [editing, EDITING] = useState(false);
@@ -824,12 +825,12 @@ function RobotCapabilityTab({ robot: r }: { robot: Robot }) {
   const [needCharging, CHARGE] = useState(r.constraints.needChargingPlan);
   const [maxSpeed, MAXS] = useState(r.constraints.maxSpeed ?? 1.5);
   const [railSectionId, RAIL] = useState(r.constraints.railSectionId ?? "");
-  /** 可选采集能力：与新增表单同口径（启用中的上装能力，缺省退回内置采集方式） */
+  /** 可选采集能力：与新增表单同口径（上装能力，缺省退回内置采集方式） */
   const enabledKinds = [
     ...new Set(
-      (s.robotPayloads || [])
-        .filter((p) => p.state === "启用")
-        .flatMap((p) => p.abilities.map((a) => a.kind)),
+      (s.robotPayloads || []).flatMap((p) =>
+        p.abilities.map((a) => a.kind),
+      ),
     ),
   ];
   const capOptions = enabledKinds.length ? enabledKinds : captureKinds;

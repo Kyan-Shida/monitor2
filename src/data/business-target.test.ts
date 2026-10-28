@@ -83,17 +83,6 @@ test("仪表只是资产：新增巡检目标台账需要巡检要求 + 算法 +
       }),
     /仪表不存在/,
   );
-  // 仪表所属设备已停用
-  assert.throws(
-    () =>
-      run(s, {
-        type: "ADD_BUSINESS_TARGET",
-        instrumentId: "II-V009-P",
-        requirementId: "REQ-READ",
-        algorithm: "x",
-      }),
-    /已停用/,
-  );
   // 巡检要求必须存在
   assert.throws(
     () =>

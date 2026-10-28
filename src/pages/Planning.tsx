@@ -12,6 +12,7 @@ import {
   Table,
   Note,
   Modal,
+  Confirm,
 } from "../components/UI";
 import { FilterPanel } from "../components/FilterPanel";
 import { Pager } from "../components/Business";
@@ -107,6 +108,8 @@ export function Planning({ page, id }: { page: string; id?: string }) {
     [confirm, setConfirm] = useState<{
       title: string;
       text: string;
+      /** 影响运行态的动作套危险样式；路线 / 计划这类计划性配置用普通「确认」 */
+      danger?: boolean;
       run: () => void;
     } | null>(null);
   /** 任务列表「详情」抽屉中的任务：就地查看完整详情，不打断列表上下文 */
@@ -382,7 +385,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 "巡检项",
                 "机器操作内容",
                 "覆盖设备",
-                "版本 / 状态",
+                "状态",
               ]
         }
         rows={pageRows.map((p) => {
@@ -672,7 +675,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                       title: t.state === "启用" ? "停用路线" : "启用路线",
                       text:
                         t.state === "启用"
-                          ? `确认停用路线「${t.name}」？停用后计划将不再引用该路线生成任务。`
+                          ? `确认停用路线「${t.name}」？停用后将不再引用该路线生成任务。`
                           : `确认启用路线「${t.name}」？`,
                       run: () => act({ type: "TOGGLE_TEMPLATE_STATE", id: t.id }),
                     })
@@ -730,26 +733,17 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           />
         )}
         {confirm && (
-          <Modal
+          <Confirm
             title={confirm.title}
+            message={confirm.text}
+            confirmText="确认"
+            danger={confirm.danger}
             onClose={() => setConfirm(null)}
-            footer={
-              <>
-                <Btn onClick={() => setConfirm(null)}>取消</Btn>
-                <Btn
-                  primary
-                  onClick={() => {
-                    confirm.run();
-                    setConfirm(null);
-                  }}
-                >
-                  确认
-                </Btn>
-              </>
-            }
-          >
-            <p>{confirm.text}</p>
-          </Modal>
+            onConfirm={() => {
+              confirm.run();
+              setConfirm(null);
+            }}
+          />
         )}
       </>
     );
@@ -782,7 +776,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
               "周期 / 时间",
               "执行机器人",
               "有效期",
-              "版本 / 状态",
+              "状态",
               "操作",
             ]}
             rows={planRows.map((p) => {
@@ -817,7 +811,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                       title: p.state === "启用" ? "停用计划" : "启用计划",
                       text:
                         p.state === "启用"
-                          ? `确认停用计划「${p.name}」？停用后停止后续自动生成任务。`
+                          ? `确认停用计划「${p.name}」？停用后该计划将不再生成新任务，已生成任务不受影响。`
                           : `确认启用计划「${p.name}」？将恢复按时自动生成任务。`,
                       run: () =>
                         act({
@@ -873,26 +867,17 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           />
         </Panel>
         {confirm && (
-          <Modal
+          <Confirm
             title={confirm.title}
+            message={confirm.text}
+            confirmText="确认"
+            danger={confirm.danger}
             onClose={() => setConfirm(null)}
-            footer={
-              <>
-                <Btn onClick={() => setConfirm(null)}>取消</Btn>
-                <Btn
-                  primary
-                  onClick={() => {
-                    confirm.run();
-                    setConfirm(null);
-                  }}
-                >
-                  确认
-                </Btn>
-              </>
-            }
-          >
-            <p>{confirm.text}</p>
-          </Modal>
+            onConfirm={() => {
+              confirm.run();
+              setConfirm(null);
+            }}
+          />
         )}
       </>
     );
@@ -1343,7 +1328,7 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                 </small>
               </>,
               <div className="actions">
-                {/* TASK-04：待调度任务一键派单 */}
+                {/* 行内只留高频入口：派单 / 新建补派；取消、撤回、暂停、恢复、终止统一进「详情」 */}
                 {t.state === "待调度" && (
                   <Btn
                     primary
@@ -1361,24 +1346,9 @@ export function Planning({ page, id }: { page: string; id?: string }) {
                     <span className="cell-muted">已补派 {t.retriedBy}</span>
                   ) : (
                     <Btn primary onClick={() => setRetryTask(t)}>
-                      重新派单
+                      新建补派任务
                     </Btn>
                   ))}
-                {/* TASK-05：单条取消（点击二次确认，确认即终止该任务） */}
-                {!["完成", "失败", "部分完成", "取消"].includes(t.state) && (
-                  <Btn
-                    danger
-                    onClick={() =>
-                      setConfirm({
-                        title: "取消任务",
-                        text: `确认取消任务「${t.name}」？取消后不可自动恢复。`,
-                        run: () => act({ type: "STOP", id: t.id }),
-                      })
-                    }
-                  >
-                    取消
-                  </Btn>
-                )}
                 <Btn onClick={() => setTaskPeek(t)}>详情</Btn>
               </div>,
             ];
@@ -1495,28 +1465,19 @@ export function Planning({ page, id }: { page: string; id?: string }) {
           />
         </Drawer>
       )}
-      {/* 操作二次确认（单条取消 / 批量删除）：列表内的危险操作统一走这一个确认弹窗 */}
+      {/* 操作二次确认（路线 / 计划启停、单条取消撤回）：全站共用同一个确认组件 */}
       {confirm && (
-        <Modal
+        <Confirm
           title={confirm.title}
+          message={confirm.text}
+          confirmText="确认"
+          danger={confirm.danger}
           onClose={() => setConfirm(null)}
-          footer={
-            <>
-              <Btn onClick={() => setConfirm(null)}>取消</Btn>
-              <Btn
-                primary
-                onClick={() => {
-                  confirm.run();
-                  setConfirm(null);
-                }}
-              >
-                确认
-              </Btn>
-            </>
-          }
-        >
-          <p>{confirm.text}</p>
-        </Modal>
+          onConfirm={() => {
+            confirm.run();
+            setConfirm(null);
+          }}
+        />
       )}
     </>
   );
