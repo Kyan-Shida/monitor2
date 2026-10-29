@@ -359,8 +359,8 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
   // 同步状态是派生值：未同步 = 当前版本还没下发给所有旧版本机器（新图从未下发也算）；已同步 = 已下发到位
   const states = ["全部", "未同步", "已同步"];
   /**
-   * 停用影响面：绑定机器人数 / 依赖计划数 / 在跑任务数 / 地图上巡检项目数
-   * @description 确认框里先摊开再让人点——「停用会伤到什么」不该等点完才知道
+   * 停用影响面：绑定机器人数 / 依赖计划数 / 在跑任务数 / 该图覆盖点位数
+   * @description 点位与地图无直接关系，只是没有机器人可达就走不到，所以这里算的是可达面
    */
   function impactOf(mapId: string) {
     const bound = s.robots.filter((r) => r.mapId === mapId).length;
@@ -937,7 +937,7 @@ export function Maps({ tab = "list", id }: { tab?: string; id?: string }) {
                     <dd>{face.plans} 条</dd>
                     <dt>在跑任务</dt>
                     <dd>{face.running} 个</dd>
-                    <dt>巡检项目</dt>
+                    <dt>覆盖点位</dt>
                     <dd>{face.points} 个</dd>
                   </dl>
                   {face.running > 0 && (

@@ -70,7 +70,6 @@ import {
   activeMenuId,
   activeGroupOf,
   back,
-  initTrail,
   parentTargetOf,
 } from "./data/navigation";
 import { useStore } from "./data/store";
@@ -315,8 +314,6 @@ export default function App() {
     window.addEventListener("hashchange", fn);
     return () => window.removeEventListener("hashchange", fn);
   }, []);
-  /** 访问轨迹：让「返回」回到来时的页面而非死板的目录父级 */
-  useEffect(() => initTrail(), []);
   // 登录后按当前角色落地页跳转：未登录时不跳（登录页不依赖路由）
   useEffect(() => {
     if (!account) return;

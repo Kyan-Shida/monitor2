@@ -240,7 +240,7 @@ header {
 .sidebar-toggle:active {
   transform: translateY(1px);
 }
-/* 顶栏返回按钮：回到上一个访问页面（无轨迹时回落到父页面） */
+/* 顶栏返回按钮：按导航目录层级回到上一级（不看访问历史） */
 .back-btn {
   display: inline-flex;
   align-items: center;
@@ -16468,8 +16468,7 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 /* 全局 header 标签自带 62px 高 + 白底（后台外壳用）——驾驶舱里每一条表头都要重置，
    否则「设备状态」「告警 · 去重合并」「SLA 倒计时」「操作台标题」都会变成白条 */
 .ds-head,
-.ds-sub > header,
-.ds-fab-head {
+.ds-sub > header {
   height: auto;
   padding: 0;
   background: transparent;
@@ -16589,7 +16588,9 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 
 /* ── 左栏：设备状态紧凑列表 ── */
+/* 只剩机型一个筛选项：单列铺满，不留半行空格 */
 .ds-v2 .ds-selects {
+  grid-template-columns: 1fr;
   margin-bottom: 8px;
 }
 .ds-v2 .ds-selects select {
@@ -16852,175 +16853,643 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 }
 
 /* ── 中栏：底部悬浮毛玻璃操作台 ── */
+/* 操控面板：四组卡片并排铺开（机器人 / 云台 / 可见光 / 对话）
+   平时收在舞台下沿之外，选中机器后上滑出现；
+   左右边界跟着浮层栏宽走 —— 面板只落在两栏之间的地图区，永远不会被视频栏盖住 */
 .ds-fab {
   position: absolute;
-  left: 50%;
+  left: calc(var(--fab-l) + 12px);
+  right: calc(var(--fab-r) + 12px);
   bottom: 10px;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  width: min(780px, calc(100% - 24px));
-  transform: translateX(-50%);
-}
-.ds-fab-bar {
+  z-index: 6;
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--ds-line-2);
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.55);
   border-radius: 12px;
   background: rgba(15, 23, 42, 0.72);
   backdrop-filter: blur(12px) saturate(140%);
   box-shadow: 0 12px 30px rgba(2, 6, 23, 0.55);
+  transform: translateY(calc(100% + 14px));
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.28s ease-out, opacity 0.2s ease-out;
 }
-.ds-fab-bar > button {
+.ds-fab.open {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.ds-fab > .ds-mp {
+  width: 100%;
+}
+/* 未接管时的门禁条：面板照常上滑，但只放「进行接管」与急停，避免点了没反应 */
+.ds-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  padding: 6px 0;
+}
+.ds-gate-btn {
+  height: 36px;
+  padding: 0 28px;
+  border: 1px solid rgba(6, 182, 212, 0.7);
+  border-radius: 8px;
+  background: rgba(6, 182, 212, 0.18);
+  box-shadow: 0 0 14px rgba(6, 182, 212, 0.35);
+  color: #22d3ee;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, color 0.15s;
+}
+.ds-gate-btn:hover {
+  background: rgba(6, 182, 212, 0.28);
+  box-shadow: 0 0 22px rgba(6, 182, 212, 0.55);
+  color: #fff;
+}
+.ds-gate-btn:active {
+  transform: translateY(1px);
+}
+.ds-gate .ds-mp-estop {
+  width: 56px;
+  height: 56px;
+  font-size: 12px;
+}
+/* 接管入口：左栏「当前设备」卡内的胶囊按钮，既是按钮也是浮层开关 */
+.ds-takeover {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  flex: none;
-  padding: 5px 14px;
-  border: 1px solid var(--ds-line-2);
-  border-radius: 7px;
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--ds-ink-2);
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid rgba(6, 182, 212, 0.7);
+  border-radius: 6px;
+  background: rgba(6, 182, 212, 0.16);
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.28);
+  color: #22d3ee;
+  font-family: inherit;
   font-size: 12px;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
-.ds-fab-bar > button:hover {
-  color: #e2e8f0;
-  border-color: rgba(6, 182, 212, 0.5);
+.ds-takeover:hover:not(:disabled) {
+  background: rgba(6, 182, 212, 0.28);
+  box-shadow: 0 0 18px rgba(6, 182, 212, 0.5);
+  color: #fff;
 }
-.ds-fab-bar > button.active {
-  border-color: rgba(6, 182, 212, 0.7);
-  background: rgba(6, 182, 212, 0.18);
-  color: #22d3ee;
-  box-shadow: 0 0 14px rgba(6, 182, 212, 0.45);
+.ds-takeover:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
-.ds-fab-info {
-  margin-left: auto;
-  padding-right: 6px;
+.ds-takeover.on {
+  border-color: rgba(34, 211, 238, 0.85);
+  background: rgba(6, 182, 212, 0.22);
+}
+.ds-takeover.on::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #22d3ee;
+  box-shadow: 0 0 6px #22d3ee;
+}
+/* ── 接管会话浮层：从左栏接管按钮处向上浮出、无遮罩，不挡视频；
+      接管一生效就自动关闭，按钮上的状态灯继续显示接管中 ── */
+.ds-peek {
+  position: absolute;
+  left: calc(var(--fab-l) + 12px);
+  bottom: 168px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  width: 420px;
+  /* 尺寸固定：高度按内容走，超过可用高度时内容区内部滚动 */
+  max-height: calc(100% - 224px);
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  border-radius: 10px;
+  background: rgba(13, 21, 38, 0.96);
+  backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 16px 40px rgba(2, 6, 23, 0.62);
+  overflow: hidden;
+}
+.ds-peek-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ds-line);
+  background: rgba(2, 6, 23, 0.55);
+}
+.ds-peek-bar > b {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #dbe7f4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-peek-sub {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 11px;
   color: var(--ds-ink-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ds-fab-panel {
-  width: 100%;
-  max-height: 46vh;
-  padding: 10px 12px 12px;
-  border: 1px solid var(--ds-line-2);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.82);
-  backdrop-filter: blur(14px) saturate(140%);
-  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.6);
-  overflow-y: auto;
-}
-.ds-fab-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.ds-fab-head > b {
+.ds-peek-btn {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #dbe7f4;
-}
-.ds-fab-head > b::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  background: var(--ds-cyan);
-  transform: rotate(45deg);
-  box-shadow: 0 0 8px var(--ds-cyan);
-}
-.ds-fab-head > small {
-  font-size: 11px;
-  color: var(--ds-ink-3);
-}
-.ds-fab-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 6px;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: 1px solid var(--ds-line-2);
   border-radius: 5px;
   background: transparent;
   color: var(--ds-ink-3);
   cursor: pointer;
 }
-.ds-fab-close:hover {
-  color: #22d3ee;
+.ds-peek-btn:hover {
   border-color: rgba(6, 182, 212, 0.55);
+  color: #22d3ee;
 }
-.ds-fab-kv {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px 10px;
+.ds-peek-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 4px;
+}
+.ds-peek-actions {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--ds-line);
+  background: rgba(2, 6, 23, 0.5);
+}
+/* 浮层内的浅色组件改深色口径（原先靠 .bigscreen .modal 覆盖），并压缩到窄栏可读 */
+.ds-peek .badge {
+  flex: none;
+  border-color: rgba(6, 182, 212, 0.45);
+  background: rgba(6, 182, 212, 0.14);
+  color: #22d3ee;
+}
+.ds-peek .peek-title {
+  margin: 8px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8ea7bd;
+}
+.ds-peek .takeover-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  font-size: 12px;
+  color: #cfe6f2;
+}
+.ds-peek .takeover-notes {
+  margin: 0 0 4px;
+  padding-left: 14px;
+  font-size: 11px;
+  line-height: 1.75;
+  color: #93a9bf;
+}
+/* 四步挤在一行：去掉 105px 保底宽度与箭头 */
+.ds-peek .steps {
+  padding: 8px 10px;
   margin-bottom: 8px;
+  gap: 6px;
+  border: 1px solid var(--ds-line-2);
+  border-radius: 8px;
+  background: rgba(9, 16, 30, 0.72);
 }
-.ds-fab-kv span {
+.ds-peek .steps > div {
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 4px;
+  font-size: 11px;
+  color: #8ea7bd;
+}
+.ds-peek .steps > div > span {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  background: rgba(148, 163, 184, 0.16);
+  color: #9fb6cc;
+}
+.ds-peek .steps > div.active {
+  color: #eaf3ff;
+}
+.ds-peek .steps > div.active > span {
+  background: rgba(6, 182, 212, 0.85);
+  color: #04121a;
+}
+.ds-peek .steps > div.done > span {
+  background: rgba(16, 185, 129, 0.22);
+  color: #6ee7b7;
+}
+.ds-peek .steps svg {
+  display: none;
+}
+.ds-peek .note {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+/* ══ 手动控制盘：机器人 / 云台 / 可见光 / 对话 四组圆盘控件 ══
+   口径：卡片 1px slate 边框 + 深底；圆形动作件 cyan 强调，急停专用 red；
+   圆盘方向键外环虚线 + 中央发光圆芯；速度滑块竖排（range 旋转 -90°） */
+.ds-mp {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  container-type: inline-size;
+}
+/* 地图区放不下四张卡时折成整齐的 2×2（而不是 3+1 参差） */
+@container (max-width: 860px) {
+  .ds-mp-card {
+    flex: 1 1 44%;
+  }
+}
+@container (max-width: 460px) {
+  .ds-mp-card {
+    flex: 1 1 100%;
+  }
+}
+.ds-mp-card {
+  /* 210px 保底：中间地图区变窄时自动换行，不把卡片压扁 */
+  flex: 1 1 210px;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--ds-line-2);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.5);
+}
+.ds-mp-card > h4 {
+  position: relative;
+  margin: 0 0 8px;
+  padding-bottom: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #dbe7f4;
+}
+.ds-mp-card > h4::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 24px;
+  height: 2px;
+  background: linear-gradient(90deg, #22d3ee, rgba(34, 211, 238, 0));
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.5);
+}
+.ds-mp-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 96px;
+}
+
+/* 圆形方向键 */
+.ds-mp-dir {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, 26px);
+  grid-template-rows: repeat(3, 26px);
+  place-content: center;
+  width: 96px;
+  height: 96px;
+  border: 1px dashed rgba(148, 174, 204, 0.28);
+  border-radius: 50%;
+}
+.ds-mp-dir button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #9fb6cb;
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.ds-mp-dir button:hover:not(:disabled) {
+  background: rgba(6, 182, 212, 0.16);
+  color: #22d3ee;
+}
+.ds-mp-dir button:active:not(:disabled) {
+  background: rgba(6, 182, 212, 0.28);
+}
+.ds-mp-dir button:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+.ds-mp-dir .up { grid-area: 1 / 2; }
+.ds-mp-dir .left { grid-area: 2 / 1; }
+.ds-mp-dir .right { grid-area: 2 / 3; }
+.ds-mp-dir .down { grid-area: 3 / 2; }
+.ds-mp-dir .core {
+  grid-area: 2 / 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(34, 211, 238, 0.55);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, rgba(34, 211, 238, 0.3), rgba(6, 182, 212, 0.05));
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.32);
+  color: #22d3ee;
+}
+
+/* 垂直速度滑块 */
+.ds-mp-speed {
+  flex: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 3px;
   font-size: 11px;
   color: var(--ds-ink-3);
 }
-.ds-fab-kv b {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ds-ink);
+.ds-mp-speed .rail {
+  position: relative;
+  width: 18px;
+  height: 74px;
 }
-/* 操作台内按钮：4 列等宽，主操作沿用 cyan 发光 */
-.ds-fab .ds-cam {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+.ds-mp-speed input {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 74px;
+  height: 18px;
   margin: 0;
+  padding: 0;
+  border: 0;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
 }
-.ds-fab .ds-cam .btn {
-  width: 100%;
-  justify-content: center;
+.ds-mp-speed input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(6, 182, 212, 0.18), #22d3ee);
 }
-/* 大屏容器里有更高特异度的既有规则（.bigscreen .ds-root .ds-lens .ds-cam 为 3 列），
-   这里用同等特异度把操作台内的按钮网格锁回 4 列，避免镜头组被改成 3 列 */
-.bigscreen .ds-root .ds-fab .ds-cam {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.ds-mp-speed input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.9);
 }
-.ds-fab-select {
-  width: 100%;
-  padding: 4px 8px;
-  border: 1px solid var(--ds-line-2);
-  border-radius: 6px;
-  background: rgba(2, 6, 23, 0.9);
-  color: var(--ds-ink);
+.ds-mp-speed input::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(6, 182, 212, 0.18), #22d3ee);
+}
+.ds-mp-speed input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.9);
+}
+.ds-mp-speed input:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.ds-mp-speed b {
   font-size: 11px;
-}
-.ds-fab .ds-lens {
-  margin-top: 8px;
-}
-.ds-fab .ds-lens-readout {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 11px;
-  color: var(--ds-ink-2);
-}
-.ds-fab .ds-lens-readout b {
+  font-weight: 600;
   color: #22d3ee;
 }
-/* 操作台内的表单控件与提示统一深色口径 */
-.ds-fab input,
-.ds-fab select {
-  border-color: var(--ds-line-2);
-  background: rgba(2, 6, 23, 0.9);
-  color: var(--ds-ink);
+
+/* 急停：红色圆形按键（全局安全动作，不随会话禁用） */
+.ds-mp-estop {
+  flex: none;
+  width: 66px;
+  height: 66px;
+  border: 2px solid rgba(239, 68, 68, 0.85);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, rgba(239, 68, 68, 0.3), rgba(2, 6, 23, 0.92));
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.35), inset 0 0 12px rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: color 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+.ds-mp-estop:hover {
+  color: #fff;
+  box-shadow: 0 0 22px rgba(239, 68, 68, 0.7), inset 0 0 18px rgba(239, 68, 68, 0.3);
+}
+.ds-mp-estop:active {
+  transform: scale(0.96);
+}
+
+/* 云台电源：圆形开关，开=cyan 发光 */
+.ds-mp-power {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 62px;
+  height: 62px;
+  border: 1px solid rgba(148, 174, 204, 0.35);
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--ds-ink-3);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.ds-mp-power:hover {
+  color: #22d3ee;
+  border-color: rgba(34, 211, 238, 0.6);
+}
+.ds-mp-power.on {
+  border-color: rgba(34, 211, 238, 0.75);
+  background: radial-gradient(circle at 50% 38%, rgba(6, 182, 212, 0.3), rgba(2, 6, 23, 0.88));
+  box-shadow: 0 0 16px rgba(6, 182, 212, 0.45);
+  color: #22d3ee;
+}
+
+/* 可见光：聚焦模式圆钮 + 加减键组 */
+.ds-mp-mode {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 70px;
+  height: 70px;
+  border: 1px dashed rgba(148, 174, 204, 0.35);
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.05);
+  color: var(--ds-ink-3);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.ds-mp-mode > b {
+  font-size: 13px;
+  font-weight: 600;
+  color: #dbe7f4;
+}
+.ds-mp-mode:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.6);
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.25);
+  color: #22d3ee;
+}
+.ds-mp-mode:hover:not(:disabled) > b {
+  color: #22d3ee;
+}
+.ds-mp-mode:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ds-mp-steps {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.ds-mp-steps > span {
+  font-size: 11px;
+  color: var(--ds-ink-3);
+}
+.ds-mp-steps .keys {
+  display: grid;
+  grid-auto-rows: 26px;
+  gap: 4px;
+}
+.ds-mp-steps button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--ds-line-2);
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.08);
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.ds-mp-steps button:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.6);
+  background: rgba(6, 182, 212, 0.14);
+  color: #22d3ee;
+}
+.ds-mp-steps button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* 声光语言：开关列表 */
+.ds-mp-av {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ds-mp-switch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--ds-line-2);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--ds-ink-2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.ds-mp-switch > i {
+  position: relative;
+  margin-left: auto;
+  width: 30px;
+  height: 16px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.25);
+  transition: background 0.15s;
+}
+.ds-mp-switch > i::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  transition: transform 0.15s;
+}
+.ds-mp-switch.on {
+  border-color: rgba(6, 182, 212, 0.55);
+  background: rgba(6, 182, 212, 0.12);
+  color: #22d3ee;
+}
+.ds-mp-switch.on > i {
+  background: rgba(6, 182, 212, 0.75);
+}
+.ds-mp-switch.on > i::after {
+  transform: translateX(14px);
+  background: #fff;
+}
+.ds-mp-switch:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.6);
+  color: #22d3ee;
+}
+.ds-mp-switch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ── 右栏：告警 / 视频 / 日志 枢纽 ── */
@@ -17139,12 +17608,6 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   .ds-grid {
     grid-template-columns: 260px minmax(0, 1fr) 300px;
   }
-  .ds-fab {
-    width: calc(100% - 16px);
-  }
-  .ds-fab-info {
-    display: none;
-  }
 }
 
 /* ── 调度驾驶舱 V3：场景铺满 + 左右可折叠浮层面板（与管理驾驶舱「左右块折叠 / 展开」同款形态）──
@@ -17154,38 +17617,45 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .bigscreen .ds-root .ds-grid {
   grid-row: 2 / -1;
 }
-/* KPI 数字条悬浮化：8 格待处置量改为场景顶部毛玻璃徽标（4 列 × 2 行），不占版面高度
-   （DOM 上位于 .ds-scene-layout 内，定位锚定场景区顶部） */
+/* KPI 数字条：嵌在左栏「设备状态」卡顶部，四等分一行；不再悬浮于地图上 */
 .ds-strip-float {
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 5;
   display: grid;
-  grid-template-columns: repeat(4, auto);
-  gap: 5px;
-  width: max-content;
-  max-width: calc(100% - 48px);
-  min-height: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 8px;
 }
 .ds-strip-float .cs-kpi {
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
-  padding: 5px 10px;
-  border-color: rgba(51, 65, 85, 0.75);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.78);
-  backdrop-filter: blur(8px);
+  gap: 0;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid rgba(51, 65, 85, 0.75);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.6);
 }
-.ds-strip-float .cs-kpi b { font-size: 15px; line-height: 1.2; }
-.ds-strip-float .cs-kpi span { font-size: 10px; white-space: nowrap; }
-/* 场景布局：中栏铺满，左右栏成为浮层 */
+.ds-strip-float .cs-kpi b { font-size: 14px; line-height: 1.2; }
+.ds-strip-float .cs-kpi span {
+  font-size: 9px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* 场景布局：中栏铺满，左右栏成为浮层
+   栏宽统一走 --col-l / --col-r 变量：拖拽改宽度时，贴边折叠箭头与操控面板的定位一起跟随 */
 .ds-grid.ds-scene-layout {
   grid-template-columns: minmax(0, 1fr);
   position: relative;
+  --col-l: 400px;
+  --col-r: 420px;
+  /* 操控面板避让：跟随栏宽，栏折叠时归零（独立变量，避免被行内 --col-r 覆盖） */
+  --fab-l: var(--col-l);
+  --fab-r: var(--col-r);
 }
+.ds-grid.ds-scene-layout.fold-l { --fab-l: 0px; }
+.ds-grid.ds-scene-layout.fold-r { --fab-r: 0px; }
 .ds-grid.ds-scene-layout .ds-col-l,
 .ds-grid.ds-scene-layout .ds-col-r {
   position: absolute;
@@ -17199,8 +17669,38 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
 .ds-scene-layout .ds-stage {
   z-index: 0;
 }
-.ds-grid.ds-scene-layout .ds-col-l { left: 0; width: 340px; }
-.ds-grid.ds-scene-layout .ds-col-r { right: 0; width: 360px; }
+.ds-grid.ds-scene-layout .ds-col-l { left: 0; width: var(--col-l); }
+.ds-grid.ds-scene-layout .ds-col-r { right: 0; width: var(--col-r); }
+/* 右栏左边缘拖拽条：手动拉宽 / 收窄，视频画面随之放大（宽度由行内样式接管） */
+.ds-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  z-index: 3;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.ds-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  width: 2px;
+  height: 40px;
+  border-radius: 1px;
+  background: rgba(148, 163, 184, 0.35);
+  transform: translateY(-50%);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.ds-resizer:hover::after {
+  background: #22d3ee;
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.6);
+}
+.ds-col-r.folded .ds-resizer {
+  display: none;
+}
 .ds-grid.ds-scene-layout .ds-col-l.folded { transform: translateX(-110%); opacity: 0; pointer-events: none; }
 .ds-grid.ds-scene-layout .ds-col-r.folded { transform: translateX(110%); opacity: 0; pointer-events: none; }
 /* 浮层卡片毛玻璃化：与地图场景融合，保持可读性 */
@@ -17257,22 +17757,17 @@ table tr.lv-minor td:first-child { border-left: 3px solid #4a86c8; }
   border-color: rgba(6, 182, 212, 0.5);
 }
 .ds-fold-l { left: 12px; }
-.ds-fold-l.open { left: 352px; }
+/* 展开态贴着栏外沿：位置由栏宽变量决定，改宽度 / 拖拽后不会掉进栏里 */
+.ds-fold-l.open { left: calc(var(--col-l) + 12px); }
 .ds-fold-r { right: 12px; }
-.ds-fold-r.open { right: 372px; }
+.ds-fold-r.open { right: calc(var(--col-r) + 12px); }
 /* 窄屏：浮层收窄、KPI 徽标两列 */
 @media (max-width: 1500px) {
-  .ds-grid.ds-scene-layout .ds-col-l { width: 310px; }
-  .ds-grid.ds-scene-layout .ds-col-r { width: 330px; }
-  .ds-fold-l.open { left: 322px; }
-  .ds-fold-r.open { right: 342px; }
+  .ds-grid.ds-scene-layout { --col-l: 310px; --col-r: 330px; }
 }
 @media (max-width: 1240px) {
-  .ds-grid.ds-scene-layout .ds-col-l { width: 290px; }
-  .ds-grid.ds-scene-layout .ds-col-r { width: 310px; }
-  .ds-fold-l.open { left: 302px; }
-  .ds-fold-r.open { right: 322px; }
-  .ds-strip-float { grid-template-columns: repeat(2, auto); }
+  .ds-grid.ds-scene-layout { --col-l: 290px; --col-r: 310px; }
+  .ds-strip-float { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* 上装「采集能力」分组：一个上装可配置多组「采集方式 + 支持动作」（后台管理 › 机器人上装能力） */

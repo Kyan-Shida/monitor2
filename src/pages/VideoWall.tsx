@@ -20,11 +20,13 @@ const GRID_MODES = [
 ] as const;
 type GridMode = (typeof GRID_MODES)[number]["key"];
 
+/** 能出画面的相机能力：气体探测只回传浓度数值、没有视频流，不进视频源列表 */
+const VIDEO_CAPS: string[] = ["可见光", "红外"];
+
 /** 相机能力 → 展示图标与语义化名称（拖拽时显示） */
 const CAP_META: Record<string, { label: string; hint: string; Icon: typeof Camera }> = {
   可见光: { label: "可见光相机", hint: "RGB 可见光", Icon: Camera },
   红外: { label: "红外热成像", hint: "温度分布", Icon: Thermometer },
-  气体: { label: "气体探测", hint: "VOC / 有毒气体", Icon: MonitorX },
 };
 
 /** 宫格绑定槽位：空槽位为 null，已占用槽位记录来源机器人 + 相机能力 */
@@ -122,7 +124,11 @@ export function VideoWall({
             <span className="vw-side-count">{robots.length} 台在线</span>
           </div>
           <div className="vw-robot-list">
-            {robots.map((r) => (
+            {robots.map((r) => {
+              const videoCaps = (r.capabilities ?? []).filter((c) =>
+                VIDEO_CAPS.includes(c),
+              );
+              return (
               <div key={r.id} className="vw-robot">
                 <div className="vw-robot-head">
                   <span className="vw-robot-dot" />
@@ -130,7 +136,7 @@ export function VideoWall({
                   <small>{r.state}</small>
                 </div>
                 <div className="vw-cap-list">
-                  {(r.capabilities?.length ? r.capabilities : ["可见光"]).map((cap) => {
+                  {(videoCaps.length ? videoCaps : ["可见光"]).map((cap) => {
                     const meta = CAP_META[cap] || { label: cap, hint: "自定义", Icon: Camera };
                     const Icon = meta.Icon;
                     const key = `${r.id}|${cap}`;
@@ -165,7 +171,8 @@ export function VideoWall({
                   })}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
           <div className="vw-side-tip">
             <b>操作提示</b>

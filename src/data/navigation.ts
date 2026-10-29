@@ -618,9 +618,10 @@ export function parentTargetOf(page: string): string | undefined {
   return "workbench";
 }
 /**
- * 返回操作：优先回到「来时的页面」，无轨迹时沿导航目录逐级向上
- * @description 详情页 → 显式来源页（from）→ 应用内访问轨迹 → 目录父级；
- *              轨迹让「列表 → 内置页」返回时落回进入前的页面（含其筛选 / 选中态）
+ * 返回操作：按导航目录层级逐级向上（不看访问历史）
+ * @description 详情页 → 显式来源页（from）→ 目录父级 → 角色工作台；
+ *              不维护「来时的页面」轨迹：返回位置只由信息架构决定，
+ *              同一详情从不同入口进入也会回到同一上级，稳定可预期
  */
 export function back() {
   const r = parse();
@@ -645,36 +646,6 @@ export function back() {
 }
 export function goCenter(page: string) {
   location.hash = href(page);
-}
-/** 应用内访问轨迹：每次跳转前压入上一页 hash，供「返回」回到来时的页面 */
-const trail: string[] = [];
-let lastHash = "";
-/**
- * 初始化访问轨迹（在应用外壳挂载时调用一次）
- * @description 只记录形如 `#/xxx` 的应用内页面，最多留最近 50 步；
- *              刷新后轨迹清空，此时「返回」回落到按导航目录逐级向上
- * @returns 解绑函数
- */
-export function initTrail() {
-  lastHash = location.hash;
-  const onHash = () => {
-    const next = location.hash;
-    if (lastHash.startsWith("#/") && next !== lastHash) {
-      trail.push(lastHash);
-      if (trail.length > 50) trail.splice(0, trail.length - 50);
-    }
-    lastHash = next;
-  };
-  window.addEventListener("hashchange", onHash);
-  return () => window.removeEventListener("hashchange", onHash);
-}
-/**
- * 来时的页面 ID（轨迹栈顶）：无轨迹时返回空串
- * @description 供顶栏返回按钮判断「能否返回」并展示返回目标名
- */
-export function backTrailPage(): string {
-  const h = trail.length ? trail[trail.length - 1] : "";
-  return h ? parse(h).page : "";
 }
 /** 全站统一的「每页条数」档位（分页下拉只给这三档） */
 export const PAGE_SIZES = [10, 20, 50];

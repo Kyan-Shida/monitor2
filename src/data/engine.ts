@@ -3080,6 +3080,7 @@ export function transition(state: State, a: Action): State {
       if (a.command === "云台左转") x.pan -= 10;
       if (a.command === "云台右转") x.pan += 10;
       if (a.command === "云台抬头") x.tilt += 5;
+      if (a.command === "云台低头") x.tilt -= 5;
       if (a.command === "采集照片") {
         const t = s.tasks.find((t) => t.id === x.taskId);
         const p =

@@ -1,21 +1,22 @@
-import { TakeoverOutcome } from "./TakeoverOutcome";
+import { useState } from "react";
+import { X } from "lucide-react";
+import { Badge, Btn, Note, Steps } from "./UI";
+import { useStore } from "../data/store";
+import { Can } from "./Can";
+import { PERMS } from "../data/roles";
+import { fmtDate } from "../data/types";
 /**
  * @file TakeoverDialog.tsx
- * @description 调度指挥驾驶舱的「接管会话」弹窗：就地走完 进行接管 → 暂停确认 → 人工遥控 → 退出 / 释放并恢复，
- *              不再跳到「人工操作与遥控」页（跳页会丢失当前选中设备与三栏上下文）
- * @interaction DispatchCockpit.tsx「当前设备」卡的「进行接管 / 接管会话」按钮
- * @note 形态取舍：曾试右侧抽屉，但大屏里抽屉的高度与底栏贴底依赖 .modal-body 的 flex 拉伸，
- *       在大屏 grid 容器内表现不稳（底栏停在内容之后、下方留白），因此改用居中弹窗 + 流内动作条
+ * @description 驾驶舱「接管会话」浮层：就地走完 进行接管 → 暂停确认 → 人工遥控 → 退出 / 释放并恢复，
+ *              不跳页（跳页会丢失当前选中设备与三栏上下文）
+ * @interaction DispatchCockpit.tsx「当前设备」卡的接管胶囊按钮（既是入口也是状态显示）
+ * @note 形态取舍：不是带遮罩的居中弹窗，而是从左栏按钮处向上浮出的窄浮层（z5）——
+ *       接管期间用户仍要盯着视频看现场并直接用底部操控面板遥控，弹窗不该挡住画面；
+ *       接管一生效即自动关闭，状态由按钮上的「接管 · 已接管」与灯点继续表达
  * @note 状态机口径与 pages/Execution.tsx 的 ControlConsole 完全一致（TAKEOVER / CONTROL_ACK / CONTROL_EXIT /
  *       CONTROL_RELEASE / START），不另造流程；区别只有两点：① 会话用宽口径查找（含「待暂停确认 / 退出核对中」，
  *       否则"确认机器人已暂停"的入口出不来）② 恢复任务留在本页，不跳执行监控
  */
-import { useState } from "react";
-import { useStore } from "../data/store";
-import { Badge, Btn, Modal, Note, Steps } from "./UI";
-import { Can } from "./Can";
-import { PERMS } from "../data/roles";
-import { fmtDate } from "../data/types";
 
 /** 接管须知：均为系统真实约束（engine 的会话校验），不是泛泛提示 */
 const NOTES = [
@@ -57,72 +58,74 @@ export function TakeoverDialog({
     : 0;
   // 有效期只到分钟：与全平台时间口径一致（YYYY-MM-DD HH:mm 取时刻部分）
   const until = fmtDate(new Date(x?.expires ?? 0)).slice(11);
+
   return (
-    <Modal
-      title={`接管会话 · ${r.id} ${r.name}`}
-      onClose={onClose}
-    >
-      <div className="peek-head">
+    <div className="ds-peek">
+      <header className="ds-peek-bar">
         <b>{r.name}</b>
         <Badge>{x ? x.state : "未接管"}</Badge>
-        <span className="muted">
-          {r.deviceType} · {r.region} · 电量 {r.battery}%
+        <span className="ds-peek-sub">
+          {r.id} · {r.deviceType} · 电量 {r.battery}%
         </span>
+        <button className="ds-peek-btn" onClick={onClose} title="关闭">
+          <X size={13} />
+        </button>
+      </header>
+
+      <div className="ds-peek-body">
+        <Steps
+          items={["进行接管", "暂停确认", "人工遥控", "释放并恢复"]}
+          current={current}
+        />
+
+        {!x && (
+          <Note>
+            接管后该机器人会暂停自主任务，控制权独占且有时效；现场确认机器人已停止后即可开始人工遥控。
+          </Note>
+        )}
+        {x?.state === "待暂停确认" && (
+          <Note>
+            接管申请已提交，机器人正在暂停当前任务。请现场确认机器人已停止，再点下方按钮取得控制权。
+          </Note>
+        )}
+        {x?.state === "已接管" && (
+          <Note>
+            已接管（会话 {x.id}，至 {until} 到期）。在底部操控面板下发指令即可，浮层可关闭。
+          </Note>
+        )}
+        {x?.state === "退出核对中" && (
+          <Note>已退出人工接管，机器人保持暂停状态。确认现场安全后再释放控制权。</Note>
+        )}
+        {!x && t?.state === "暂停" && (
+          <Note>
+            该机器人上仍有暂停任务「{t.name}」，控制权释放后需明确恢复，否则不会自动继续。
+          </Note>
+        )}
+        {x?.state === "退出核对中" && (
+          <label className="takeover-check">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => C(e.target.checked)}
+            />
+            已确认现场安全，可释放控制权
+          </label>
+        )}
+
+        {!x && (
+          <>
+            <h4 className="peek-title">接管须知</h4>
+            <ul className="takeover-notes">
+              {NOTES.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          </>
+        )}
       </div>
-      <Steps
-        items={["进行接管", "暂停确认", "人工遥控", "释放并恢复"]}
-        current={current}
-      />
 
-      {!x && (
-        <Note>
-          接管后该机器人会暂停自主任务，控制权独占且有时效；现场确认机器人已停止后即可开始人工遥控。
-        </Note>
-      )}
-      {x?.state === "待暂停确认" && (
-        <Note>
-          接管申请已提交，机器人正在暂停当前任务。请现场确认机器人已停止，再点下方按钮取得控制权。
-        </Note>
-      )}
-      {x?.state === "已接管" && (
-        <Note>
-          已接管（会话 {x.id}，至 {until} 到期）。可直接在驾驶舱用「机器人导航 / 云台控制 /
-          镜头调控 / 声光 · 语音」下发指令。
-        </Note>
-      )}
-      {x?.state === "退出核对中" && (
-        <Note>已退出人工接管，机器人保持暂停状态。确认现场安全后再释放控制权。</Note>
-      )}
-      {!x && t?.state === "暂停" && (
-        <Note>
-          该机器人上仍有暂停任务「{t.name}」，控制权释放后需明确恢复，否则不会自动继续。
-        </Note>
-      )}
-      {x?.state === "退出核对中" && (
-        <label className="takeover-check">
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={(e) => C(e.target.checked)}
-          />
-          已确认现场安全，可释放控制权
-        </label>
-      )}
-
-      {!x && (
-        <>
-          <h4 className="peek-title">接管须知</h4>
-          <ul className="takeover-notes">
-            {NOTES.map((n) => (
-              <li key={n}>{n}</li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      <TakeoverOutcome robotId={r.id} />
       {/* 动作条随会话状态变化，始终保持"取消在左、主动作在右" */}
-      <div className="modal-actions">
+      <footer className="ds-peek-actions">
         <Btn onClick={onClose}>{x ? "关闭" : "取消"}</Btn>
         {!x && (
           <Can perm={PERMS.接管申请}>
@@ -162,7 +165,7 @@ export function TakeoverDialog({
             明确恢复任务
           </Btn>
         )}
-      </div>
-    </Modal>
+      </footer>
+    </div>
   );
 }
